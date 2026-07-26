@@ -61,7 +61,7 @@ public static class GraphSerializer
                 LineStart = n.LineStart,
                 LineEnd = n.LineEnd
             };
-            foreach (var p in n.Properties) node.Properties[p.Key] = p.Value;
+            foreach (var p in n.Properties) node.Properties[p.Key] = NormalizeValue(p.Value);
             foreach (var l in n.Labels) node.Labels.Add(l);
             graph.AddNode(node);
         }
@@ -73,21 +73,61 @@ public static class GraphSerializer
                 ToId = e.To,
                 Type = e.Type
             };
-            foreach (var p in e.Properties) edge.Properties[p.Key] = p.Value;
+            foreach (var p in e.Properties) edge.Properties[p.Key] = NormalizeValue(p.Value);
             graph.AddEdge(edge);
         }
         return graph;
     }
 
     /// <summary>
+    /// Deserialized property values arrive as JsonElement; convert them back to the
+    /// CLR types the graph was built with so typed GetProperty access keeps working.
+    /// </summary>
+    private static object NormalizeValue(object value)
+    {
+        if (value is not JsonElement je) return value;
+
+        return je.ValueKind switch
+        {
+            JsonValueKind.String => je.GetString() ?? string.Empty,
+            JsonValueKind.Number => je.TryGetInt32(out var i) ? i
+                : je.TryGetInt64(out var l) ? l
+                : (object)je.GetDouble(),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Array => NormalizeArray(je),
+            _ => value
+        };
+    }
+
+    private static object NormalizeArray(JsonElement je)
+    {
+        var items = je.EnumerateArray().Select(e => NormalizeValue(e)).ToList();
+        // Graph builders store homogeneous string lists (viewDataKeys, methods, ...);
+        // restore that shape so GetProperty<List<string>> works after a round-trip.
+        return items.All(i => i is string) ? items.Cast<string>().ToList() : items;
+    }
+
+    /// <summary>
     /// Export a subgraph (set of nodes + their interconnecting edges) as a compact
     /// research.json-compatible document for LLM consumption.
     /// </summary>
-    public static string ToResearchDocument(CodeGraph graph, IEnumerable<string> nodeIds, string query, double relevanceThreshold = 0.0)
+    public static string ToResearchDocument(CodeGraph graph, IEnumerable<string> nodeIds, string query, double relevanceThreshold = 0.0) =>
+        ToResearchDocument(graph, nodeIds.ToDictionary(id => id, _ => 1.0), query, relevanceThreshold);
+
+    /// <summary>
+    /// Export a relevance-scored subgraph. Nodes below the threshold are dropped,
+    /// along with any edge touching a dropped node; file:line anchors and the score
+    /// are emitted so LLM consumers can rank and open what they read about.
+    /// </summary>
+    public static string ToResearchDocument(CodeGraph graph, IReadOnlyDictionary<string, double> nodeRelevance, string query, double relevanceThreshold = 0.0)
     {
-        var idSet = new HashSet<string>(nodeIds);
-        var subNodes = graph.Nodes.Where(n => idSet.Contains(n.Id)).ToList();
-        var subEdges = graph.Edges.Where(e => idSet.Contains(e.FromId) && idSet.Contains(e.ToId)).ToList();
+        var kept = nodeRelevance
+            .Where(kv => kv.Value >= relevanceThreshold)
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+
+        var subNodes = graph.Nodes.Where(n => kept.ContainsKey(n.Id)).ToList();
+        var subEdges = graph.Edges.Where(e => kept.ContainsKey(e.FromId) && kept.ContainsKey(e.ToId)).ToList();
 
         var doc = new ResearchDocumentDto
         {
@@ -99,9 +139,12 @@ public static class GraphSerializer
                 Type = n.Type,
                 Name = n.Name,
                 FilePath = n.FilePath,
+                LineStart = n.LineStart,
+                LineEnd = n.LineEnd,
+                Relevance = kept[n.Id],
                 Properties = n.Properties,
                 Labels = n.Labels
-            }).ToList(),
+            }).OrderByDescending(n => n.Relevance).ToList(),
             Edges = subEdges.Select(e => new EdgeDto
             {
                 From = e.FromId,
@@ -128,6 +171,7 @@ public static class GraphSerializer
         public string? FilePath { get; set; }
         public int? LineStart { get; set; }
         public int? LineEnd { get; set; }
+        public double? Relevance { get; set; }
         public Dictionary<string, object> Properties { get; set; } = new();
         public List<string> Labels { get; set; } = new();
     }

@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -7,13 +7,23 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.Build.Locator" Version="1.11.2" />
+    <!-- MSBuild assemblies must come from the locator-resolved SDK at runtime, never the output dir (MSBL001). -->
+    <PackageReference Include="Microsoft.Build.Framework" Version="17.11.48" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.6.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="5.6.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="5.6.0" />
+    <!-- Razor parsing uses the last publicly shipped Razor.Language line; the Syntax
+         namespace it exposes is internal, unlocked below via Krafs.Publicizer. -->
+    <PackageReference Include="Microsoft.AspNetCore.Razor.Language" Version="6.0.36" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Razor.Extensions" Version="6.0.36" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Razor" Version="6.0.36" />
+    <PackageReference Include="Krafs.Publicizer" Version="2.3.0" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.9.2" />
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.9.2" />
-    <PackageReference Include="Microsoft.Build.Locator" Version="1.7.8" />
+    <Publicize Include="Microsoft.AspNetCore.Razor.Language" />
+    <Publicize Include="Microsoft.AspNetCore.Mvc.Razor.Extensions" />
   </ItemGroup>
 
   <ItemGroup>

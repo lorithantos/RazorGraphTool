@@ -1,25 +1,45 @@
 namespace RazorGraph.Extractor;
 
+using Microsoft.AspNetCore.Razor.Language;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Razor;
 using RazorGraph.Core.Graph;
 using RazorGraph.Extractor.Razor;
 using RazorGraph.Extractor.Roslyn;
+using SymbolInfo = RazorGraph.Extractor.Roslyn.SymbolInfo;
 
 /// <summary>
 /// Orchestrates Roslyn + Razor extraction into a unified CodeGraph.
 /// </summary>
-public sealed class GraphBuilder
+public sealed class GraphBuilder : IAsyncDisposable
 {
     private readonly CodeGraph _graph = new();
     private readonly RoslynExtractor _roslyn = new();
-    private readonly Dictionary<string, string> _pageModelToPageMap = new();
 
     public async Task<CodeGraph> BuildFromProjectAsync(string projectPath, CancellationToken ct = default)
     {
-        var projectDir = Path.GetDirectoryName(projectPath)
+        var projectDir = Path.GetDirectoryName(Path.GetFullPath(projectPath))
             ?? throw new ArgumentException("Invalid project path", nameof(projectPath));
 
+        await _roslyn.LoadProjectAsync(projectPath, ct);
+        return BuildGraph(projectDir);
+    }
+
+    public async Task<CodeGraph> BuildFromSolutionAsync(string solutionPath, string projectName, CancellationToken ct = default)
+    {
+        await _roslyn.LoadSolutionAsync(solutionPath, projectName, ct);
+
+        var projectFile = _roslyn.ProjectFilePath
+            ?? throw new InvalidOperationException($"Project '{projectName}' has no file path.");
+        var projectDir = Path.GetDirectoryName(Path.GetFullPath(projectFile))
+            ?? throw new InvalidOperationException($"Invalid project file path: {projectFile}");
+
+        return BuildGraph(projectDir);
+    }
+
+    private CodeGraph BuildGraph(string projectDir)
+    {
         // Phase 1: Roslyn semantic extraction
-        var compilation = await _roslyn.LoadProjectAsync(projectPath, ct);
         var symbols = _roslyn.ExtractSymbols().ToList();
 
         // Phase 2: Add Roslyn nodes to graph
@@ -43,9 +63,12 @@ public sealed class GraphBuilder
         // Phase 5: Razor syntax extraction
         var razorFiles = Directory.EnumerateFiles(projectDir, "*.cshtml", SearchOption.AllDirectories)
             .Concat(Directory.EnumerateFiles(projectDir, "*.razor", SearchOption.AllDirectories))
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
+                     && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
             .ToList();
 
         var razorExtractor = new RazorExtractor(projectDir);
+        TryProvideTagHelpers(razorExtractor);
         var razorInfos = new List<RazorPageInfo>();
 
         foreach (var file in razorFiles)
@@ -78,6 +101,45 @@ public sealed class GraphBuilder
         return _graph;
     }
 
+    /// <summary>
+    /// Best-effort: discover tag helper descriptors from the loaded compilation so the
+    /// Razor parser can bind tag helper elements. Failure is non-fatal — the extractor's
+    /// text scan still captures asp-* attributes.
+    /// </summary>
+    private void TryProvideTagHelpers(RazorExtractor razorExtractor)
+    {
+        var compilation = _roslyn.Compilation;
+        if (compilation == null) return;
+
+        try
+        {
+            var references = compilation.References
+                .Concat(new MetadataReference[] { compilation.ToMetadataReference() })
+                .ToList();
+
+            var discoveryEngine = RazorProjectEngine.Create(
+                RazorConfiguration.Default,
+                RazorProjectFileSystem.Create(Directory.GetCurrentDirectory()),
+                builder =>
+                {
+                    builder.Features.Add(new CompilationTagHelperFeature());
+                    builder.Features.Add(new DefaultMetadataReferenceFeature { References = references });
+                    builder.Features.Add(new DefaultTagHelperDescriptorProvider());
+                });
+
+            var descriptors = discoveryEngine.Engine.Features
+                .OfType<CompilationTagHelperFeature>()
+                .First()
+                .GetDescriptors();
+
+            if (descriptors.Count > 0) razorExtractor.SetTagHelpers(descriptors);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Warning: tag helper discovery failed ({ex.GetType().Name}); asp-* extraction continues via text scan.");
+        }
+    }
+
     private void AddSymbolNode(SymbolInfo sym)
     {
         var node = new GraphNode
@@ -86,7 +148,8 @@ public sealed class GraphBuilder
             Type = sym.Type,
             Name = sym.Name,
             FilePath = sym.FilePath,
-            LineStart = 1 // Approximate; could use Location.GetLineSpan()
+            LineStart = sym.LineStart,
+            LineEnd = sym.LineEnd
         };
 
         node.SetProperty("fullName", sym.FullName);
@@ -152,10 +215,6 @@ public sealed class GraphBuilder
         if (info.Sections.Count > 0) node.SetProperty("sections", info.Sections);
 
         _graph.AddNode(node);
-
-        // Map PageModel type name → page ID for correlation
-        if (info.ModelType != null)
-            _pageModelToPageMap[info.ModelType] = info.Id;
     }
 
     private void CorrelateRazorToRoslyn(RazorPageInfo info, List<SymbolInfo> symbols)
@@ -324,4 +383,6 @@ public sealed class GraphBuilder
 
         return null;
     }
+
+    public ValueTask DisposeAsync() => _roslyn.DisposeAsync();
 }

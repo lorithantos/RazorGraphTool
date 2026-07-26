@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>@ViewData["Title"] - SampleApp</title>
+</head>
+<body>
+    <main>
+        @RenderBody()
+    </main>
+    <footer>
+        @await Html.RenderPartialAsync("_Card")
+    </footer>
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

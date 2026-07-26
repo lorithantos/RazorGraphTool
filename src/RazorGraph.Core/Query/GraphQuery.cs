@@ -99,11 +99,12 @@ public sealed class GraphQuery
             .Select(n => n.Target)
             .FirstOrDefault(n => n.Type == NodeType.PageModel);
 
+        // InjectedInto edges point service -> consumer, so services are predecessors.
         var services = model != null
-            ? GetNeighbors(model.Id, EdgeType.InjectedInto).Select(n => n.Target).ToList()
+            ? GetPredecessors(model.Id, EdgeType.InjectedInto).Select(n => n.Source).ToList()
             : new List<GraphNode>();
 
-        var viewModel = page.GetProperty<string>("model_type");
+        var viewModel = page.GetProperty<string>("modelType");
         GraphNode? vmNode = null;
         if (!string.IsNullOrWhiteSpace(viewModel))
             vmNode = FindNodes(NodeType.ViewModel, viewModel).FirstOrDefault()

@@ -1,5 +1,6 @@
 namespace RazorGraph.Extractor.Roslyn;
 
+using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -14,6 +15,24 @@ public sealed class RoslynExtractor : IAsyncDisposable
     private MSBuildWorkspace? _workspace;
     private Compilation? _compilation;
     private Project? _project;
+
+    // Must run before any Microsoft.Build type is JITed; the ctor body is safe
+    // because MSBuild types are first referenced inside LoadProjectAsync.
+    public RoslynExtractor() => EnsureMsBuildRegistered();
+
+    public static void EnsureMsBuildRegistered()
+    {
+        if (!MSBuildLocator.IsRegistered) MSBuildLocator.RegisterDefaults();
+    }
+
+    /// <summary>
+    /// The compilation from the most recent load, for consumers that need
+    /// symbol-level analysis (e.g., tag helper discovery).
+    /// </summary>
+    public Compilation? Compilation => _compilation;
+
+    /// <summary>File path of the loaded project, for locating its Razor files.</summary>
+    public string? ProjectFilePath => _project?.FilePath;
 
     public async Task<Compilation> LoadProjectAsync(string projectPath, CancellationToken ct = default)
     {
@@ -63,6 +82,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
     {
         var baseType = symbol.BaseType?.ToDisplayString() ?? "";
         var interfaces = symbol.AllInterfaces.Select(i => i.ToDisplayString()).ToList();
+        var (lineStart, lineEnd) = GetLines(symbol);
 
         // PageModel detection
         if (baseType.Contains("PageModel") || baseType.Contains("Microsoft.AspNetCore.Mvc.RazorPages.PageModel"))
@@ -74,6 +94,8 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
                 FilePath = symbol.Locations.FirstOrDefault()?.SourceTree?.FilePath,
+                LineStart = lineStart,
+                LineEnd = lineEnd,
                 BaseType = baseType,
                 Properties = ExtractProperties(symbol),
                 Methods = ExtractMethods(symbol),
@@ -91,6 +113,8 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
                 FilePath = symbol.Locations.FirstOrDefault()?.SourceTree?.FilePath,
+                LineStart = lineStart,
+                LineEnd = lineEnd,
                 BaseType = baseType,
                 Methods = ExtractControllerActions(symbol),
                 InjectedServices = ExtractInjectedServices(symbol)
@@ -107,6 +131,8 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
                 FilePath = symbol.Locations.FirstOrDefault()?.SourceTree?.FilePath,
+                LineStart = lineStart,
+                LineEnd = lineEnd,
                 ImplementedInterfaces = interfaces.Where(i => i.EndsWith("Service")).ToList(),
                 Methods = ExtractMethods(symbol)
             };
@@ -122,11 +148,21 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
                 FilePath = symbol.Locations.FirstOrDefault()?.SourceTree?.FilePath,
+                LineStart = lineStart,
+                LineEnd = lineEnd,
                 Properties = ExtractProperties(symbol)
             };
         }
 
         return null;
+    }
+
+    private static (int? Start, int? End) GetLines(INamedTypeSymbol symbol)
+    {
+        var syntaxRef = symbol.DeclaringSyntaxReferences.FirstOrDefault();
+        if (syntaxRef == null) return (null, null);
+        var span = syntaxRef.SyntaxTree.GetLineSpan(syntaxRef.Span);
+        return (span.StartLinePosition.Line + 1, span.EndLinePosition.Line + 1);
     }
 
     private List<PropertyInfo> ExtractProperties(INamedTypeSymbol symbol) =>
@@ -210,6 +246,8 @@ public sealed class SymbolInfo
     public required string Name { get; init; }
     public required string FullName { get; init; }
     public string? FilePath { get; init; }
+    public int? LineStart { get; init; }
+    public int? LineEnd { get; init; }
     public string? BaseType { get; init; }
     public List<string> ImplementedInterfaces { get; init; } = new();
     public List<string> InjectedServices { get; init; } = new();

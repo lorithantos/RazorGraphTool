@@ -17,8 +17,9 @@ public sealed class CodeGraph
     {
         ArgumentNullException.ThrowIfNull(node);
         _nodes[node.Id] = node;
-        _outgoing[node.Id] = new List<GraphEdge>();
-        _incoming[node.Id] = new List<GraphEdge>();
+        // Re-adding an id must not reset adjacency — edges added before the upsert stay reachable.
+        if (!_outgoing.ContainsKey(node.Id)) _outgoing[node.Id] = new List<GraphEdge>();
+        if (!_incoming.ContainsKey(node.Id)) _incoming[node.Id] = new List<GraphEdge>();
     }
 
     public void AddEdge(GraphEdge edge)

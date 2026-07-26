@@ -1,0 +1,15 @@
+@page "{id?}"
+@model IndexModel
+@{
+    ViewData["Title"] = "Home";
+}
+<h1>@ViewData["Title"]</h1>
+<p>@Model.Message</p>
+<partial name="_Card" />
+<form method="post">
+    <input asp-for="Name" class="form-control" />
+    <button type="submit">Greet</button>
+</form>
+@section Scripts {
+    <script src="~/js/site.js"></script>
+}
