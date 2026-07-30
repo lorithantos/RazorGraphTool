@@ -41,5 +41,10 @@ public enum EdgeType
     References,
     DependsOn,
 
+    // Testing. Emitted from a test method to production code it exercises,
+    // carrying the call depth at which it was reached, so consumers can ask for
+    // direct exercise (depth 1) or the full blast radius.
+    Covers,
+
     Unknown
 }

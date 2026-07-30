@@ -168,4 +168,77 @@ public class GraphQueryTests
         // Outgoing cannot answer this: InjectedInto points service -> consumer.
         Assert.Contains("ICatalogService", reached);
     }
+
+    // ---- Coverage ------------------------------------------------------------
+
+    /// <summary>
+    /// Two production methods, one test. The test covers Load directly and
+    /// Normalize through it; Orphan is reached by nothing.
+    /// </summary>
+    private static CodeGraph BuildCoverageGraph()
+    {
+        var graph = new CodeGraph();
+
+        var test = new GraphNode { Id = "m:Tests.ListWorks()", Type = NodeType.Method, Name = "ListWorks" };
+        test.SetProperty("isTest", true);
+        test.SetProperty("project", "App.Tests");
+        graph.AddNode(test);
+
+        foreach (var (id, name) in new[] { ("m:Lib.Load()", "Load"), ("m:Lib.Normalize()", "Normalize"), ("m:Lib.Orphan()", "Orphan") })
+        {
+            var node = new GraphNode { Id = id, Type = NodeType.Method, Name = name };
+            node.SetProperty("project", "Lib");
+            graph.AddNode(node);
+        }
+
+        graph.AddEdge(new GraphEdge
+        {
+            FromId = "m:Tests.ListWorks()", ToId = "m:Lib.Load()",
+            Type = EdgeType.Covers, Properties = { ["depth"] = 1 }
+        });
+        graph.AddEdge(new GraphEdge
+        {
+            FromId = "m:Tests.ListWorks()", ToId = "m:Lib.Normalize()",
+            Type = EdgeType.Covers, Properties = { ["depth"] = 2 }
+        });
+
+        return graph;
+    }
+
+    [Fact]
+    public void GetCoveringTests_ReturnsTestsNearestFirst()
+    {
+        var query = new GraphQuery(BuildCoverageGraph());
+
+        var covering = query.GetCoveringTests("m:Lib.Load()").ToList();
+
+        Assert.Single(covering);
+        Assert.Equal("ListWorks", covering[0].Test.Name);
+        Assert.Equal(1, covering[0].Depth);
+        Assert.Empty(query.GetCoveringTests("m:Lib.Orphan()"));
+    }
+
+    [Fact]
+    public void GetCoveredMethods_OrdersByDepth()
+    {
+        var query = new GraphQuery(BuildCoverageGraph());
+
+        var covered = query.GetCoveredMethods("m:Tests.ListWorks()").ToList();
+
+        Assert.Equal(new[] { "Load", "Normalize" }, covered.Select(c => c.Method.Name));
+        Assert.Equal(new[] { 1, 2 }, covered.Select(c => c.Depth));
+    }
+
+    [Fact]
+    public void FindUncoveredMethods_ExcludesTestsAndCoveredCode()
+    {
+        var query = new GraphQuery(BuildCoverageGraph());
+
+        var uncovered = query.FindUncoveredMethods("Lib").Select(m => m.Name).ToList();
+
+        Assert.Equal(new[] { "Orphan" }, uncovered);
+
+        // The test method itself is never "uncovered production code".
+        Assert.DoesNotContain("ListWorks", query.FindUncoveredMethods().Select(m => m.Name));
+    }
 }

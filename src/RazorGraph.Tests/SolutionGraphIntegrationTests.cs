@@ -183,4 +183,69 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         // NotATest calls production code but carries no attribute.
         Assert.DoesNotContain("NotATest", tests);
     }
+
+    [Fact]
+    public void Builds_CoversEdges_FromTestToCodeUnderTest()
+    {
+        var query = new GraphQuery(_solutionGraph!);
+        var load = Method(_solutionGraph!, "SampleLib.CatalogStore", "List");
+
+        var covering = query.GetCoveringTests(load.Id).ToList();
+
+        Assert.Single(covering);
+        Assert.Equal("List_ReturnsSortedCatalogs", covering[0].Test.Name);
+        Assert.Equal(1, covering[0].Depth);
+    }
+
+    [Fact]
+    public void CoversEdges_ReachTransitivelyAndRecordDepth()
+    {
+        var query = new GraphQuery(_solutionGraph!);
+        var normalize = Method(_solutionGraph!, "SampleLib.CatalogStore", "Normalize");
+
+        var covering = query.GetCoveringTests(normalize.Id).ToList();
+
+        // Normalize is private and only reachable through List, so a direct-call
+        // model would report it as untested.
+        Assert.Single(covering);
+        Assert.Equal(2, covering[0].Depth);
+    }
+
+    [Fact]
+    public void CoversEdges_AreNotEmittedForNonTestCallers()
+    {
+        var orphan = Method(_solutionGraph!, "SampleLib.CatalogStore", "Orphan");
+
+        // Orphan is called only by NotATest, which has no test attribute.
+        Assert.DoesNotContain(_solutionGraph!.Incoming(orphan.Id), e => e.Type == EdgeType.Covers);
+    }
+
+    [Fact]
+    public void FindUncoveredMethods_ReportsTheUnreachedMethod()
+    {
+        var uncovered = new GraphQuery(_solutionGraph!)
+            .FindUncoveredMethods("SampleLib")
+            .Select(m => m.Id)
+            .ToList();
+
+        Assert.Contains(Method(_solutionGraph!, "SampleLib.CatalogStore", "Orphan").Id, uncovered);
+        Assert.DoesNotContain(Method(_solutionGraph!, "SampleLib.CatalogStore", "List").Id, uncovered);
+        Assert.DoesNotContain(Method(_solutionGraph!, "SampleLib.CatalogStore", "Normalize").Id, uncovered);
+    }
+
+    [Fact]
+    public void FindUncoveredMethods_ExcludesInterfaceDeclarations()
+    {
+        // ICatalogStore.List has no body, so it can never carry a Covers edge.
+        // Reporting it as untested would be noise that discredits the report.
+        var declaration = Method(_solutionGraph!, "SampleLib.ICatalogStore", "List");
+        Assert.True(declaration.GetProperty<bool>("isAbstract"));
+
+        var uncovered = new GraphQuery(_solutionGraph!)
+            .FindUncoveredMethods("SampleLib")
+            .Select(m => m.Id)
+            .ToList();
+
+        Assert.DoesNotContain(declaration.Id, uncovered);
+    }
 }

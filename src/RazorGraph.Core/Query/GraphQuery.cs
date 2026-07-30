@@ -88,6 +88,47 @@ public sealed class GraphQuery
         _graph.Traverse(startId, DataFlowEdges, maxDepth, direction, StructuralEdges);
 
     /// <summary>
+    /// Test methods that exercise the given production method, nearest first.
+    /// Covers edges point test -> code, so this is an incoming lookup.
+    /// </summary>
+    public IEnumerable<(GraphNode Test, int Depth)> GetCoveringTests(string methodId) =>
+        _graph.Incoming(methodId)
+            .Where(e => e.Type == EdgeType.Covers)
+            .Select(e => (Test: _graph.GetNode(e.FromId), Depth: e.GetProperty<int>("depth")))
+            .Where(t => t.Test != null)
+            .Select(t => (t.Test!, t.Depth))
+            .OrderBy(t => t.Depth);
+
+    /// <summary>
+    /// Production methods a given test exercises, nearest first.
+    /// </summary>
+    public IEnumerable<(GraphNode Method, int Depth)> GetCoveredMethods(string testId) =>
+        _graph.Outgoing(testId)
+            .Where(e => e.Type == EdgeType.Covers)
+            .Select(e => (Method: _graph.GetNode(e.ToId), Depth: e.GetProperty<int>("depth")))
+            .Where(t => t.Method != null)
+            .Select(t => (t.Method!, t.Depth))
+            .OrderBy(t => t.Depth);
+
+    /// <summary>
+    /// Methods with no test reaching them. Restricted to a project when given,
+    /// because "untested" only means something inside a production assembly —
+    /// the test project's own helpers are not the subject of the question.
+    ///
+    /// Bodiless declarations are excluded. An interface member never carries a
+    /// Covers edge — calls from a test bind to the implementation, not the
+    /// declaration — so including them would report every interface in the
+    /// solution as untested and make the whole report untrustworthy.
+    /// </summary>
+    public IEnumerable<GraphNode> FindUncoveredMethods(string? project = null) =>
+        _graph.NodesOfType(NodeType.Method)
+            .Where(m => !m.GetProperty<bool>("isTest"))
+            .Where(m => !m.GetProperty<bool>("isAbstract"))
+            .Where(m => project == null ||
+                        string.Equals(m.GetProperty<string>("project"), project, StringComparison.OrdinalIgnoreCase))
+            .Where(m => !_graph.Incoming(m.Id).Any(e => e.Type == EdgeType.Covers));
+
+    /// <summary>
     /// Find all render dependencies of a Razor page (layout, partials, sections, components).
     /// </summary>
     public IEnumerable<(GraphNode Node, GraphEdge Edge)> GetRenderTree(string pageId)

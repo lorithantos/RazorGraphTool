@@ -80,6 +80,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         }
 
         AddProjectNodes();
+        AddCoverageEdges();
         return _graph;
     }
 
@@ -322,6 +323,54 @@ public sealed class GraphBuilder : IAsyncDisposable
     }
 
     private static string ProjectId(string projectName) => $"proj:{projectName}";
+
+    /// <summary>
+    /// Link each test method to the production code it exercises.
+    ///
+    /// Reachability is followed through Calls rather than stopping at direct
+    /// invocations, because a test that goes through a builder or a fixture
+    /// helper still covers what that helper drives. The depth it was reached at
+    /// rides on the edge, so a consumer can ask for direct exercise alone; edges
+    /// are only emitted across a project boundary, since a test calling its own
+    /// helpers is not coverage of anything.
+    /// </summary>
+    private void AddCoverageEdges(int maxDepth = 3)
+    {
+        var tests = _graph.NodesOfType(NodeType.Method)
+            .Where(n => n.GetProperty<bool>("isTest"))
+            .ToList();
+        if (tests.Count == 0) return;
+
+        var callsOnly = new HashSet<EdgeType> { EdgeType.Calls };
+
+        foreach (var test in tests)
+        {
+            var testProject = test.GetProperty<string>("project");
+
+            // Materialised before the loop body runs: Traverse streams straight off
+            // the adjacency lists, and adding a Covers edge below mutates one of
+            // them mid-enumeration.
+            var reached = _graph.Traverse(test.Id, callsOnly, maxDepth).ToList();
+
+            foreach (var (node, _, depth) in reached)
+            {
+                if (node.Type != NodeType.Method) continue;
+                if (node.GetProperty<bool>("isTest")) continue;
+
+                var project = node.GetProperty<string>("project");
+                if (project == null || string.Equals(project, testProject, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                _graph.AddEdge(new GraphEdge
+                {
+                    FromId = test.Id,
+                    ToId = node.Id,
+                    Type = EdgeType.Covers,
+                    Properties = { ["depth"] = depth }
+                });
+            }
+        }
+    }
 
     private void AddInheritanceEdges(SymbolInfo sym)
     {
