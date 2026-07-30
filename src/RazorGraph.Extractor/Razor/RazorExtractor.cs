@@ -113,7 +113,11 @@ public sealed class RazorExtractor
                 ?? RazorTextScanners.ScanLayoutAssignment(stripped),
             InjectedServices = ExtractInjectDirectives(root),
             ViewDataKeys = RazorTextScanners.ScanViewDataKeys(stripped),
+            AssetReferences = RazorTextScanners.ScanAssetReferences(stripped),
+            ServerDataKeys = RazorTextScanners.ScanServerBoundDataKeys(stripped),
+            RenderedDataKeys = RazorTextScanners.ScanRenderedDataKeys(stripped),
             Partials = RazorTextScanners.ScanPartialRenders(stripped, scanLines),
+            InlineScripts = RazorTextScanners.ScanInlineScripts(stripped, scanLines),
             TagHelpers = tagHelpers,
             Sections = ExtractSections(root)
         };
@@ -233,9 +237,34 @@ public sealed class RazorPageInfo
     public string? Layout { get; init; }
     public List<string> InjectedServices { get; init; } = new();
     public List<string> ViewDataKeys { get; init; } = new();
+
+    /// <summary>script src / stylesheet href values as authored in the page.</summary>
+    public List<string> AssetReferences { get; init; } = new();
+
+    /// <summary>data-* keys the page renders from server state.</summary>
+    public List<string> ServerDataKeys { get; init; } = new();
+
+    /// <summary>Every data-* key the page emits, including constant values.</summary>
+    public List<string> RenderedDataKeys { get; init; } = new();
+
     public List<PartialRenderInfo> Partials { get; init; } = new();
+
+    /// <summary>&lt;script&gt; blocks authored in the page itself, with no src.</summary>
+    public List<InlineScriptInfo> InlineScripts { get; init; } = new();
+
     public List<TagHelperInfo> TagHelpers { get; init; } = new();
     public List<string> Sections { get; init; } = new();
+}
+
+/// <summary>
+/// A script block living inside a Razor file. It has no path of its own, so the
+/// page plus the starting line is its identity.
+/// </summary>
+public sealed class InlineScriptInfo
+{
+    public string Body { get; init; } = string.Empty;
+    public int Line { get; init; }
+    public int LineCount { get; init; }
 }
 
 public sealed class PartialRenderInfo

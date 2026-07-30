@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Razor.Language;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Razor;
 using RazorGraph.Core.Graph;
+using RazorGraph.Extractor.Client;
 using RazorGraph.Extractor.Razor;
 using RazorGraph.Extractor.Roslyn;
 using SymbolInfo = RazorGraph.Extractor.Roslyn.SymbolInfo;
@@ -153,6 +154,8 @@ public sealed class GraphBuilder : IAsyncDisposable
         {
             AddPartialEdges(info, razorInfos);
         }
+
+        AddClientAssets(projectDir, razorInfos, idScope);
     }
 
     /// <summary>
@@ -268,6 +271,239 @@ public sealed class GraphBuilder : IAsyncDisposable
                 ToId = toId,
                 Type = EdgeType.Calls
             });
+        }
+    }
+
+    /// <summary>
+    /// Adds JavaScript/CSS nodes and the three edges that cross the server/client
+    /// boundary: which page loads an asset, which server-rendered data-* keys a
+    /// script reads back, and which API routes a script calls.
+    /// </summary>
+    private void AddClientAssets(string projectDir, List<RazorPageInfo> razorInfos, string? idScope)
+    {
+        var assets = new ClientAssetExtractor().ExtractAssets(projectDir, idScope);
+
+        // Inline blocks are assets that happen to live in a .cshtml. Folding them
+        // into the same list means every downstream step -- coupling edges,
+        // unbound-key detection, JS-to-API binding -- treats them identically,
+        // rather than each one having to remember the inline case exists.
+        var inlineByPage = new Dictionary<string, List<ClientAssetInfo>>(StringComparer.Ordinal);
+        foreach (var info in razorInfos)
+        {
+            foreach (var script in info.InlineScripts)
+            {
+                var inline = ClientAssetExtractor.BuildInlineScript(
+                    idScope, info.RelativePath, info.FilePath, script.Body, script.Line, script.LineCount);
+
+                assets.Add(inline);
+                if (!inlineByPage.TryGetValue(info.Id, out var list))
+                {
+                    list = new List<ClientAssetInfo>();
+                    inlineByPage[info.Id] = list;
+                }
+                list.Add(inline);
+            }
+        }
+
+        if (assets.Count == 0) return;
+
+        var byRelativePath = new Dictionary<string, ClientAssetInfo>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var asset in assets)
+        {
+            var node = new GraphNode
+            {
+                Id = asset.Id,
+                Type = asset.IsScript ? NodeType.JavaScriptFile : NodeType.CssFile,
+                Name = asset.Name,
+                FilePath = asset.FilePath,
+                LineStart = asset.LineStart
+            };
+
+            node.SetProperty("relativePath", asset.RelativePath);
+            node.SetProperty("lineCount", asset.LineCount);
+            if (idScope != null) node.SetProperty("project", idScope);
+            if (asset.IsInline) node.SetProperty("inline", true);
+            if (asset.DataKeys.Count > 0) node.SetProperty("dataKeys", asset.DataKeys.OrderBy(k => k).ToList());
+            if (asset.DataKeysWritten.Count > 0)
+                node.SetProperty("dataKeysWritten", asset.DataKeysWritten.OrderBy(k => k).ToList());
+            if (asset.ApiCalls.Count > 0) node.SetProperty("apiCalls", asset.ApiCalls.OrderBy(u => u).ToList());
+
+            _graph.AddNode(node);
+            byRelativePath[asset.RelativePath] = asset;
+        }
+
+        var byId = razorInfos.ToDictionary(r => r.Id, r => r);
+        // Which pages reference each script, so an unread data key can be
+        // distinguished from one no page ever renders.
+        var renderedKeysByAsset = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var info in razorInfos)
+        {
+            var scope = DataKeysInScope(info, byId, razorInfos, idScope);
+            var referenced = ReferencedAssets(info, byId, byRelativePath);
+            if (inlineByPage.TryGetValue(info.Id, out var inlineAssets))
+                referenced = referenced.Concat(inlineAssets);
+
+            foreach (var asset in referenced)
+            {
+                _graph.AddEdge(new GraphEdge
+                {
+                    FromId = info.Id,
+                    ToId = asset.Id,
+                    Type = EdgeType.References
+                });
+
+                if (!asset.IsScript) continue;
+
+                if (!renderedKeysByAsset.TryGetValue(asset.Id, out var seen))
+                {
+                    seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    renderedKeysByAsset[asset.Id] = seen;
+                }
+                seen.UnionWith(scope.Rendered);
+
+                var shared = asset.DataKeys.Intersect(scope.ServerBound, StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(k => k).ToList();
+                if (shared.Count == 0) continue;
+
+                // Direction matches FindServerToJsMismatches, which reads the
+                // server node off the incoming edge of the JS node.
+                _graph.AddEdge(new GraphEdge
+                {
+                    FromId = info.Id,
+                    ToId = asset.Id,
+                    Type = EdgeType.ViewDataReadBy,
+                    Properties = { ["dataKeys"] = shared }
+                });
+            }
+        }
+
+        AnnotateUnboundKeys(assets, renderedKeysByAsset);
+        AddJsToApiEdges(assets);
+    }
+
+    /// <summary>
+    /// data-* keys available to scripts on this page. A script sees one composed
+    /// DOM, so the scope is the page plus its layout plus every partial either of
+    /// them renders, transitively -- markup emitted by a partial is just as
+    /// present as markup in the page itself.
+    /// </summary>
+    private static DataKeyScope DataKeysInScope(
+        RazorPageInfo info,
+        Dictionary<string, RazorPageInfo> byId,
+        List<RazorPageInfo> allPages,
+        string? idScope)
+    {
+        var serverBound = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var rendered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Queue<RazorPageInfo>();
+
+        pending.Enqueue(info);
+        if (info.Layout != null && byId.TryGetValue(RazorExtractor.PageId(idScope, info.Layout), out var layout))
+            pending.Enqueue(layout);
+
+        while (pending.Count > 0)
+        {
+            var current = pending.Dequeue();
+            // Partials can render each other; visited keeps a cycle from hanging the build.
+            if (!visited.Add(current.Id)) continue;
+
+            serverBound.UnionWith(current.ServerDataKeys);
+            rendered.UnionWith(current.RenderedDataKeys);
+
+            foreach (var partial in current.Partials)
+            {
+                var resolved = ResolvePartial(partial, allPages);
+                if (resolved != null) pending.Enqueue(resolved);
+            }
+        }
+
+        return new DataKeyScope(serverBound, rendered);
+    }
+
+    /// <summary>
+    /// The data-* keys visible to a script on one composed page. ServerBound
+    /// drives the coupling edge (server state reaching the client); Rendered
+    /// drives unbound-key detection (does the attribute exist at all).
+    /// </summary>
+    private readonly record struct DataKeyScope(HashSet<string> ServerBound, HashSet<string> Rendered);
+
+    private static RazorPageInfo? ResolvePartial(PartialRenderInfo partial, List<RazorPageInfo> allPages) =>
+        allPages.FirstOrDefault(p =>
+            p.RelativePath.Contains(partial.Name, StringComparison.OrdinalIgnoreCase));
+
+    private static IEnumerable<ClientAssetInfo> ReferencedAssets(
+        RazorPageInfo info,
+        Dictionary<string, RazorPageInfo> byId,
+        Dictionary<string, ClientAssetInfo> byRelativePath)
+    {
+        foreach (var href in info.AssetReferences)
+        {
+            var resolved = ClientAssetExtractor.ResolveAssetPath(href);
+            if (resolved != null && byRelativePath.TryGetValue(resolved, out var asset))
+                yield return asset;
+        }
+    }
+
+    /// <summary>
+    /// A data key a script only ever reads, that no page loading it renders, is
+    /// the actionable half of the report -- a rename that broke one side only.
+    /// Keys the script writes itself are excluded: that is client-owned state,
+    /// not a broken contract with the server.
+    /// </summary>
+    private void AnnotateUnboundKeys(
+        List<ClientAssetInfo> assets,
+        Dictionary<string, HashSet<string>> renderedKeysByAsset)
+    {
+        foreach (var asset in assets)
+        {
+            if (!asset.IsScript || asset.DataKeys.Count == 0) continue;
+
+            // No referencing page found means the script is loaded some way this
+            // extractor cannot see; silence beats a false accusation.
+            if (!renderedKeysByAsset.TryGetValue(asset.Id, out var rendered)) continue;
+
+            var unbound = asset.DataKeysReadOnly.Except(rendered, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(k => k).ToList();
+            if (unbound.Count == 0) continue;
+
+            _graph.GetNode(asset.Id)?.SetProperty("unboundDataKeys", unbound);
+        }
+    }
+
+    /// <summary>
+    /// Bind literal fetch URLs to the controller that serves them, matching
+    /// /api/{controller}/... against the ApiController nodes already in the graph.
+    /// </summary>
+    private void AddJsToApiEdges(List<ClientAssetInfo> assets)
+    {
+        var controllers = _graph.NodesOfType(NodeType.ApiController).ToList();
+        if (controllers.Count == 0) return;
+
+        foreach (var asset in assets)
+        {
+            foreach (var url in asset.ApiCalls)
+            {
+                var segments = url.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                if (segments.Length < 2 || !segments[0].Equals("api", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var name = segments[1];
+                var controller = controllers.FirstOrDefault(c =>
+                    c.Name.Equals($"{name}Controller", StringComparison.OrdinalIgnoreCase) ||
+                    c.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+                if (controller == null) continue;
+
+                _graph.AddEdge(new GraphEdge
+                {
+                    FromId = asset.Id,
+                    ToId = controller.Id,
+                    Type = EdgeType.Calls,
+                    Properties = { ["url"] = url }
+                });
+            }
         }
     }
 
@@ -420,6 +656,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         };
 
         if (idScope != null) node.SetProperty("project", idScope);
+        if (info.InlineScripts.Count > 0) node.SetProperty("inlineScriptCount", info.InlineScripts.Count);
         if (info.RouteTemplate != null) node.SetProperty("routeTemplate", info.RouteTemplate);
         if (info.ModelType != null) node.SetProperty("modelType", info.ModelType);
         if (info.Layout != null) node.SetProperty("layout", info.Layout);

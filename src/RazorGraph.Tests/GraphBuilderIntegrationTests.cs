@@ -183,4 +183,73 @@ public class GraphBuilderIntegrationTests : IAsyncLifetime
             Assert.NotNull(_graph.GetNode(e.ToId));
         });
     }
+
+    // ---- Client assets ------------------------------------------------------
+
+    [Fact]
+    public void Builds_JsAndCssNodes_AndSkipsVendorBundles()
+    {
+        Assert.Contains(_graph!.Nodes, n => n.Type == NodeType.JavaScriptFile && n.Name == "site.js");
+        Assert.Contains(_graph.Nodes, n => n.Type == NodeType.CssFile && n.Name == "site.css");
+
+        // wwwroot/lib is third-party; graphing it is cost without signal.
+        Assert.DoesNotContain(_graph.Nodes, n => n.Name == "jquery.js");
+    }
+
+    [Fact]
+    public void Builds_ReferencesEdge_FromPageToScript()
+    {
+        var page = _graph!.Nodes.Single(n => n.Type == NodeType.RazorPage && n.Name == "Index");
+
+        var referenced = _graph.Outgoing(page.Id)
+            .Where(e => e.Type == EdgeType.References)
+            .Select(e => _graph.GetNode(e.ToId)!.Name)
+            .ToList();
+
+        Assert.Contains("site.js", referenced);
+    }
+
+    [Fact]
+    public void Builds_ViewDataReadByEdge_ForKeyRenderedByAPartial()
+    {
+        var js = _graph!.Nodes.Single(n => n.Type == NodeType.JavaScriptFile && n.Name == "site.js");
+
+        var edge = _graph.Incoming(js.Id).SingleOrDefault(e => e.Type == EdgeType.ViewDataReadBy);
+
+        // data-greeting is rendered by _Card, not by Index. The coupling is only
+        // visible if partial markup counts as part of the page's DOM.
+        Assert.NotNull(edge);
+        var keys = Assert.IsType<List<string>>(edge!.Properties["dataKeys"]);
+        Assert.Contains("greeting", keys);
+    }
+
+    [Fact]
+    public void Reports_OnlyTheGenuinelyUnboundKey()
+    {
+        var js = _graph!.Nodes.Single(n => n.Type == NodeType.JavaScriptFile && n.Name == "site.js");
+
+        var unbound = js.GetProperty<List<string>>("unboundDataKeys") ?? new();
+
+        // missing-key: read, never rendered anywhere -> a real broken contract.
+        Assert.Contains("missing-key", unbound);
+        // greeting: rendered by the partial.
+        Assert.DoesNotContain("greeting", unbound);
+        // state: rendered as a constant, so the attribute does exist in the DOM.
+        Assert.DoesNotContain("state", unbound);
+        // client-owned: the script assigns it, so the server owes nothing.
+        Assert.DoesNotContain("client-owned", unbound);
+    }
+
+    [Fact]
+    public void Builds_CallsEdge_FromScriptToApiController()
+    {
+        var js = _graph!.Nodes.Single(n => n.Type == NodeType.JavaScriptFile && n.Name == "site.js");
+
+        var called = _graph.Outgoing(js.Id)
+            .Where(e => e.Type == EdgeType.Calls)
+            .Select(e => _graph.GetNode(e.ToId)!.Name)
+            .ToList();
+
+        Assert.Contains("GreetingsController", called);
+    }
 }

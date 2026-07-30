@@ -248,4 +248,79 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
 
         Assert.DoesNotContain(declaration.Id, uncovered);
     }
+
+    // ---- Id scoping ----------------------------------------------------------
+
+    [Fact]
+    public void RazorAndAssetIds_AreScopedByProject()
+    {
+        var page = _solutionGraph!.Nodes.Single(n => n.Type == NodeType.RazorPage);
+
+        Assert.StartsWith("page:SampleWeb/", page.Id);
+        Assert.Equal("SampleWeb", page.GetProperty<string>("project"));
+
+        var siteJs = _solutionGraph.Nodes.Single(n => n.Type == NodeType.JavaScriptFile && n.Name == "site.js");
+        Assert.Equal("js:SampleWeb/wwwroot/js/site.js", siteJs.Id);
+    }
+
+    [Fact]
+    public void SingleProjectBuild_KeepsUnscopedIds()
+    {
+        // Existing saved graphs and their ids must survive this change.
+        var page = _webOnlyGraph!.Nodes.Single(n => n.Type == NodeType.RazorPage);
+
+        Assert.StartsWith("page:Pages", page.Id);
+        Assert.Contains(_webOnlyGraph.Nodes, n => n.Id == "js:wwwroot/js/site.js");
+    }
+
+    // ---- Inline scripts ------------------------------------------------------
+
+    [Fact]
+    public void Builds_InlineScriptNode_AlongsideTheExternalFile()
+    {
+        var scripts = _solutionGraph!.NodesOfType(NodeType.JavaScriptFile).ToList();
+
+        var inline = scripts.SingleOrDefault(s => s.GetProperty<bool>("inline"));
+        Assert.NotNull(inline);
+        Assert.Contains("#inline-", inline!.Id);
+        Assert.NotNull(inline.LineStart);
+
+        // The external file is still its own node, not absorbed into the page.
+        Assert.Contains(scripts, s => s.Name == "site.js" && !s.GetProperty<bool>("inline"));
+    }
+
+    [Fact]
+    public void InlineScript_IsWiredToItsPage()
+    {
+        var inline = _solutionGraph!.NodesOfType(NodeType.JavaScriptFile).Single(s => s.GetProperty<bool>("inline"));
+
+        var referencedBy = _solutionGraph.Incoming(inline.Id)
+            .Where(e => e.Type == EdgeType.References)
+            .Select(e => _solutionGraph.GetNode(e.FromId)!.Type)
+            .ToList();
+
+        Assert.Contains(NodeType.RazorPage, referencedBy);
+    }
+
+    [Fact]
+    public void InlineScript_ParticipatesInServerToClientCoupling()
+    {
+        var inline = _solutionGraph!.NodesOfType(NodeType.JavaScriptFile).Single(s => s.GetProperty<bool>("inline"));
+
+        var coupling = _solutionGraph.Incoming(inline.Id).SingleOrDefault(e => e.Type == EdgeType.ViewDataReadBy);
+
+        // data-catalog-count is rendered from server state and read by the inline
+        // block. Before inline extraction this handoff had no node to attach to.
+        Assert.NotNull(coupling);
+        var keys = Assert.IsType<List<string>>(coupling!.Properties["dataKeys"]);
+        Assert.Contains("catalog-count", keys);
+    }
+
+    [Fact]
+    public void InlineScript_ShowsUpInTheMismatchReport()
+    {
+        var mismatches = new GraphQuery(_solutionGraph!).FindServerToJsMismatches().ToList();
+
+        Assert.Contains(mismatches, m => m.JsNode.GetProperty<bool>("inline"));
+    }
 }

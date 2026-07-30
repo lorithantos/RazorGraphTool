@@ -55,7 +55,11 @@ public sealed class TextRazorExtractor
                 .Where(s => s.Length > 0)
                 .ToList(),
             ViewDataKeys = RazorTextScanners.ScanViewDataKeys(stripped),
+            AssetReferences = RazorTextScanners.ScanAssetReferences(stripped),
+            ServerDataKeys = RazorTextScanners.ScanServerBoundDataKeys(stripped),
+            RenderedDataKeys = RazorTextScanners.ScanRenderedDataKeys(stripped),
             Partials = RazorTextScanners.ScanPartialRenders(stripped, lines),
+            InlineScripts = RazorTextScanners.ScanInlineScripts(stripped, lines),
             TagHelpers = RazorTextScanners.ScanAspTagHelpers(stripped, lines),
             Sections = SectionDirectiveRegex.Matches(stripped)
                 .Select(x => x.Groups["n"].Value)
@@ -99,6 +103,35 @@ internal static class RazorTextScanners
     private static readonly Regex AttrRegex = new(
         @"(?<name>[\w-]+)\s*=\s*(?:""(?<val>[^""]*)""|'(?<val>[^']*)')", RegexOptions.Compiled);
 
+    private static readonly Regex ScriptSrcRegex = new(
+        @"<script\b[^>]*?\bsrc\s*=\s*(?:""|')(?<src>[^""']+)(?:""|')", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex StylesheetHrefRegex = new(
+        @"<link\b[^>]*?\bhref\s*=\s*(?:""|')(?<href>[^""']+\.css[^""']*)(?:""|')", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    // A <script> block with no src is code that ships inside the page. Attributes
+    // are matched with [^>]* rather than a quote-aware pattern because a '>' inside
+    // a script attribute value does not occur in practice, and the alternative
+    // costs backtracking on every page.
+    private static readonly Regex InlineScriptRegex = new(
+        @"<script\b(?<attrs>[^>]*)>(?<body>.*?)</script\s*>",
+        RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex ScriptSrcAttrRegex = new(
+        @"\bsrc\s*=", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // A data-* attribute whose value contains a Razor expression is server-prepared
+    // state crossing into the DOM. A literal value (data-state="None") is markup the
+    // server never computed, so it is not a server-to-client dependency.
+    private static readonly Regex ServerBoundDataAttrRegex = new(
+        @"\bdata-(?<key>[\w-]+)\s*=\s*(?:""(?<val>[^""]*@[^""]*)""|'(?<val>[^']*@[^']*)')", RegexOptions.Compiled);
+
+    // Any rendered data-* attribute, literal or bound. Answers "does this
+    // attribute exist in the DOM at all", which is a different question from
+    // "does the server compute its value".
+    private static readonly Regex AnyDataAttrRegex = new(
+        @"\bdata-(?<key>[\w-]+)\s*=\s*(?:""|')", RegexOptions.Compiled);
+
     /// <summary>
     /// Replaces @* ... *@ comments with an equivalent number of newlines so that
     /// line numbers computed from the stripped text still match the original file.
@@ -140,6 +173,69 @@ internal static class RazorTextScanners
         }
 
         return partials;
+    }
+
+    /// <summary>
+    /// Asset references written by the page: script src and stylesheet href, in
+    /// source order and deduplicated. Values are returned as authored ("~/js/x.js");
+    /// resolution to a wwwroot-relative id is the caller's job.
+    /// </summary>
+    public static List<string> ScanAssetReferences(string text) =>
+        ScriptSrcRegex.Matches(text).Select(m => m.Groups["src"].Value)
+            .Concat(StylesheetHrefRegex.Matches(text).Select(m => m.Groups["href"].Value))
+            .Select(s => s.Trim())
+            .Where(s => s.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    /// <summary>
+    /// data-* keys whose rendered value comes from server state. These are the
+    /// keys a client script can legitimately expect to find in the DOM.
+    /// </summary>
+    public static List<string> ScanServerBoundDataKeys(string text) =>
+        ServerBoundDataAttrRegex.Matches(text)
+            .Select(m => m.Groups["key"].Value.ToLowerInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    /// <summary>
+    /// Every data-* key the markup emits, whether its value is server-computed or
+    /// a constant. A script reading a constant attribute is not broken, so this is
+    /// the set that decides whether a key is unbound.
+    /// </summary>
+    public static List<string> ScanRenderedDataKeys(string text) =>
+        AnyDataAttrRegex.Matches(text)
+            .Select(m => m.Groups["key"].Value.ToLowerInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    /// <summary>
+    /// Script blocks authored inside the page rather than loaded from wwwroot.
+    /// They are the half of the client tier an asset scan cannot see: same DOM
+    /// access, same fetch calls, no file to point a node at. Blocks carrying a
+    /// src attribute are excluded — those are external references and are already
+    /// covered by <see cref="ScanAssetReferences"/>.
+    /// </summary>
+    public static List<InlineScriptInfo> ScanInlineScripts(string text, LineMap lines)
+    {
+        var scripts = new List<InlineScriptInfo>();
+
+        foreach (Match m in InlineScriptRegex.Matches(text))
+        {
+            if (ScriptSrcAttrRegex.IsMatch(m.Groups["attrs"].Value)) continue;
+
+            var body = m.Groups["body"].Value;
+            if (string.IsNullOrWhiteSpace(body)) continue;
+
+            scripts.Add(new InlineScriptInfo
+            {
+                Body = body,
+                Line = lines.LineAt(m.Index),
+                LineCount = body.Count(c => c == '\n') + 1
+            });
+        }
+
+        return scripts;
     }
 
     public static List<TagHelperInfo> ScanAspTagHelpers(string text, LineMap lines)
