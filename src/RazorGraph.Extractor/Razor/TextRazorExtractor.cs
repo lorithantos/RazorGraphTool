@@ -9,6 +9,11 @@ using System.Text.RegularExpressions;
 /// </summary>
 public sealed class TextRazorExtractor
 {
+    private readonly string? _idScope;
+
+    /// <summary>See <see cref="RazorExtractor.PageId"/> for what idScope is for.</summary>
+    public TextRazorExtractor(string? idScope = null) => _idScope = idScope;
+
     // \r?$ — in .NET multiline mode $ matches before \n only, so CRLF files need the \r allowed.
     private static readonly Regex PageDirectiveRegex = new(
         @"^\s*@page(?:[ \t]+(?:""|')(?<route>[^""']*)(?:""|'))?[ \t]*\r?$",
@@ -35,7 +40,7 @@ public sealed class TextRazorExtractor
 
         return new RazorPageInfo
         {
-            Id = $"page:{relativePath}",
+            Id = RazorExtractor.PageId(_idScope, relativePath),
             FilePath = filePath,
             RelativePath = relativePath,
             IsPage = pageMatch.Success,

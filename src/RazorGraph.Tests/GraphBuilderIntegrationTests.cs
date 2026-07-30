@@ -143,4 +143,44 @@ public class GraphBuilderIntegrationTests : IAsyncLifetime
         // The regression this guards: every symbol previously got the placeholder LineStart = 1.
         Assert.Contains(symbolNodes, n => n.LineStart > 1);
     }
+
+    // ---- Method-level extraction -------------------------------------------
+
+    [Fact]
+    public void Builds_MethodNodes_ContainedByTheirDeclaringType()
+    {
+        var service = _graph!.Nodes.Single(n => n.Type == NodeType.ServiceImplementation && n.Name == "GreetingService");
+
+        var methods = _graph.Outgoing(service.Id)
+            .Where(e => e.Type == EdgeType.Contains)
+            .Select(e => _graph.GetNode(e.ToId)!)
+            .ToList();
+
+        Assert.NotEmpty(methods);
+        Assert.All(methods, m => Assert.Equal(NodeType.Method, m.Type));
+        Assert.All(methods, m => Assert.True(m.LineStart > 0, $"{m.Id} has no line number"));
+    }
+
+    [Fact]
+    public void Builds_ClassNodes_ForTypesTheClassifierUsedToDrop()
+    {
+        // Program is neither page, controller, service, nor view model. Before
+        // Class emission it was absent, and any call through it was unreachable.
+        Assert.Contains(_graph!.Nodes, n => n.Type == NodeType.Class);
+    }
+
+    [Fact]
+    public void Builds_CallEdges_BetweenMethodNodesInThisCompilation()
+    {
+        var callEdges = _graph!.Edges.Where(e => e.Type == EdgeType.Calls).ToList();
+
+        Assert.NotEmpty(callEdges);
+
+        // Both endpoints must resolve, or "who calls this" returns a dangling id.
+        Assert.All(callEdges, e =>
+        {
+            Assert.NotNull(_graph.GetNode(e.FromId));
+            Assert.NotNull(_graph.GetNode(e.ToId));
+        });
+    }
 }

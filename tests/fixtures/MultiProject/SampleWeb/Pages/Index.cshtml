@@ -1,0 +1,22 @@
+@page
+@model SampleWeb.Pages.IndexModel
+@{
+    ViewData["Title"] = "Catalogs";
+}
+
+<div id="catalogs" data-catalog-count="@Model.Catalogs.Count">
+    @foreach (var catalog in Model.Catalogs)
+    {
+        <span>@catalog</span>
+    }
+</div>
+
+<script src="~/js/site.js"></script>
+
+<script>
+    // Inline block: same DOM access and fetch shape as a wwwroot file, but no
+    // file of its own. Before inline extraction this coupling was invisible.
+    const el = document.getElementById('catalogs');
+    const count = el.dataset.catalogCount;
+    fetch('/api/catalogs').then(r => r.json());
+</script>

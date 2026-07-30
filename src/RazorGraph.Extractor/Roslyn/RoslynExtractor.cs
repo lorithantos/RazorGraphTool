@@ -13,8 +13,7 @@ using RazorGraph.Core.Graph;
 public sealed class RoslynExtractor : IAsyncDisposable
 {
     private MSBuildWorkspace? _workspace;
-    private Compilation? _compilation;
-    private Project? _project;
+    private readonly List<LoadedProject> _loaded = new();
 
     // Must run before any Microsoft.Build type is JITed; the ctor body is safe
     // because MSBuild types are first referenced inside LoadProjectAsync.
@@ -25,34 +24,91 @@ public sealed class RoslynExtractor : IAsyncDisposable
         if (!MSBuildLocator.IsRegistered) MSBuildLocator.RegisterDefaults();
     }
 
+    /// <summary>One compiled project and the Roslyn project it came from.</summary>
+    public sealed record LoadedProject(Project Project, Compilation Compilation)
+    {
+        public string Name => Project.Name;
+        public string? FilePath => Project.FilePath;
+    }
+
+    /// <summary>
+    /// Every project loaded by the most recent call. One entry for a project or
+    /// single-project solution load; all of them after LoadAllProjectsAsync.
+    /// </summary>
+    public IReadOnlyList<LoadedProject> LoadedProjects => _loaded;
+
+    /// <summary>The solution, when one was opened. Null for a bare project load.</summary>
+    public Solution? Solution { get; private set; }
+
     /// <summary>
     /// The compilation from the most recent load, for consumers that need
     /// symbol-level analysis (e.g., tag helper discovery).
     /// </summary>
-    public Compilation? Compilation => _compilation;
+    public Compilation? Compilation => _loaded.Count > 0 ? _loaded[0].Compilation : null;
 
     /// <summary>File path of the loaded project, for locating its Razor files.</summary>
-    public string? ProjectFilePath => _project?.FilePath;
+    public string? ProjectFilePath => _loaded.Count > 0 ? _loaded[0].FilePath : null;
 
     public async Task<Compilation> LoadProjectAsync(string projectPath, CancellationToken ct = default)
     {
         _workspace = MSBuildWorkspace.Create();
-        _project = await _workspace.OpenProjectAsync(projectPath, cancellationToken: ct);
-        _compilation = await _project.GetCompilationAsync(ct)
+        var project = await _workspace.OpenProjectAsync(projectPath, cancellationToken: ct);
+        var compilation = await project.GetCompilationAsync(ct)
             ?? throw new InvalidOperationException($"Failed to compile project: {projectPath}");
-        return _compilation;
+
+        _loaded.Clear();
+        _loaded.Add(new LoadedProject(project, compilation));
+        return compilation;
     }
 
     public async Task<Compilation> LoadSolutionAsync(string solutionPath, string projectName, CancellationToken ct = default)
     {
         _workspace = MSBuildWorkspace.Create();
-        var solution = await _workspace.OpenSolutionAsync(solutionPath, cancellationToken: ct);
-        _project = solution.Projects.FirstOrDefault(p =>
+        Solution = await _workspace.OpenSolutionAsync(solutionPath, cancellationToken: ct);
+        var project = Solution.Projects.FirstOrDefault(p =>
             p.Name.Equals(projectName, StringComparison.OrdinalIgnoreCase))
             ?? throw new InvalidOperationException($"Project '{projectName}' not found in solution.");
-        _compilation = await _project.GetCompilationAsync(ct)
+        var compilation = await project.GetCompilationAsync(ct)
             ?? throw new InvalidOperationException($"Failed to compile project: {projectName}");
-        return _compilation;
+
+        _loaded.Clear();
+        _loaded.Add(new LoadedProject(project, compilation));
+        return compilation;
+    }
+
+    /// <summary>
+    /// Load every project in the solution. This is what makes a cross-project
+    /// edge possible at all: call resolution is scoped to the assemblies that
+    /// were compiled, so a graph built one project at a time can never contain
+    /// an edge from a test to the code it tests.
+    /// </summary>
+    public async Task<IReadOnlyList<LoadedProject>> LoadAllProjectsAsync(string solutionPath, CancellationToken ct = default)
+    {
+        _workspace = MSBuildWorkspace.Create();
+        Solution = await _workspace.OpenSolutionAsync(solutionPath, cancellationToken: ct);
+
+        _loaded.Clear();
+        foreach (var project in Solution.Projects)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            // A project that will not compile is reported and skipped rather than
+            // failing the whole solution: a partial graph beats no graph, and the
+            // omission is visible in the project list.
+            var compilation = await project.GetCompilationAsync(ct);
+            if (compilation == null)
+            {
+                Console.Error.WriteLine($"Warning: no compilation for project '{project.Name}'; skipped.");
+                continue;
+            }
+
+            _loaded.Add(new LoadedProject(project, compilation));
+        }
+
+        if (_loaded.Count == 0)
+            throw new InvalidOperationException($"No project in '{solutionPath}' produced a compilation.");
+
+        return _loaded;
     }
 
     /// <summary>
@@ -60,25 +116,28 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// </summary>
     public IEnumerable<SymbolInfo> ExtractSymbols()
     {
-        if (_compilation == null) throw new InvalidOperationException("Load a project first.");
+        if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
 
-        foreach (var tree in _compilation.SyntaxTrees)
+        foreach (var loaded in _loaded)
         {
-            var model = _compilation.GetSemanticModel(tree);
-            var root = tree.GetRoot();
-
-            foreach (var typeDecl in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
+            foreach (var tree in loaded.Compilation.SyntaxTrees)
             {
-                var symbol = model.GetDeclaredSymbol(typeDecl);
-                if (symbol == null) continue;
+                var model = loaded.Compilation.GetSemanticModel(tree);
+                var root = tree.GetRoot();
 
-                var info = ClassifySymbol(symbol);
-                if (info != null) yield return info;
+                foreach (var typeDecl in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
+                {
+                    var symbol = model.GetDeclaredSymbol(typeDecl);
+                    if (symbol == null) continue;
+
+                    var info = ClassifySymbol(symbol, loaded.Name);
+                    if (info != null) yield return info;
+                }
             }
         }
     }
 
-    private SymbolInfo? ClassifySymbol(INamedTypeSymbol symbol)
+    private SymbolInfo? ClassifySymbol(INamedTypeSymbol symbol, string projectName)
     {
         var baseType = symbol.BaseType?.ToDisplayString() ?? "";
         var interfaces = symbol.AllInterfaces.Select(i => i.ToDisplayString()).ToList();
@@ -90,6 +149,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
             return new SymbolInfo
             {
                 Id = $"pm:{symbol.ToDisplayString()}",
+                Project = projectName,
                 Type = NodeType.PageModel,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
@@ -99,6 +159,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 BaseType = baseType,
                 Properties = ExtractProperties(symbol),
                 Methods = ExtractMethods(symbol),
+                MethodNodes = ExtractMethodNodes(symbol),
                 InjectedServices = ExtractInjectedServices(symbol)
             };
         }
@@ -109,6 +170,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
             return new SymbolInfo
             {
                 Id = $"ctrl:{symbol.ToDisplayString()}",
+                Project = projectName,
                 Type = NodeType.ApiController,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
@@ -117,6 +179,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 LineEnd = lineEnd,
                 BaseType = baseType,
                 Methods = ExtractControllerActions(symbol),
+                MethodNodes = ExtractMethodNodes(symbol),
                 InjectedServices = ExtractInjectedServices(symbol)
             };
         }
@@ -127,6 +190,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
             return new SymbolInfo
             {
                 Id = $"svc:{symbol.ToDisplayString()}",
+                Project = projectName,
                 Type = symbol.TypeKind == TypeKind.Interface ? NodeType.ServiceInterface : NodeType.ServiceImplementation,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
@@ -134,7 +198,8 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 LineStart = lineStart,
                 LineEnd = lineEnd,
                 ImplementedInterfaces = interfaces.Where(i => i.EndsWith("Service")).ToList(),
-                Methods = ExtractMethods(symbol)
+                Methods = ExtractMethods(symbol),
+                MethodNodes = ExtractMethodNodes(symbol)
             };
         }
 
@@ -144,18 +209,47 @@ public sealed class RoslynExtractor : IAsyncDisposable
             return new SymbolInfo
             {
                 Id = $"vm:{symbol.ToDisplayString()}",
+                Project = projectName,
                 Type = NodeType.ViewModel,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
                 FilePath = symbol.Locations.FirstOrDefault()?.SourceTree?.FilePath,
                 LineStart = lineStart,
                 LineEnd = lineEnd,
-                Properties = ExtractProperties(symbol)
+                Properties = ExtractProperties(symbol),
+                MethodNodes = ExtractMethodNodes(symbol)
             };
         }
 
-        return null;
+        // Everything else that is still a declared type in this project. Without
+        // this the graph silently omits most of the codebase -- helpers, domain
+        // types, extension classes -- and "who calls this" cannot be answered
+        // because the caller was never a node.
+        if (IsCompilerGenerated(symbol)) return null;
+
+        return new SymbolInfo
+        {
+            Id = $"type:{symbol.ToDisplayString()}",
+            Project = projectName,
+            Type = NodeType.Class,
+            Name = symbol.Name,
+            FullName = symbol.ToDisplayString(),
+            FilePath = symbol.Locations.FirstOrDefault()?.SourceTree?.FilePath,
+            LineStart = lineStart,
+            LineEnd = lineEnd,
+            BaseType = baseType,
+            ImplementedInterfaces = interfaces,
+            Properties = ExtractProperties(symbol),
+            Methods = ExtractMethods(symbol),
+            MethodNodes = ExtractMethodNodes(symbol),
+            InjectedServices = ExtractInjectedServices(symbol)
+        };
     }
+
+    // Names the compiler mints for itself (<>c__DisplayClass, record equality
+    // helpers) are never source the user can navigate to.
+    private static bool IsCompilerGenerated(INamedTypeSymbol symbol) =>
+        symbol.IsImplicitlyDeclared || symbol.Name.StartsWith('<') || symbol.Name.Length == 0;
 
     private static (int? Start, int? End) GetLines(INamedTypeSymbol symbol)
     {
@@ -203,6 +297,126 @@ public sealed class RoslynExtractor : IAsyncDisposable
             })
             .ToList();
 
+    /// <summary>
+    /// Every ordinary method on the type, at any accessibility, as a candidate
+    /// graph node. Distinct from <see cref="ExtractMethods"/>, which describes the
+    /// type's public surface: a call graph that omitted private methods would
+    /// break every chain that passes through a helper.
+    /// </summary>
+    private List<MethodDetail> ExtractMethodNodes(INamedTypeSymbol symbol) =>
+        symbol.GetMembers().OfType<IMethodSymbol>()
+            .Where(m => m.MethodKind == MethodKind.Ordinary && !m.IsImplicitlyDeclared)
+            .Select(m =>
+            {
+                var syntaxRef = m.DeclaringSyntaxReferences.FirstOrDefault();
+                int? line = syntaxRef == null
+                    ? null
+                    : syntaxRef.SyntaxTree.GetLineSpan(syntaxRef.Span).StartLinePosition.Line + 1;
+
+                return new MethodDetail
+                {
+                    Id = MethodId(m),
+                    Name = m.Name,
+                    Signature = $"{m.Name}({string.Join(", ", m.Parameters.Select(p => p.Type.ToDisplayString()))})",
+                    ReturnType = m.ReturnType.ToDisplayString(),
+                    IsAsync = m.IsAsync,
+                    IsPublic = m.DeclaredAccessibility == Accessibility.Public,
+                    IsStatic = m.IsStatic,
+                    IsTest = IsTestMethod(m),
+                    // Interface members and abstract methods have no body. They are
+                    // still nodes worth having (calls bind to them), but they are not
+                    // code that a test could execute.
+                    IsAbstract = m.IsAbstract,
+                    FilePath = m.Locations.FirstOrDefault()?.SourceTree?.FilePath,
+                    LineStart = line
+                };
+            })
+            .ToList();
+
+    /// <summary>
+    /// Attribute names that mark a method as a test across the three frameworks
+    /// in common use. Matched by simple name because the attribute may come from
+    /// any of several assemblies and the short names do not collide with
+    /// anything else in practice.
+    /// </summary>
+    private static readonly HashSet<string> TestAttributeNames = new(StringComparer.Ordinal)
+    {
+        "FactAttribute", "TheoryAttribute",                        // xUnit
+        "TestAttribute", "TestCaseAttribute", "TestCaseSourceAttribute", // NUnit
+        "TestMethodAttribute", "DataTestMethodAttribute"           // MSTest
+    };
+
+    private static bool IsTestMethod(IMethodSymbol method) =>
+        method.GetAttributes().Any(a =>
+            a.AttributeClass != null && TestAttributeNames.Contains(a.AttributeClass.Name));
+
+    /// <summary>
+    /// Stable id for a method, shared by the declaration site and every call site.
+    /// Built from the original definition so a generic instantiation
+    /// (Repo&lt;string&gt;.Get) resolves to the same node as its definition, and
+    /// parameter types are included so overloads stay distinct.
+    /// </summary>
+    public static string MethodId(IMethodSymbol method)
+    {
+        var def = method.OriginalDefinition;
+        var parameters = string.Join(",", def.Parameters.Select(p => p.Type.ToDisplayString()));
+        var container = def.ContainingType?.ToDisplayString() ?? "global";
+        return $"m:{container}.{def.Name}({parameters})";
+    }
+
+    /// <summary>
+    /// Resolve call sites to (caller, callee) method-id pairs. Only calls whose
+    /// target is declared in one of the loaded projects are returned -- an edge to
+    /// String.Format would be noise, not navigation.
+    ///
+    /// Membership is tested by assembly *name*, not symbol identity. A call into
+    /// a sibling project may bind to either a source symbol or a metadata symbol
+    /// depending on how the workspace resolved the reference, and those are not
+    /// reference-equal; the name is the same either way, and so is the MethodId
+    /// the node was registered under.
+    /// </summary>
+    public IEnumerable<(string FromId, string ToId)> ExtractCallEdges()
+    {
+        if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
+
+        var inScope = _loaded
+            .Select(l => l.Compilation.Assembly.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var loaded in _loaded)
+        {
+            foreach (var tree in loaded.Compilation.SyntaxTrees)
+            {
+                var model = loaded.Compilation.GetSemanticModel(tree);
+
+                foreach (var decl in tree.GetRoot().DescendantNodes().OfType<BaseMethodDeclarationSyntax>())
+                {
+                    if (model.GetDeclaredSymbol(decl) is not IMethodSymbol caller) continue;
+                    var fromId = MethodId(caller);
+
+                    foreach (var invocation in decl.DescendantNodes().OfType<InvocationExpressionSyntax>())
+                    {
+                        var symbolInfo = model.GetSymbolInfo(invocation);
+                        // CandidateSymbols covers calls the compiler could not fully bind
+                        // (an overload set narrowed by a dynamic or erroneous argument).
+                        var target = symbolInfo.Symbol as IMethodSymbol
+                            ?? symbolInfo.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
+                        if (target == null) continue;
+
+                        var def = target.OriginalDefinition;
+                        var assembly = def.ContainingAssembly?.Name;
+                        if (assembly == null || !inScope.Contains(assembly)) continue;
+
+                        var toId = MethodId(def);
+                        if (toId == fromId) continue; // direct recursion adds no navigational value
+
+                        yield return (fromId, toId);
+                    }
+                }
+            }
+        }
+    }
+
     private List<string> ExtractInjectedServices(INamedTypeSymbol symbol)
     {
         var ctor = symbol.InstanceConstructors.FirstOrDefault(c => c.DeclaredAccessibility == Accessibility.Public);
@@ -245,6 +459,10 @@ public sealed class SymbolInfo
     public required NodeType Type { get; init; }
     public required string Name { get; init; }
     public required string FullName { get; init; }
+
+    /// <summary>Name of the project whose compilation declared this type.</summary>
+    public string? Project { get; init; }
+
     public string? FilePath { get; init; }
     public int? LineStart { get; init; }
     public int? LineEnd { get; init; }
@@ -253,6 +471,33 @@ public sealed class SymbolInfo
     public List<string> InjectedServices { get; init; } = new();
     public List<PropertyInfo> Properties { get; init; } = new();
     public List<MethodInfo> Methods { get; init; } = new();
+
+    /// <summary>Members promoted to their own graph nodes; see ExtractMethodNodes.</summary>
+    public List<MethodDetail> MethodNodes { get; init; } = new();
+}
+
+/// <summary>
+/// A method as a graph node: identity, location, and the shape a reader needs to
+/// decide whether to open the file.
+/// </summary>
+public sealed class MethodDetail
+{
+    public required string Id { get; init; }
+    public required string Name { get; init; }
+    public required string Signature { get; init; }
+    public string ReturnType { get; init; } = string.Empty;
+    public bool IsAsync { get; init; }
+    public bool IsPublic { get; init; }
+    public bool IsStatic { get; init; }
+
+    /// <summary>Carries a [Fact]/[Test]/[TestMethod]-style attribute.</summary>
+    public bool IsTest { get; init; }
+
+    /// <summary>Declared without a body — an interface member or an abstract method.</summary>
+    public bool IsAbstract { get; init; }
+
+    public string? FilePath { get; init; }
+    public int? LineStart { get; init; }
 }
 
 public sealed class PropertyInfo

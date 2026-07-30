@@ -15,13 +15,25 @@ public sealed class RazorExtractor
 {
     private readonly RazorProjectEngine _engine;
     private readonly string _projectRoot;
-    private readonly TextRazorExtractor _fallback = new();
+    private readonly string? _idScope;
+    private readonly TextRazorExtractor _fallback;
     private IReadOnlyList<TagHelperDescriptor> _tagHelpers = Array.Empty<TagHelperDescriptor>();
     private bool _warnedFallback;
 
-    public RazorExtractor(string projectRoot)
+    /// <summary>
+    /// Page ids are relative to a project root, so two projects in one solution
+    /// can both produce "page:Pages/Index.cshtml". Solution builds pass the
+    /// project name as <paramref name="idScope"/> to keep ids unique; a
+    /// single-project build passes null and its ids are unchanged.
+    /// </summary>
+    public static string PageId(string? idScope, string relativePath) =>
+        idScope is null ? $"page:{relativePath}" : $"page:{idScope}/{relativePath}";
+
+    public RazorExtractor(string projectRoot, string? idScope = null)
     {
         _projectRoot = projectRoot;
+        _idScope = idScope;
+        _fallback = new TextRazorExtractor(idScope);
         var fileSystem = RazorProjectFileSystem.Create(projectRoot);
         _engine = RazorProjectEngine.Create(RazorConfiguration.Default, fileSystem, builder =>
         {
@@ -88,7 +100,7 @@ public sealed class RazorExtractor
 
         return new RazorPageInfo
         {
-            Id = $"page:{relativePath}",
+            Id = PageId(_idScope, relativePath),
             FilePath = filePath,
             RelativePath = relativePath,
             IsPage = IsRazorPage(root),

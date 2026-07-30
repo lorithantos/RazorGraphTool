@@ -16,6 +16,13 @@ public sealed class GraphBuilder : IAsyncDisposable
     private readonly CodeGraph _graph = new();
     private readonly RoslynExtractor _roslyn = new();
 
+    /// <summary>
+    /// Symbols from every loaded project. Razor correlation runs per project but
+    /// must resolve against the whole solution: a page's @model can name a type
+    /// declared in a class library.
+    /// </summary>
+    private readonly List<SymbolInfo> _symbols = new();
+
     public async Task<CodeGraph> BuildFromProjectAsync(string projectPath, CancellationToken ct = default)
     {
         var projectDir = Path.GetDirectoryName(Path.GetFullPath(projectPath))
@@ -37,38 +44,88 @@ public sealed class GraphBuilder : IAsyncDisposable
         return BuildGraph(projectDir);
     }
 
+    /// <summary>
+    /// Build one graph spanning every project in the solution.
+    ///
+    /// This is not the per-project build run in a loop. Call resolution is scoped
+    /// to the set of compiled assemblies, so edges that leave a project -- a test
+    /// exercising a service, a page calling into a class library -- exist only if
+    /// both ends were compiled together. Node ids for file-relative concepts are
+    /// qualified by project name to keep them unique.
+    /// </summary>
+    public async Task<CodeGraph> BuildFromSolutionAllAsync(string solutionPath, CancellationToken ct = default)
+    {
+        await _roslyn.LoadAllProjectsAsync(solutionPath, ct);
+        return BuildSolutionGraph();
+    }
+
     private CodeGraph BuildGraph(string projectDir)
     {
-        // Phase 1: Roslyn semantic extraction
-        var symbols = _roslyn.ExtractSymbols().ToList();
+        BuildRoslynLayer();
+        BuildRazorLayer(projectDir, idScope: null, _roslyn.Compilation);
+        return _graph;
+    }
 
-        // Phase 2: Add Roslyn nodes to graph
+    private CodeGraph BuildSolutionGraph()
+    {
+        BuildRoslynLayer();
+
+        foreach (var loaded in _roslyn.LoadedProjects)
+        {
+            if (loaded.FilePath == null) continue;
+            var projectDir = Path.GetDirectoryName(Path.GetFullPath(loaded.FilePath));
+            if (projectDir == null) continue;
+
+            BuildRazorLayer(projectDir, loaded.Name, loaded.Compilation);
+        }
+
+        AddProjectNodes();
+        return _graph;
+    }
+
+    /// <summary>
+    /// Phases 1-4b: everything Roslyn knows, across every loaded project. Symbols
+    /// from all projects are added before any call edge, because a call edge whose
+    /// target has not been registered yet is silently dropped.
+    /// </summary>
+    private void BuildRoslynLayer()
+    {
+        var symbols = _roslyn.ExtractSymbols().ToList();
+        _symbols.AddRange(symbols);
+
         foreach (var sym in symbols)
         {
             AddSymbolNode(sym);
+            AddMethodNodes(sym);
         }
 
-        // Phase 3: Add inheritance / implementation edges
         foreach (var sym in symbols)
         {
             AddInheritanceEdges(sym);
         }
 
-        // Phase 4: Add injection edges
         foreach (var sym in symbols)
         {
             AddInjectionEdges(sym);
         }
 
-        // Phase 5: Razor syntax extraction
+        AddCallEdges();
+    }
+
+    /// <summary>
+    /// Phases 5-8 for one project: Razor files, their correlation to the symbols
+    /// already in the graph, partial cross-references, and client assets.
+    /// </summary>
+    private void BuildRazorLayer(string projectDir, string? idScope, Compilation? compilation)
+    {
         var razorFiles = Directory.EnumerateFiles(projectDir, "*.cshtml", SearchOption.AllDirectories)
             .Concat(Directory.EnumerateFiles(projectDir, "*.razor", SearchOption.AllDirectories))
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
                      && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
             .ToList();
 
-        var razorExtractor = new RazorExtractor(projectDir);
-        TryProvideTagHelpers(razorExtractor);
+        var razorExtractor = new RazorExtractor(projectDir, idScope);
+        TryProvideTagHelpers(razorExtractor, compilation);
         var razorInfos = new List<RazorPageInfo>();
 
         foreach (var file in razorFiles)
@@ -77,7 +134,7 @@ public sealed class GraphBuilder : IAsyncDisposable
             {
                 var info = razorExtractor.ExtractPage(file);
                 razorInfos.Add(info);
-                AddRazorNode(info);
+                AddRazorNode(info, idScope);
             }
             catch (Exception ex)
             {
@@ -86,19 +143,15 @@ public sealed class GraphBuilder : IAsyncDisposable
             }
         }
 
-        // Phase 6: Correlate Razor ↔ Roslyn
         foreach (var info in razorInfos)
         {
-            CorrelateRazorToRoslyn(info, symbols);
+            CorrelateRazorToRoslyn(info, _symbols, idScope);
         }
 
-        // Phase 7: Cross-reference partials
         foreach (var info in razorInfos)
         {
             AddPartialEdges(info, razorInfos);
         }
-
-        return _graph;
     }
 
     /// <summary>
@@ -106,9 +159,8 @@ public sealed class GraphBuilder : IAsyncDisposable
     /// Razor parser can bind tag helper elements. Failure is non-fatal — the extractor's
     /// text scan still captures asp-* attributes.
     /// </summary>
-    private void TryProvideTagHelpers(RazorExtractor razorExtractor)
+    private void TryProvideTagHelpers(RazorExtractor razorExtractor, Compilation? compilation)
     {
-        var compilation = _roslyn.Compilation;
         if (compilation == null) return;
 
         try
@@ -153,6 +205,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         };
 
         node.SetProperty("fullName", sym.FullName);
+        if (sym.Project != null) node.SetProperty("project", sym.Project);
         if (sym.BaseType != null) node.SetProperty("baseType", sym.BaseType);
         if (sym.Properties.Count > 0) node.SetProperty("properties", sym.Properties.Select(p => p.Name).ToList());
         if (sym.Methods.Count > 0) node.SetProperty("methods", sym.Methods.Select(m => m.Name).ToList());
@@ -160,6 +213,115 @@ public sealed class GraphBuilder : IAsyncDisposable
 
         _graph.AddNode(node);
     }
+
+    private void AddMethodNodes(SymbolInfo sym)
+    {
+        foreach (var method in sym.MethodNodes)
+        {
+            // A partial class declared across two files yields the same method id
+            // twice; the first declaration wins rather than duplicating the node.
+            if (_graph.HasNode(method.Id)) continue;
+
+            var node = new GraphNode
+            {
+                Id = method.Id,
+                Type = NodeType.Method,
+                Name = method.Name,
+                FilePath = method.FilePath ?? sym.FilePath,
+                LineStart = method.LineStart
+            };
+
+            node.SetProperty("signature", method.Signature);
+            node.SetProperty("returnType", method.ReturnType);
+            node.SetProperty("declaringType", sym.FullName);
+            if (sym.Project != null) node.SetProperty("project", sym.Project);
+            if (method.IsAsync) node.SetProperty("isAsync", true);
+            if (method.IsStatic) node.SetProperty("isStatic", true);
+            if (method.IsTest) node.SetProperty("isTest", true);
+            if (method.IsAbstract) node.SetProperty("isAbstract", true);
+            node.SetProperty("isPublic", method.IsPublic);
+
+            _graph.AddNode(node);
+
+            _graph.AddEdge(new GraphEdge
+            {
+                FromId = sym.Id,
+                ToId = method.Id,
+                Type = EdgeType.Contains
+            });
+        }
+    }
+
+    private void AddCallEdges()
+    {
+        // Distinct because a caller invoking the same method three times is one
+        // dependency, and the graph is read as navigation rather than as a profile.
+        foreach (var (fromId, toId) in _roslyn.ExtractCallEdges().Distinct())
+        {
+            // Calls into types the classifier skipped have no node to point at.
+            if (!_graph.HasNode(fromId) || !_graph.HasNode(toId)) continue;
+
+            _graph.AddEdge(new GraphEdge
+            {
+                FromId = fromId,
+                ToId = toId,
+                Type = EdgeType.Calls
+            });
+        }
+    }
+
+    /// <summary>
+    /// One node per project plus the reference edges between them. Cheap
+    /// orientation for a solution graph: which assemblies exist and which way
+    /// the dependencies point, without reading 900 nodes to infer it.
+    /// </summary>
+    private void AddProjectNodes()
+    {
+        var loaded = _roslyn.LoadedProjects;
+        if (loaded.Count == 0) return;
+
+        var nodeCounts = _graph.Nodes
+            .Select(n => n.GetProperty<string>("project"))
+            .Where(p => p != null)
+            .GroupBy(p => p!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var project in loaded)
+        {
+            var node = new GraphNode
+            {
+                Id = ProjectId(project.Name),
+                Type = NodeType.Project,
+                Name = project.Name,
+                FilePath = project.FilePath
+            };
+
+            node.SetProperty("assemblyName", project.Compilation.AssemblyName ?? project.Name);
+            node.SetProperty("nodeCount", nodeCounts.TryGetValue(project.Name, out var c) ? c : 0);
+            _graph.AddNode(node);
+        }
+
+        var solution = _roslyn.Solution;
+        if (solution == null) return;
+
+        foreach (var project in loaded)
+        {
+            foreach (var reference in project.Project.ProjectReferences)
+            {
+                var target = solution.GetProject(reference.ProjectId);
+                if (target == null || !_graph.HasNode(ProjectId(target.Name))) continue;
+
+                _graph.AddEdge(new GraphEdge
+                {
+                    FromId = ProjectId(project.Name),
+                    ToId = ProjectId(target.Name),
+                    Type = EdgeType.DependsOn
+                });
+            }
+        }
+    }
+
+    private static string ProjectId(string projectName) => $"proj:{projectName}";
 
     private void AddInheritanceEdges(SymbolInfo sym)
     {
@@ -198,7 +360,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         }
     }
 
-    private void AddRazorNode(RazorPageInfo info)
+    private void AddRazorNode(RazorPageInfo info, string? idScope)
     {
         var node = new GraphNode
         {
@@ -208,6 +370,7 @@ public sealed class GraphBuilder : IAsyncDisposable
             FilePath = info.FilePath
         };
 
+        if (idScope != null) node.SetProperty("project", idScope);
         if (info.RouteTemplate != null) node.SetProperty("routeTemplate", info.RouteTemplate);
         if (info.ModelType != null) node.SetProperty("modelType", info.ModelType);
         if (info.Layout != null) node.SetProperty("layout", info.Layout);
@@ -217,7 +380,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         _graph.AddNode(node);
     }
 
-    private void CorrelateRazorToRoslyn(RazorPageInfo info, List<SymbolInfo> symbols)
+    private void CorrelateRazorToRoslyn(RazorPageInfo info, List<SymbolInfo> symbols, string? idScope)
     {
         // Link page → PageModel
         if (info.ModelType != null)
@@ -266,7 +429,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         // Link page → layout
         if (info.Layout != null)
         {
-            var layoutId = $"page:{info.Layout}";
+            var layoutId = RazorExtractor.PageId(idScope, info.Layout);
             if (_graph.HasNode(layoutId))
             {
                 _graph.AddEdge(new GraphEdge
