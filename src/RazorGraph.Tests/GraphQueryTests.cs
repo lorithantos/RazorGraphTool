@@ -132,4 +132,40 @@ public class GraphQueryTests
         Assert.Equal("Catalog", mismatches[0].ServerNode.Name);
         Assert.Equal("catalog.js", mismatches[0].JsNode.Name);
     }
+
+    [Fact]
+    public void TraceDataFlow_DescendsIntoContainedMethods()
+    {
+        // Regression: Calls edges hang off Method nodes, so a trace starting at a
+        // PageModel reported nothing but its views — the calls its own handler
+        // made were one un-followed Contains edge away.
+        var graph = new CodeGraph();
+        graph.AddNode(new GraphNode { Id = "pm:App.CatalogModel", Type = NodeType.PageModel, Name = "CatalogModel" });
+        graph.AddNode(new GraphNode { Id = "m:OnGet", Type = NodeType.Method, Name = "OnGet" });
+        graph.AddNode(new GraphNode { Id = "m:LoadCatalog", Type = NodeType.Method, Name = "LoadCatalog" });
+        graph.AddEdge(new GraphEdge { FromId = "pm:App.CatalogModel", ToId = "m:OnGet", Type = EdgeType.Contains });
+        graph.AddEdge(new GraphEdge { FromId = "m:OnGet", ToId = "m:LoadCatalog", Type = EdgeType.Calls });
+
+        var reached = new GraphQuery(graph)
+            .TraceDataFlow("pm:App.CatalogModel", maxDepth: 1)
+            .Select(t => t.Node.Name)
+            .ToList();
+
+        Assert.Contains("OnGet", reached);
+        Assert.Contains("LoadCatalog", reached);
+    }
+
+    [Fact]
+    public void TraceDataFlow_Incoming_FindsInjectedServiceConsumers()
+    {
+        var query = new GraphQuery(BuildSampleGraph());
+
+        var reached = query
+            .TraceDataFlow("pm:App.CatalogModel", maxDepth: 1, TraversalDirection.Incoming)
+            .Select(t => t.Node.Name)
+            .ToList();
+
+        // Outgoing cannot answer this: InjectedInto points service -> consumer.
+        Assert.Contains("ICatalogService", reached);
+    }
 }

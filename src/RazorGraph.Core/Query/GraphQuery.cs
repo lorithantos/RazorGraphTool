@@ -61,17 +61,31 @@ public sealed class GraphQuery
     }
 
     /// <summary>
-    /// Trace data flow: find all nodes reachable from start via Reads/Writes/BindsTo/Calls edges.
+    /// Edges that carry data or control between two places in the code.
+    /// Contains is in the set but is <see cref="StructuralEdges">transparent</see>:
+    /// call edges hang off Method nodes, so a trace that cannot descend from a
+    /// class into its own methods reports nothing for every class-level node —
+    /// which is exactly the node type callers start from.
     /// </summary>
-    public IEnumerable<(GraphNode Node, GraphEdge Edge, int Depth)> TraceDataFlow(string startId, int maxDepth = 3)
+    private static readonly HashSet<EdgeType> DataFlowEdges = new()
     {
-        var filter = new HashSet<EdgeType>
-        {
-            EdgeType.Reads, EdgeType.Writes, EdgeType.BindsTo,
-            EdgeType.Calls, EdgeType.InjectedInto, EdgeType.ReturnsView
-        };
-        return _graph.Traverse(startId, filter, maxDepth);
-    }
+        EdgeType.Reads, EdgeType.Writes, EdgeType.BindsTo,
+        EdgeType.Calls, EdgeType.InjectedInto, EdgeType.ReturnsView,
+        EdgeType.Contains
+    };
+
+    /// <summary>Followed without consuming depth; see CodeGraph.Traverse.</summary>
+    private static readonly HashSet<EdgeType> StructuralEdges = new() { EdgeType.Contains };
+
+    /// <summary>
+    /// Trace data flow: find all nodes reachable from start via Reads/Writes/BindsTo/Calls edges,
+    /// descending through containment for free.
+    /// </summary>
+    public IEnumerable<(GraphNode Node, GraphEdge Edge, int Depth)> TraceDataFlow(
+        string startId,
+        int maxDepth = 3,
+        TraversalDirection direction = TraversalDirection.Outgoing) =>
+        _graph.Traverse(startId, DataFlowEdges, maxDepth, direction, StructuralEdges);
 
     /// <summary>
     /// Find all render dependencies of a Razor page (layout, partials, sections, components).
