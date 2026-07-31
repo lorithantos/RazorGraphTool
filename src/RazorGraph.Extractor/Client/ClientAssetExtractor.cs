@@ -358,6 +358,20 @@ public sealed class ClientAssetExtractor
         return info;
     }
 
+    // JS comments are documentation, not behavior: a comment quoting
+    // getElementById('cart-total') must not create a contract. Whole-line //
+    // comments and /* */ blocks are removed before scanning; trailing //
+    // comments after code are left alone, because 'http://' inside a string
+    // is indistinguishable without a real parser — a known limit of the
+    // regex era, resolved when the JS parser lands.
+    private static readonly Regex BlockCommentRegex = new(
+        @"/\*.*?\*/", RegexOptions.Singleline | RegexOptions.Compiled);
+    private static readonly Regex LineCommentRegex = new(
+        @"(?m)^\s*//.*$", RegexOptions.Compiled);
+
+    private static string StripComments(string text) =>
+        LineCommentRegex.Replace(BlockCommentRegex.Replace(text, string.Empty), string.Empty);
+
     /// <summary>
     /// Run every client-side scanner over one body of JavaScript. Shared by the
     /// file path and the inline path so the two cannot drift apart.
@@ -365,6 +379,7 @@ public sealed class ClientAssetExtractor
     private static void PopulateFromScript(ClientAssetInfo info, string text)
     {
         if (text.Length == 0) return;
+        text = StripComments(text);
 
         foreach (Match m in DatasetAccessRegex.Matches(text))
             info.DataKeys.Add(CamelToKebab(m.Groups["key"].Value));

@@ -123,6 +123,20 @@ public class ClientAssetExtractorTests : IDisposable
     }
 
     [Fact]
+    public void Selectors_InComments_AreDocumentationNotBehavior()
+    {
+        WriteAsset("wwwroot/js/doc.js", @"
+            // document.getElementById('ghost') is how this used to work.
+            /* legacy: $('#ghost-two').show(); also el.id = 'ghost-three' */
+            document.getElementById('real');");
+
+        var asset = new ClientAssetExtractor().ExtractAssets(_projectDir).Single();
+
+        Assert.Equal(new[] { "real" }, asset.SelectorIds.ToArray());
+        Assert.Empty(asset.OwnIds);
+    }
+
+    [Fact]
     public void Selectors_ClassTokens_AreIgnored()
     {
         // Utility classes are shared with every framework stylesheet; collecting
