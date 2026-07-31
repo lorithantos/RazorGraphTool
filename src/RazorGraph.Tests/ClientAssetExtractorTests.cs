@@ -147,6 +147,24 @@ public class ClientAssetExtractorTests : IDisposable
     }
 
     [Fact]
+    public void ManifestInABuildAssetDirectory_CountsAsEvidence()
+    {
+        // The OrchardCore shape: each module keeps its package.json in Assets\,
+        // and the build copies the packages into wwwroot. A root-only manifest
+        // search misses it entirely.
+        WriteAsset("Assets/package.json", "{ \"devDependencies\": { \"codemirror\": \"^5\", \"trumbowyg\": \"^2\" } }");
+        WriteAsset("wwwroot/Scripts/codemirror/codemirror.js", "/* vendor */");
+        WriteAsset("wwwroot/Scripts/trumbowyg/trumbowyg.js", "/* vendor */");
+        WriteAsset("wwwroot/Scripts/bootstrap.js", "/* vendor, loose in the drop root */");
+
+        var extractor = new ClientAssetExtractor();
+
+        Assert.Empty(extractor.ExtractAssets(_projectDir));
+        Assert.Equal(3, extractor.LastSkipped.Count);
+        Assert.All(extractor.LastSkipped, s => Assert.Contains("Scripts", s.Reason));
+    }
+
+    [Fact]
     public void OneSharedDependencyName_IsNotEnoughEvidence()
     {
         // One shared name is coincidence, two is a copy task. "chart" here is a

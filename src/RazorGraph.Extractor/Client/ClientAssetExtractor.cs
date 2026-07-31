@@ -168,28 +168,29 @@ public sealed class ClientAssetExtractor
     private static HashSet<string> FindPackageDropRoots(string projectDir, string webRoot)
     {
         var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var manifestPath = Path.Combine(projectDir, "package.json");
-        if (!File.Exists(manifestPath)) return roots;
-
         var dependencyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            using var doc = JsonDocument.Parse(File.ReadAllText(manifestPath));
-            foreach (var section in new[] { "dependencies", "devDependencies" })
-            {
-                if (!doc.RootElement.TryGetProperty(section, out var deps) ||
-                    deps.ValueKind != JsonValueKind.Object) continue;
 
-                foreach (var dep in deps.EnumerateObject())
+        foreach (var manifestPath in EnumerateProjectManifests(projectDir))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(manifestPath));
+                foreach (var section in new[] { "dependencies", "devDependencies" })
                 {
-                    // "@scope/name" installs under a directory literally called "@scope".
-                    dependencyNames.Add(dep.Name.Split('/')[0]);
+                    if (!doc.RootElement.TryGetProperty(section, out var deps) ||
+                        deps.ValueKind != JsonValueKind.Object) continue;
+
+                    foreach (var dep in deps.EnumerateObject())
+                    {
+                        // "@scope/name" installs under a directory literally called "@scope".
+                        dependencyNames.Add(dep.Name.Split('/')[0]);
+                    }
                 }
             }
-        }
-        catch (JsonException)
-        {
-            return roots; // a malformed package.json is not evidence of anything
+            catch (JsonException)
+            {
+                // a malformed package.json is not evidence of anything
+            }
         }
         if (dependencyNames.Count == 0) return roots;
 
@@ -201,6 +202,30 @@ public sealed class ClientAssetExtractor
         }
 
         return roots;
+    }
+
+    /// <summary>
+    /// The project's own package manifests: one at the project root (the
+    /// nopCommerce shape) or one level down in a build-asset directory like
+    /// Assets/ or ClientApp/ (the OrchardCore shape, where each module's
+    /// Assets\package.json names the packages its build copies into wwwroot).
+    /// One level only — deeper manifests belong to the packages themselves.
+    /// </summary>
+    private static IEnumerable<string> EnumerateProjectManifests(string projectDir)
+    {
+        var rootManifest = Path.Combine(projectDir, "package.json");
+        if (File.Exists(rootManifest)) yield return rootManifest;
+
+        foreach (var dir in Directory.EnumerateDirectories(projectDir))
+        {
+            var name = Path.GetFileName(dir);
+            if (name.Equals("wwwroot", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("node_modules", StringComparison.OrdinalIgnoreCase) ||
+                BuildOutputDirNames.Contains(name)) continue;
+
+            var nested = Path.Combine(dir, "package.json");
+            if (File.Exists(nested)) yield return nested;
+        }
     }
 
     /// <summary>
