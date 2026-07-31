@@ -92,6 +92,15 @@ bind a call and would otherwise swamp the report.
 contain `Pages/Index.cshtml`. Single-project builds keep the unscoped `page:<relPath>`
 form, so previously saved graphs and their ids still work.
 
+**Vendor client assets are classified, then dropped by default.** Detection matches
+whole path segments (`lib`, `lib_npm`, `node_modules`, `bower_components`, `vendor`),
+npm `@scope` directories, package manifests shipped inside `wwwroot`, directories whose
+children match the root `package.json` dependencies, and `.min.` files. Dropped files
+are always reported — on stderr and in the build tools' `skippedVendorAssets` — never
+silently. Pass `--include-vendor` (CLI) or `includeVendor` (MCP) to graph them anyway,
+e.g. when the bug lives inside a shipped bundle; included vendor nodes carry
+`vendor: true` and a `vendorReason`.
+
 ## Layout
 
 | Path | Contents |

@@ -73,6 +73,130 @@ public class ClientAssetExtractorTests : IDisposable
         Assert.Equal("js:wwwroot/js/app.js", assets[0].Id);
     }
 
+    // ---- Vendor detection ----------------------------------------------------
+
+    [Fact]
+    public void VendorDirNames_MatchWholeSegments_NotSubstrings()
+    {
+        // The original rule substring-matched "\lib\", which admitted nopCommerce's
+        // lib_npm — 102k LOC of vendor code — as first-party.
+        WriteAsset("wwwroot/lib_npm/moment/moment.js", "/* vendor */");
+        WriteAsset("wwwroot/js/site.js", "var a = 1;");
+        // ...and the fix must not overshoot: a first-party dir merely *containing*
+        // a vendor name is still first-party.
+        WriteAsset("wwwroot/library-ui/panel.js", "var b = 2;");
+
+        var extractor = new ClientAssetExtractor();
+        var assets = extractor.ExtractAssets(_projectDir);
+
+        Assert.Equal(2, assets.Count);
+        Assert.DoesNotContain(assets, a => a.Id.Contains("lib_npm"));
+        Assert.Contains(assets, a => a.Id == "js:wwwroot/library-ui/panel.js");
+        var skip = Assert.Single(extractor.LastSkipped);
+        Assert.Equal("wwwroot/lib_npm/moment/moment.js", skip.RelativePath);
+        Assert.Contains("lib_npm", skip.Reason);
+    }
+
+    [Fact]
+    public void NpmScopedDirectory_IsVendor_WhateverItsParentIsCalled()
+    {
+        // Only an npm copy produces a directory literally named "@scope", so the
+        // parent needs no recognizable name at all.
+        WriteAsset("wwwroot/client_pkgs/@fortawesome/fontawesome.js", "/* vendor */");
+
+        var extractor = new ClientAssetExtractor();
+
+        Assert.Empty(extractor.ExtractAssets(_projectDir));
+        Assert.Contains("@fortawesome", Assert.Single(extractor.LastSkipped).Reason);
+    }
+
+    [Fact]
+    public void ShippedPackageManifest_MarksItsDirectoryVendor()
+    {
+        // Nobody hand-writes a package.json inside wwwroot; it came with a copy.
+        WriteAsset("wwwroot/widgets/package.json", "{ \"name\": \"widgets\" }");
+        WriteAsset("wwwroot/widgets/widget.js", "/* vendor */");
+        WriteAsset("wwwroot/js/site.js", "var a = 1;");
+
+        var extractor = new ClientAssetExtractor();
+        var assets = extractor.ExtractAssets(_projectDir);
+
+        Assert.Single(assets);
+        Assert.Equal("js:wwwroot/js/site.js", assets[0].Id);
+        Assert.Contains("widgets", Assert.Single(extractor.LastSkipped).Reason);
+    }
+
+    [Fact]
+    public void DirsMatchingRootDependencies_AreAPackageDrop()
+    {
+        // The nopCommerce shape: a copy task fills a wwwroot directory from
+        // node_modules and leaves no manifest behind. The evidence is the root
+        // package.json — the drop's children are named after its dependencies.
+        WriteAsset("package.json", "{ \"dependencies\": { \"bootstrap\": \"^5.0.0\", \"moment\": \"^2.29.0\" } }");
+        WriteAsset("wwwroot/ClientLibs/bootstrap/bootstrap.js", "/* vendor */");
+        WriteAsset("wwwroot/ClientLibs/moment/moment.js", "/* vendor */");
+        WriteAsset("wwwroot/js/site.js", "var a = 1;");
+
+        var extractor = new ClientAssetExtractor();
+        var assets = extractor.ExtractAssets(_projectDir);
+
+        Assert.Single(assets);
+        Assert.Equal("js:wwwroot/js/site.js", assets[0].Id);
+        Assert.Equal(2, extractor.LastSkipped.Count);
+        Assert.All(extractor.LastSkipped, s => Assert.Contains("ClientLibs", s.Reason));
+    }
+
+    [Fact]
+    public void OneSharedDependencyName_IsNotEnoughEvidence()
+    {
+        // One shared name is coincidence, two is a copy task. "chart" here is a
+        // first-party dir that happens to collide with a dependency name.
+        WriteAsset("package.json", "{ \"dependencies\": { \"chart\": \"^1.0.0\", \"moment\": \"^2.29.0\" } }");
+        WriteAsset("wwwroot/features/chart/chart.js", "var a = 1;");
+        WriteAsset("wwwroot/features/orders/orders.js", "var b = 2;");
+
+        var extractor = new ClientAssetExtractor();
+
+        Assert.Equal(2, extractor.ExtractAssets(_projectDir).Count);
+        Assert.Empty(extractor.LastSkipped);
+    }
+
+    [Fact]
+    public void IncludeVendor_KeepsEverything_ClassifiedAndScanned()
+    {
+        WriteAsset("wwwroot/lib_npm/widget/widget.js", "el.dataset.userId = '1';");
+        WriteAsset("wwwroot/js/app.min.js", "var a=1");
+        WriteAsset("wwwroot/js/site.js", "var a = 1;");
+
+        var extractor = new ClientAssetExtractor();
+        var assets = extractor.ExtractAssets(_projectDir, includeVendor: true);
+
+        Assert.Equal(3, assets.Count);
+        Assert.Empty(extractor.LastSkipped);
+
+        var vendor = assets.Single(a => a.Id == "js:wwwroot/lib_npm/widget/widget.js");
+        Assert.True(vendor.IsVendor);
+        Assert.Contains("lib_npm", vendor.VendorReason);
+        // The point of including vendor code is analyzing it, so it gets the
+        // same content scan as first-party code.
+        Assert.Contains("user-id", vendor.DataKeysWritten);
+
+        Assert.True(assets.Single(a => a.Id == "js:wwwroot/js/app.min.js").IsVendor);
+        Assert.False(assets.Single(a => a.Id == "js:wwwroot/js/site.js").IsVendor);
+    }
+
+    [Fact]
+    public void BuildOutput_IsNeverAnAsset_EvenWithIncludeVendor()
+    {
+        WriteAsset("wwwroot/obj/generated.js", "var a = 1;");
+
+        var extractor = new ClientAssetExtractor();
+
+        Assert.Empty(extractor.ExtractAssets(_projectDir, includeVendor: true));
+        // Not vendor, not skipped — build output is not source at all.
+        Assert.Empty(extractor.LastSkipped);
+    }
+
     [Fact]
     public void ExtractAssets_ReturnsEmpty_WhenNoWwwroot()
     {

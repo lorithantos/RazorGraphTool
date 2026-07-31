@@ -1,5 +1,6 @@
 namespace RazorGraph.Extractor.Client;
 
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 /// <summary>
@@ -48,24 +49,52 @@ public sealed class ClientAssetExtractor
     private static readonly Regex JQueryUrlRegex = new(
         @"(?:url\s*:\s*|\$\.(?:get|post|getJSON)\s*\(\s*)(?:""|')(?<url>/[^""']+)", RegexOptions.Compiled);
 
-    private static readonly string[] VendorMarkers =
+    // Directory names that mark everything beneath them as third-party. Matched
+    // as whole path segments, never substrings: the original substring rule
+    // ("\lib\") silently admitted nopCommerce's lib_npm — 102k LOC of moment
+    // locales and elfinder classified as first-party by one unmatched name.
+    private static readonly HashSet<string> VendorDirNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        $"{Path.DirectorySeparatorChar}lib{Path.DirectorySeparatorChar}",
-        $"{Path.DirectorySeparatorChar}node_modules{Path.DirectorySeparatorChar}",
-        $"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}",
-        $"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"
+        "lib", "lib_npm", "node_modules", "bower_components", "vendor"
     };
 
-    /// <summary>
-    /// Scan the project's wwwroot for first-party .js and .css files. Vendor
-    /// bundles (wwwroot/lib, node_modules) and minified builds are skipped:
-    /// they are not edited, so graphing them is cost without signal.
-    /// </summary>
-    public List<ClientAssetInfo> ExtractAssets(string projectDir, string? idScope = null)
+    // Build output is not source under either policy; includeVendor does not
+    // resurrect it and it is not counted as a skipped asset.
+    private static readonly HashSet<string> BuildOutputDirNames = new(StringComparer.OrdinalIgnoreCase)
     {
+        "bin", "obj"
+    };
+
+    /// <summary>One asset the vendor policy dropped, and why.</summary>
+    public sealed record SkippedAsset(string RelativePath, string Reason);
+
+    /// <summary>Assets the most recent <see cref="ExtractAssets"/> call dropped as vendor.</summary>
+    public IReadOnlyList<SkippedAsset> LastSkipped => _lastSkipped;
+    private readonly List<SkippedAsset> _lastSkipped = new();
+
+    /// <summary>
+    /// Scan the project's wwwroot for .js and .css files.
+    ///
+    /// Detection and policy are separate. Every file is *classified* (vendor
+    /// directory name, npm scope, shipped package manifest, package-drop
+    /// evidence, minified); whether vendor files are then dropped is the
+    /// <paramref name="includeVendor"/> switch. The default drops them — vendor
+    /// code is not edited, so graphing it is cost without signal — but hunting a
+    /// bug inside a shipped bundle is a legitimate reason to keep them, and that
+    /// must be a flag rather than a code edit. Included vendor assets carry
+    /// <see cref="ClientAssetInfo.IsVendor"/> and the reason, so consumers can
+    /// still tell the tiers apart. Whatever is dropped is recorded in
+    /// <see cref="LastSkipped"/>: a silent skip reads as "covered everything".
+    /// </summary>
+    public List<ClientAssetInfo> ExtractAssets(string projectDir, string? idScope = null, bool includeVendor = false)
+    {
+        _lastSkipped.Clear();
         var webRoot = Path.Combine(projectDir, "wwwroot");
         if (!Directory.Exists(webRoot)) return new List<ClientAssetInfo>();
 
+        var context = new VendorContext(
+            FindPackageDropRoots(projectDir, webRoot),
+            FindShippedManifestDirs(webRoot));
         var assets = new List<ClientAssetInfo>();
 
         foreach (var file in Directory.EnumerateFiles(webRoot, "*.*", SearchOption.AllDirectories))
@@ -74,12 +103,124 @@ public sealed class ClientAssetExtractor
             var isScript = ext.Equals(".js", StringComparison.OrdinalIgnoreCase);
             var isStyle = ext.Equals(".css", StringComparison.OrdinalIgnoreCase);
             if (!isScript && !isStyle) continue;
-            if (IsVendorOrMinified(file)) continue;
 
-            assets.Add(BuildAsset(file, projectDir, isScript, idScope));
+            var segments = Path.GetRelativePath(webRoot, file)
+                .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (segments.Any(s => BuildOutputDirNames.Contains(s))) continue;
+
+            var vendorReason = ClassifyVendor(segments, context);
+            if (vendorReason != null && !includeVendor)
+            {
+                _lastSkipped.Add(new SkippedAsset(
+                    NormalizeRelative(Path.GetRelativePath(projectDir, file)), vendorReason));
+                continue;
+            }
+
+            assets.Add(BuildAsset(file, projectDir, isScript, idScope, vendorReason));
         }
 
         return assets;
+    }
+
+    private sealed record VendorContext(HashSet<string> DropRoots, List<string[]> ManifestDirs);
+
+    /// <summary>
+    /// Why this wwwroot-relative path is vendor, or null when it is first-party.
+    /// Checks are ordered cheapest-first; the first reason wins.
+    /// </summary>
+    private static string? ClassifyVendor(string[] segments, VendorContext context)
+    {
+        var dirs = segments[..^1];
+
+        foreach (var dir in dirs)
+        {
+            if (VendorDirNames.Contains(dir)) return $"vendor directory '{dir}'";
+            // Only an npm copy produces a directory literally named "@scope".
+            if (dir.Length > 1 && dir[0] == '@') return $"npm scope '{dir}'";
+        }
+
+        if (dirs.Length > 0 && context.DropRoots.Contains(dirs[0]))
+            return $"package drop '{dirs[0]}'";
+
+        foreach (var manifestDir in context.ManifestDirs)
+        {
+            if (manifestDir.Length <= dirs.Length &&
+                manifestDir.Zip(dirs).All(p =>
+                    string.Equals(p.First, p.Second, StringComparison.OrdinalIgnoreCase)))
+            {
+                return $"package manifest in '{string.Join('/', manifestDir)}'";
+            }
+        }
+
+        if (segments[^1].Contains(".min.", StringComparison.OrdinalIgnoreCase)) return "minified";
+
+        return null;
+    }
+
+    /// <summary>
+    /// Immediate children of wwwroot that are npm package drops: directories
+    /// whose own child names overlap the dependency names in the project's root
+    /// package.json. nopCommerce's wwwroot\lib_npm is the motivating case — a
+    /// gulp task copies node_modules content there and leaves no manifest behind
+    /// to prove it. Two matches are required: one shared name is coincidence,
+    /// two is a copy task.
+    /// </summary>
+    private static HashSet<string> FindPackageDropRoots(string projectDir, string webRoot)
+    {
+        var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var manifestPath = Path.Combine(projectDir, "package.json");
+        if (!File.Exists(manifestPath)) return roots;
+
+        var dependencyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(manifestPath));
+            foreach (var section in new[] { "dependencies", "devDependencies" })
+            {
+                if (!doc.RootElement.TryGetProperty(section, out var deps) ||
+                    deps.ValueKind != JsonValueKind.Object) continue;
+
+                foreach (var dep in deps.EnumerateObject())
+                {
+                    // "@scope/name" installs under a directory literally called "@scope".
+                    dependencyNames.Add(dep.Name.Split('/')[0]);
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            return roots; // a malformed package.json is not evidence of anything
+        }
+        if (dependencyNames.Count == 0) return roots;
+
+        foreach (var dir in Directory.EnumerateDirectories(webRoot))
+        {
+            var matches = Directory.EnumerateDirectories(dir)
+                .Count(child => dependencyNames.Contains(Path.GetFileName(child)));
+            if (matches >= 2) roots.Add(Path.GetFileName(dir));
+        }
+
+        return roots;
+    }
+
+    /// <summary>
+    /// wwwroot-relative directories that ship their own package manifest. Nobody
+    /// hand-writes a package.json inside wwwroot; it came along with a copied
+    /// package, and everything beneath it did too.
+    /// </summary>
+    private static List<string[]> FindShippedManifestDirs(string webRoot)
+    {
+        var dirs = new List<string[]>();
+        foreach (var name in new[] { "package.json", "bower.json", ".bower.json" })
+        {
+            foreach (var file in Directory.EnumerateFiles(webRoot, name, SearchOption.AllDirectories))
+            {
+                var relativeDir = Path.GetRelativePath(webRoot, Path.GetDirectoryName(file)!);
+                if (relativeDir == ".") continue; // wwwroot itself is not a package
+                dirs.Add(relativeDir.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            }
+        }
+        return dirs;
     }
 
     /// <summary>
@@ -126,14 +267,7 @@ public sealed class ClientAssetExtractor
         return info;
     }
 
-    private static bool IsVendorOrMinified(string file)
-    {
-        if (VendorMarkers.Any(m => file.Contains(m, StringComparison.OrdinalIgnoreCase))) return true;
-        var name = Path.GetFileName(file);
-        return name.Contains(".min.", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private ClientAssetInfo BuildAsset(string file, string projectDir, bool isScript, string? idScope)
+    private ClientAssetInfo BuildAsset(string file, string projectDir, bool isScript, string? idScope, string? vendorReason)
     {
         var relative = NormalizeRelative(Path.GetRelativePath(projectDir, file));
         string text;
@@ -154,6 +288,8 @@ public sealed class ClientAssetExtractor
             FilePath = file,
             RelativePath = relative,
             IsScript = isScript,
+            IsVendor = vendorReason != null,
+            VendorReason = vendorReason,
             LineCount = text.Length == 0 ? 0 : text.Count(c => c == '\n') + 1
         };
 
@@ -247,6 +383,15 @@ public sealed class ClientAssetInfo
 
     /// <summary>True when this is a &lt;script&gt; block inside a Razor file rather than a wwwroot file.</summary>
     public bool IsInline { get; init; }
+
+    /// <summary>
+    /// True when vendor detection classified this as third-party or minified.
+    /// Vendor assets only appear at all when extraction was asked to include them.
+    /// </summary>
+    public bool IsVendor { get; init; }
+
+    /// <summary>Which rule classified it: vendor directory, npm scope, shipped manifest, package drop, or minified.</summary>
+    public string? VendorReason { get; init; }
 
     /// <summary>For inline blocks, the line in the page where the block opens.</summary>
     public int? LineStart { get; init; }

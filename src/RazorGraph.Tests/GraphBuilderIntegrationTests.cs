@@ -194,6 +194,10 @@ public class GraphBuilderIntegrationTests : IAsyncLifetime
 
         // wwwroot/lib is third-party; graphing it is cost without signal.
         Assert.DoesNotContain(_graph.Nodes, n => n.Name == "jquery.js");
+
+        // wwwroot/lib_npm is the same thing under the name the old substring
+        // rule missed; it must be matched as a whole segment.
+        Assert.DoesNotContain(_graph.Nodes, n => n.Name == "fakepkg.js");
     }
 
     [Fact]

@@ -24,6 +24,19 @@ public sealed class GraphBuilder : IAsyncDisposable
     /// </summary>
     private readonly List<SymbolInfo> _symbols = new();
 
+    /// <summary>
+    /// Graph vendor and minified client assets instead of dropping them. Vendor
+    /// detection always runs; this switches the policy from drop to keep, for
+    /// when the bug being hunted lives inside a shipped bundle. Included vendor
+    /// nodes carry vendor=true and a vendorReason so queries can still tell the
+    /// tiers apart.
+    /// </summary>
+    public bool IncludeVendorAssets { get; set; }
+
+    /// <summary>One line per project whose client-asset scan dropped vendor files.</summary>
+    public IReadOnlyList<string> AssetSkipSummaries => _assetSkipSummaries;
+    private readonly List<string> _assetSkipSummaries = new();
+
     public async Task<CodeGraph> BuildFromProjectAsync(string projectPath, CancellationToken ct = default)
     {
         var projectDir = Path.GetDirectoryName(Path.GetFullPath(projectPath))
@@ -281,7 +294,9 @@ public sealed class GraphBuilder : IAsyncDisposable
     /// </summary>
     private void AddClientAssets(string projectDir, List<RazorPageInfo> razorInfos, string? idScope)
     {
-        var assets = new ClientAssetExtractor().ExtractAssets(projectDir, idScope);
+        var extractor = new ClientAssetExtractor();
+        var assets = extractor.ExtractAssets(projectDir, idScope, IncludeVendorAssets);
+        ReportVendorSkips(extractor.LastSkipped, projectDir);
 
         // Inline blocks are assets that happen to live in a .cshtml. Folding them
         // into the same list means every downstream step -- coupling edges,
@@ -324,6 +339,11 @@ public sealed class GraphBuilder : IAsyncDisposable
             node.SetProperty("lineCount", asset.LineCount);
             if (idScope != null) node.SetProperty("project", idScope);
             if (asset.IsInline) node.SetProperty("inline", true);
+            if (asset.IsVendor)
+            {
+                node.SetProperty("vendor", true);
+                if (asset.VendorReason != null) node.SetProperty("vendorReason", asset.VendorReason);
+            }
             if (asset.DataKeys.Count > 0) node.SetProperty("dataKeys", asset.DataKeys.OrderBy(k => k).ToList());
             if (asset.DataKeysWritten.Count > 0)
                 node.SetProperty("dataKeysWritten", asset.DataKeysWritten.OrderBy(k => k).ToList());
@@ -381,6 +401,28 @@ public sealed class GraphBuilder : IAsyncDisposable
 
         AnnotateUnboundKeys(assets, renderedKeysByAsset);
         AddJsToApiEdges(assets);
+    }
+
+    /// <summary>
+    /// A dropped vendor asset must leave a trace: a silent skip reads as
+    /// "covered everything" when it did not. One summary line per project, on
+    /// stderr for CLI runs and in <see cref="AssetSkipSummaries"/> for callers
+    /// that return structured results.
+    /// </summary>
+    private void ReportVendorSkips(IReadOnlyList<ClientAssetExtractor.SkippedAsset> skipped, string projectDir)
+    {
+        if (skipped.Count == 0) return;
+
+        var byReason = skipped
+            .GroupBy(s => s.Reason)
+            .OrderByDescending(g => g.Count())
+            .Select(g => $"{g.Count()} x {g.Key}");
+        var summary =
+            $"Skipped {skipped.Count} vendor asset(s) under {Path.GetFileName(projectDir)}: " +
+            $"{string.Join(", ", byReason)}. Enable include-vendor to graph them.";
+
+        _assetSkipSummaries.Add(summary);
+        Console.Error.WriteLine($"Info: {summary}");
     }
 
     /// <summary>

@@ -48,6 +48,7 @@ public sealed class GraphTools(GraphStore store)
         [Description("Absolute path to a .csproj, .sln, or .slnx file")] string path,
         [Description("Project name inside the solution; required when path is a solution")] string? projectName = null,
         [Description("Id to file the result under. Defaults to the file name; reusing an id replaces that graph.")] string? graphId = null,
+        [Description("Also graph vendor/minified client assets (dropped by default). Their nodes carry vendor=true and a vendorReason; useful when the bug lives inside a shipped bundle.")] bool includeVendor = false,
         CancellationToken ct = default)
     {
         var full = Path.GetFullPath(path);
@@ -59,12 +60,12 @@ public sealed class GraphTools(GraphStore store)
                 "projectName is required when building a single project from a solution. " +
                 "To graph every project at once, call build_solution.");
 
-        await using var builder = new GraphBuilder();
+        await using var builder = new GraphBuilder { IncludeVendorAssets = includeVendor };
         var graph = isSolution
             ? await builder.BuildFromSolutionAsync(full, projectName!, ct)
             : await builder.BuildFromProjectAsync(full, ct);
 
-        return Summarize(store.Add(graph, full, graphId));
+        return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries);
     }
 
     [McpServerTool(Name = "build_solution")]
@@ -72,6 +73,7 @@ public sealed class GraphTools(GraphStore store)
     public async Task<string> BuildSolution(
         [Description("Absolute path to a .sln or .slnx file")] string path,
         [Description("Id to file the result under. Defaults to the solution file name.")] string? graphId = null,
+        [Description("Also graph vendor/minified client assets (dropped by default). Their nodes carry vendor=true and a vendorReason; useful when the bug lives inside a shipped bundle.")] bool includeVendor = false,
         CancellationToken ct = default)
     {
         var full = Path.GetFullPath(path);
@@ -79,10 +81,10 @@ public sealed class GraphTools(GraphStore store)
         if (!IsSolution(full))
             throw new McpException($"Not a solution file: {full}. Use build_graph for a .csproj.");
 
-        await using var builder = new GraphBuilder();
+        await using var builder = new GraphBuilder { IncludeVendorAssets = includeVendor };
         var graph = await builder.BuildFromSolutionAllAsync(full, ct);
 
-        return Summarize(store.Add(graph, full, graphId));
+        return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries);
     }
 
     [McpServerTool(Name = "load_graph")]
@@ -373,7 +375,7 @@ public sealed class GraphTools(GraphStore store)
 
     private static string ToJson(object value) => JsonSerializer.Serialize(value, Json);
 
-    private static string Summarize(GraphStore.GraphEntry entry)
+    private static string Summarize(GraphStore.GraphEntry entry, IReadOnlyList<string>? vendorSkips = null)
     {
         var graph = entry.Graph;
         var nodeCounts = graph.Nodes.GroupBy(n => n.Type)
@@ -393,7 +395,10 @@ public sealed class GraphTools(GraphStore store)
             edges = graph.Edges.Count,
             projects = projects.Count > 0 ? projects : null,
             nodeCounts,
-            edgeCounts
+            edgeCounts,
+            // Present only on build responses that dropped vendor assets: a
+            // silent skip would read as "everything was graphed".
+            skippedVendorAssets = vendorSkips is { Count: > 0 } ? vendorSkips : null
         });
     }
 

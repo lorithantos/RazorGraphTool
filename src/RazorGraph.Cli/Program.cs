@@ -24,11 +24,16 @@ static Command CreateBuildCommand()
     {
         Description = "Project name inside the solution (required when path is a .sln)"
     };
+    var includeVendorOpt = new Option<bool>("--include-vendor")
+    {
+        Description = "Also graph vendor/minified client assets (dropped by default); their nodes carry vendor=true"
+    };
 
     var cmd = new Command("build", "Build graph from a project or solution and output JSON");
     cmd.Add(pathArg);
     cmd.Add(outputOpt);
     cmd.Add(projectOpt);
+    cmd.Add(includeVendorOpt);
 
     cmd.SetAction(async (parseResult, ct) =>
     {
@@ -54,7 +59,10 @@ static Command CreateBuildCommand()
 
         Console.WriteLine($"Building graph from {path.FullName}...");
 
-        await using var builder = new GraphBuilder();
+        await using var builder = new GraphBuilder
+        {
+            IncludeVendorAssets = parseResult.GetValue(includeVendorOpt)
+        };
         var graph = isSolution
             ? await builder.BuildFromSolutionAsync(path.FullName, projectName!, ct)
             : await builder.BuildFromProjectAsync(path.FullName, ct);
@@ -83,10 +91,16 @@ static Command CreateBuildSolutionCommand()
         DefaultValueFactory = _ => "solution-graph.json"
     };
 
+    var includeVendorOpt = new Option<bool>("--include-vendor")
+    {
+        Description = "Also graph vendor/minified client assets (dropped by default); their nodes carry vendor=true"
+    };
+
     var cmd = new Command("build-solution",
         "Build ONE graph spanning every project in a solution, with edges that cross project boundaries");
     cmd.Add(pathArg);
     cmd.Add(outputOpt);
+    cmd.Add(includeVendorOpt);
 
     cmd.SetAction(async (parseResult, ct) =>
     {
@@ -110,7 +124,10 @@ static Command CreateBuildSolutionCommand()
         RoslynExtractor.EnsureMsBuildRegistered();
         Console.WriteLine($"Building solution graph from {path.FullName}...");
 
-        await using var builder = new GraphBuilder();
+        await using var builder = new GraphBuilder
+        {
+            IncludeVendorAssets = parseResult.GetValue(includeVendorOpt)
+        };
         var graph = await builder.BuildFromSolutionAllAsync(path.FullName, ct);
 
         var json = GraphSerializer.ToJson(graph);
