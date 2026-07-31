@@ -348,6 +348,10 @@ public sealed class GraphBuilder : IAsyncDisposable
             if (asset.DataKeysWritten.Count > 0)
                 node.SetProperty("dataKeysWritten", asset.DataKeysWritten.OrderBy(k => k).ToList());
             if (asset.ApiCalls.Count > 0) node.SetProperty("apiCalls", asset.ApiCalls.OrderBy(u => u).ToList());
+            if (asset.SelectorIds.Count > 0)
+                node.SetProperty("selectorIds", asset.SelectorIds.OrderBy(i => i, StringComparer.Ordinal).ToList());
+            if (asset.DynamicSelectorCount > 0)
+                node.SetProperty("dynamicSelectorCount", asset.DynamicSelectorCount);
 
             _graph.AddNode(node);
             byRelativePath[asset.RelativePath] = asset;
@@ -355,8 +359,11 @@ public sealed class GraphBuilder : IAsyncDisposable
 
         var byId = razorInfos.ToDictionary(r => r.Id, r => r);
         // Which pages reference each script, so an unread data key can be
-        // distinguished from one no page ever renders.
+        // distinguished from one no page ever renders. Same shape for ids,
+        // except ids are case-sensitive in the DOM.
         var renderedKeysByAsset = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var renderedIdsByAsset = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var assetsWithDynamicIdScope = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var info in razorInfos)
         {
@@ -383,23 +390,48 @@ public sealed class GraphBuilder : IAsyncDisposable
                 }
                 seen.UnionWith(scope.Rendered);
 
+                if (!renderedIdsByAsset.TryGetValue(asset.Id, out var seenIds))
+                {
+                    seenIds = new HashSet<string>(StringComparer.Ordinal);
+                    renderedIdsByAsset[asset.Id] = seenIds;
+                }
+                seenIds.UnionWith(scope.Ids);
+                if (scope.DynamicIds > 0) assetsWithDynamicIdScope.Add(asset.Id);
+
                 var shared = asset.DataKeys.Intersect(scope.ServerBound, StringComparer.OrdinalIgnoreCase)
                     .OrderBy(k => k).ToList();
-                if (shared.Count == 0) continue;
-
-                // Direction matches FindServerToJsMismatches, which reads the
-                // server node off the incoming edge of the JS node.
-                _graph.AddEdge(new GraphEdge
+                if (shared.Count > 0)
                 {
-                    FromId = info.Id,
-                    ToId = asset.Id,
-                    Type = EdgeType.ViewDataReadBy,
-                    Properties = { ["dataKeys"] = shared }
-                });
+                    // Direction matches FindServerToJsMismatches, which reads the
+                    // server node off the incoming edge of the JS node.
+                    _graph.AddEdge(new GraphEdge
+                    {
+                        FromId = info.Id,
+                        ToId = asset.Id,
+                        Type = EdgeType.ViewDataReadBy,
+                        Properties = { ["dataKeys"] = shared }
+                    });
+                }
+
+                // Self-created ids carry no server contract, so only foreign
+                // selections can bind to what this page composition renders.
+                var sharedIds = asset.SelectorIdsForeign.Intersect(scope.Ids, StringComparer.Ordinal)
+                    .OrderBy(i => i, StringComparer.Ordinal).ToList();
+                if (sharedIds.Count > 0)
+                {
+                    _graph.AddEdge(new GraphEdge
+                    {
+                        FromId = info.Id,
+                        ToId = asset.Id,
+                        Type = EdgeType.DomSelectedBy,
+                        Properties = { ["ids"] = sharedIds }
+                    });
+                }
             }
         }
 
         AnnotateUnboundKeys(assets, renderedKeysByAsset);
+        AnnotateUnboundSelectorIds(assets, renderedIdsByAsset, assetsWithDynamicIdScope);
         AddJsToApiEdges(assets);
     }
 
@@ -446,6 +478,9 @@ public sealed class GraphBuilder : IAsyncDisposable
         if (info.Layout != null && byId.TryGetValue(RazorExtractor.PageId(idScope, info.Layout), out var layout))
             pending.Enqueue(layout);
 
+        var renderedIds = new HashSet<string>(StringComparer.Ordinal);
+        var dynamicIds = 0;
+
         while (pending.Count > 0)
         {
             var current = pending.Dequeue();
@@ -454,6 +489,8 @@ public sealed class GraphBuilder : IAsyncDisposable
 
             serverBound.UnionWith(current.ServerDataKeys);
             rendered.UnionWith(current.RenderedDataKeys);
+            renderedIds.UnionWith(current.RenderedIds);
+            dynamicIds += current.DynamicIdCount;
 
             foreach (var partial in current.Partials)
             {
@@ -462,15 +499,22 @@ public sealed class GraphBuilder : IAsyncDisposable
             }
         }
 
-        return new DataKeyScope(serverBound, rendered);
+        return new DataKeyScope(serverBound, rendered, renderedIds, dynamicIds);
     }
 
     /// <summary>
-    /// The data-* keys visible to a script on one composed page. ServerBound
-    /// drives the coupling edge (server state reaching the client); Rendered
-    /// drives unbound-key detection (does the attribute exist at all).
+    /// What one composed page exposes to its scripts. ServerBound drives the
+    /// data-key coupling edge; Rendered drives unbound-key detection; Ids
+    /// (case-sensitive, unlike data-* keys) drive the selector contract; and
+    /// DynamicIds counts id attributes rendered from Razor expressions — a
+    /// scope containing any exposes ids under names no static scan can know,
+    /// so it must stop accusing scripts of unbound selectors.
     /// </summary>
-    private readonly record struct DataKeyScope(HashSet<string> ServerBound, HashSet<string> Rendered);
+    private readonly record struct DataKeyScope(
+        HashSet<string> ServerBound,
+        HashSet<string> Rendered,
+        HashSet<string> Ids,
+        int DynamicIds);
 
     private static RazorPageInfo? ResolvePartial(PartialRenderInfo partial, List<RazorPageInfo> allPages) =>
         allPages.FirstOrDefault(p =>
@@ -512,6 +556,34 @@ public sealed class GraphBuilder : IAsyncDisposable
             if (unbound.Count == 0) continue;
 
             _graph.GetNode(asset.Id)?.SetProperty("unboundDataKeys", unbound);
+        }
+    }
+
+    /// <summary>
+    /// A selector id no referencing page renders is the id-contract defect —
+    /// same rename-broke-one-side shape as an unbound data key. Reporting stays
+    /// quiet unless the evidence is complete: a script with dynamic selector
+    /// call sites cannot be fully seen, a page scope with dynamic ids exposes
+    /// names no scan can know, and a script no page references may be loaded
+    /// some way this extractor cannot see. Silence beats a false accusation.
+    /// </summary>
+    private void AnnotateUnboundSelectorIds(
+        List<ClientAssetInfo> assets,
+        Dictionary<string, HashSet<string>> renderedIdsByAsset,
+        HashSet<string> assetsWithDynamicIdScope)
+    {
+        foreach (var asset in assets)
+        {
+            if (!asset.IsScript || !asset.SelectorIdsForeign.Any()) continue;
+            if (asset.DynamicSelectorCount > 0) continue;
+            if (assetsWithDynamicIdScope.Contains(asset.Id)) continue;
+            if (!renderedIdsByAsset.TryGetValue(asset.Id, out var rendered)) continue;
+
+            var unbound = asset.SelectorIdsForeign.Except(rendered, StringComparer.Ordinal)
+                .OrderBy(i => i, StringComparer.Ordinal).ToList();
+            if (unbound.Count == 0) continue;
+
+            _graph.GetNode(asset.Id)?.SetProperty("unboundSelectorIds", unbound);
         }
     }
 

@@ -174,12 +174,13 @@ public sealed class GraphQuery
     /// </summary>
     public IEnumerable<(GraphNode ServerNode, GraphNode JsNode, GraphEdge Edge)> FindServerToJsMismatches()
     {
-        // Find all JS files that read ViewData or reference model properties
+        // JS files consuming server-prepared state by name: ViewData/data-*
+        // keys, model reads, and element ids reached by literal selectors.
         foreach (var js in _graph.NodesOfType(NodeType.JavaScriptFile))
         {
             foreach (var edge in _graph.Incoming(js.Id))
             {
-                if (edge.Type == EdgeType.ViewDataReadBy || edge.Type == EdgeType.Reads)
+                if (edge.Type is EdgeType.ViewDataReadBy or EdgeType.Reads or EdgeType.DomSelectedBy)
                 {
                     var source = _graph.GetNode(edge.FromId);
                     if (source != null) yield return (source, js, edge);

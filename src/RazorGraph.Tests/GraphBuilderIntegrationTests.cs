@@ -245,6 +245,32 @@ public class GraphBuilderIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void Builds_DomSelectedByEdge_ForIdsThePageCompositionRenders()
+    {
+        var edge = _graph!.Edges.Single(e => e.Type == EdgeType.DomSelectedBy);
+        var ids = edge.GetProperty<List<string>>("ids");
+
+        // Single-project page ids keep the OS path separator; only solution
+        // builds normalize (see SolutionGraphIntegrationTests).
+        Assert.Equal($"page:Pages{Path.DirectorySeparatorChar}Index.cshtml", edge.FromId);
+        Assert.Equal("js:wwwroot/js/site.js", edge.ToId);
+        // "Name" comes from asp-for on Index itself; "card-title" arrives
+        // through the _Card partial — the composed DOM, not just the page.
+        Assert.Equal(new[] { "Name", "card-title" }, ids);
+    }
+
+    [Fact]
+    public void Reports_OnlyTheGenuinelyUnboundSelectorId()
+    {
+        var script = _graph!.Nodes.Single(n => n.Id == "js:wwwroot/js/site.js");
+        var unbound = script.GetProperty<List<string>>("unboundSelectorIds");
+
+        // cart-count: selected, never rendered. popup-host: selected but
+        // self-created. Name/card-title: bound. Only the first is a defect.
+        Assert.Equal(new[] { "cart-count" }, unbound);
+    }
+
+    [Fact]
     public void Builds_CallsEdge_FromScriptToApiController()
     {
         var js = _graph!.Nodes.Single(n => n.Type == NodeType.JavaScriptFile && n.Name == "site.js");

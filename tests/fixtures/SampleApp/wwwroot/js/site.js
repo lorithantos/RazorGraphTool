@@ -16,3 +16,18 @@ var orphan = document.querySelector('.card').dataset.missingKey;
 document.querySelector('.card').dataset.clientOwned = '1';
 
 fetch('/api/Greetings/Get');
+
+// The id contract, happy half: asp-for="Name" on Index renders id="Name".
+var nameInput = document.getElementById('Name');
+
+// ...and through the composed DOM: the _Card partial renders #card-title.
+var title = document.querySelector('#card-title');
+
+// Nothing renders #cart-count. The unbound-selector defect: a rename that
+// updated the markup but not the script.
+var badge = document.getElementById('cart-count');
+
+// Self-created, then selected. Not a contract with the server.
+var overlay = document.createElement('div');
+overlay.id = 'popup-host';
+document.getElementById('popup-host');

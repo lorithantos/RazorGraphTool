@@ -32,6 +32,11 @@ public enum EdgeType
     ViewDataWrittenBy,
     ViewDataReadBy,
 
+    // Server-rendered element ids reached by a script's literal selectors,
+    // carrying the shared ids. Same family as ViewDataReadBy: state crossing
+    // the server/client boundary by name, where a rename breaks one side only.
+    DomSelectedBy,
+
     // Cross-layer
     UrlGeneratedBy,
     ServiceSharedBy,
