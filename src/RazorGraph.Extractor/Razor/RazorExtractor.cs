@@ -116,6 +116,8 @@ public sealed class RazorExtractor
             AssetReferences = RazorTextScanners.ScanAssetReferences(stripped),
             ServerDataKeys = RazorTextScanners.ScanServerBoundDataKeys(stripped),
             RenderedDataKeys = RazorTextScanners.ScanRenderedDataKeys(stripped),
+            RenderedIds = RazorTextScanners.ScanRenderedIds(stripped),
+            DynamicIdCount = RazorTextScanners.ScanDynamicIdCount(stripped),
             Partials = RazorTextScanners.ScanPartialRenders(stripped, scanLines),
             InlineScripts = RazorTextScanners.ScanInlineScripts(stripped, scanLines),
             TagHelpers = tagHelpers,
@@ -246,6 +248,12 @@ public sealed class RazorPageInfo
 
     /// <summary>Every data-* key the page emits, including constant values.</summary>
     public List<string> RenderedDataKeys { get; init; } = new();
+
+    /// <summary>Element ids the markup renders literally, plus asp-for generated ids.</summary>
+    public List<string> RenderedIds { get; init; } = new();
+
+    /// <summary>id attributes whose value is a Razor expression — present in the DOM under unknowable names.</summary>
+    public int DynamicIdCount { get; init; }
 
     public List<PartialRenderInfo> Partials { get; init; } = new();
 

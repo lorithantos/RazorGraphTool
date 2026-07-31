@@ -425,6 +425,21 @@ public class ClientAssetExtractorTests : IDisposable
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
+    public void Page_CollectsLiteralIds_AndCountsDynamicOnes(bool syntaxMode)
+    {
+        var page = Extract(syntaxMode, @"
+            <div id=""cart-total""></div>
+            <span id=""item-@item.Id""></span>
+            <input asp-for=""Contact.Email"" />");
+
+        Assert.Equal(new[] { "Contact_Email", "cart-total" }, page.RenderedIds.OrderBy(i => i, StringComparer.Ordinal));
+        // The dynamic id exists in the DOM under a name this scan cannot know.
+        Assert.Equal(1, page.DynamicIdCount);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
     public void Page_IgnoresAssetReferencesInsideRazorComments(bool syntaxMode)
     {
         var info = Extract(syntaxMode, """

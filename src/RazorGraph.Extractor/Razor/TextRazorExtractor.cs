@@ -58,6 +58,8 @@ public sealed class TextRazorExtractor
             AssetReferences = RazorTextScanners.ScanAssetReferences(stripped),
             ServerDataKeys = RazorTextScanners.ScanServerBoundDataKeys(stripped),
             RenderedDataKeys = RazorTextScanners.ScanRenderedDataKeys(stripped),
+            RenderedIds = RazorTextScanners.ScanRenderedIds(stripped),
+            DynamicIdCount = RazorTextScanners.ScanDynamicIdCount(stripped),
             Partials = RazorTextScanners.ScanPartialRenders(stripped, lines),
             InlineScripts = RazorTextScanners.ScanInlineScripts(stripped, lines),
             TagHelpers = RazorTextScanners.ScanAspTagHelpers(stripped, lines),
@@ -131,6 +133,17 @@ internal static class RazorTextScanners
     // "does the server compute its value".
     private static readonly Regex AnyDataAttrRegex = new(
         @"\bdata-(?<key>[\w-]+)\s*=\s*(?:""|')", RegexOptions.Compiled);
+
+    // id="cart-total". Whether the value contains a Razor expression decides
+    // literal-vs-dynamic below; a dynamic id cannot be matched by name, only
+    // counted, so its page stops accusing scripts of unbound selectors.
+    private static readonly Regex IdAttrRegex = new(
+        @"\bid\s*=\s*(?:""(?<v>[^""]*)""|'(?<v>[^']*)')", RegexOptions.Compiled);
+
+    // <input asp-for="Contact.Email"> renders id="Contact_Email" — the tag
+    // helper's documented mapping (dots and brackets become underscores).
+    private static readonly Regex AspForRegex = new(
+        @"\basp-for\s*=\s*(?:""(?<v>[^""@]+)""|'(?<v>[^'@]+)')", RegexOptions.Compiled);
 
     /// <summary>
     /// Replaces @* ... *@ comments with an equivalent number of newlines so that
@@ -208,6 +221,35 @@ internal static class RazorTextScanners
             .Select(m => m.Groups["key"].Value.ToLowerInvariant())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+    /// <summary>
+    /// Element ids the markup renders with a literal value, including the ids
+    /// asp-for generates from model property paths. These are what a script's
+    /// literal selectors can legitimately bind to.
+    /// </summary>
+    public static List<string> ScanRenderedIds(string text)
+    {
+        var ids = new List<string>();
+        foreach (Match m in IdAttrRegex.Matches(text))
+        {
+            var value = m.Groups["v"].Value.Trim();
+            if (value.Length == 0 || value.Contains('@')) continue;
+            ids.Add(value);
+        }
+        foreach (Match m in AspForRegex.Matches(text))
+        {
+            ids.Add(m.Groups["v"].Value.Trim().Replace('.', '_').Replace('[', '_').Replace("]", ""));
+        }
+        return ids.Distinct(StringComparer.Ordinal).ToList();
+    }
+
+    /// <summary>
+    /// id attributes whose value contains a Razor expression. They exist in the
+    /// DOM under names this scan cannot know, so a page rendering any of them
+    /// must not accuse its scripts of selecting unbound ids.
+    /// </summary>
+    public static int ScanDynamicIdCount(string text) =>
+        IdAttrRegex.Matches(text).Count(m => m.Groups["v"].Value.Contains('@'));
 
     /// <summary>
     /// Script blocks authored inside the page rather than loaded from wwwroot.
