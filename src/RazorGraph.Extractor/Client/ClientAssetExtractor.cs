@@ -40,6 +40,40 @@ public sealed class ClientAssetExtractor
     private static readonly Regex AttributeSelectorRegex = new(
         @"\[\s*data-(?<key>[\w-]+)", RegexOptions.Compiled);
 
+    // getElementById('cart-total') — the argument is a bare id, no tokenizing
+    // needed. The trailing \) requires the whole argument to be one closed
+    // literal: getElementById('row-' + i) must count as dynamic, not yield the
+    // fragment "row-" as if it were an id.
+    private static readonly Regex GetByIdRegex = new(
+        @"getElementById\s*\(\s*(?<q>[""'])(?<id>[^""']+)\k<q>\s*\)", RegexOptions.Compiled);
+
+    // querySelector('#total .price') / querySelectorAll(...) / jQuery $('#x') with a
+    // literal argument. The selector text is tokenized for #id references below.
+    private static readonly Regex QuerySelectorRegex = new(
+        @"querySelector(?:All)?\s*\(\s*(?<q>[""'])(?<sel>[^""']+)\k<q>\s*\)", RegexOptions.Compiled);
+    private static readonly Regex JQuerySelectorRegex = new(
+        @"[$]\s*\(\s*(?<q>[""'])(?<sel>[#.\[][^""']*)\k<q>\s*\)", RegexOptions.Compiled);
+
+    // #id tokens inside a selector string.
+    private static readonly Regex IdTokenRegex = new(
+        @"#(?<id>[A-Za-z_][\w-]*)", RegexOptions.Compiled);
+
+    // Selector call sites in total, literal or not. The literal regexes above are
+    // the recoverable subset; the difference is recorded as dynamicSelectorCount so
+    // the graph admits what it cannot see instead of implying full coverage —
+    // the exact failure mode the literal-URL fetch rule had on nopCommerce.
+    private static readonly Regex AnySelectorCallRegex = new(
+        @"getElementById\s*\(|querySelector(?:All)?\s*\(", RegexOptions.Compiled);
+
+    // Ids a script assigns to elements it creates itself: el.id = 'x', or an
+    // id="x" attribute inside an HTML string fragment. A script selecting an id
+    // it also creates has no contract with the server-rendered markup, so these
+    // are subtracted before anything is reported unbound.
+    private static readonly Regex OwnIdAssignRegex = new(
+        @"\.id\s*=\s*(?<q>[""'])(?<id>[A-Za-z_][\w-]*)\k<q>", RegexOptions.Compiled);
+    private static readonly Regex OwnIdInHtmlStringRegex = new(
+        @"id\s*=\s*\\?[""'](?<id>[A-Za-z_][\w-]*)\\?[""']", RegexOptions.Compiled);
+
     // fetch('/api/...'), fetch(`/api/...`). Only literal-leading URLs; a template
     // expression yields the literal prefix, which is enough to bind a controller.
     private static readonly Regex FetchUrlRegex = new(
@@ -352,6 +386,32 @@ public sealed class ClientAssetExtractor
             var url = m.Groups["url"].Value.Trim();
             if (url.StartsWith('/')) info.ApiCalls.Add(url);
         }
+
+        var literalSelectorCalls = 0;
+        foreach (Match m in GetByIdRegex.Matches(text))
+        {
+            info.SelectorIds.Add(m.Groups["id"].Value);
+            literalSelectorCalls++;
+        }
+        foreach (Match m in QuerySelectorRegex.Matches(text))
+        {
+            foreach (Match id in IdTokenRegex.Matches(m.Groups["sel"].Value))
+                info.SelectorIds.Add(id.Groups["id"].Value);
+            literalSelectorCalls++;
+        }
+        // jQuery is not part of the dynamic accounting: $(element) wrappers are
+        // indistinguishable from computed selectors without parsing.
+        foreach (Match m in JQuerySelectorRegex.Matches(text))
+        {
+            foreach (Match id in IdTokenRegex.Matches(m.Groups["sel"].Value))
+                info.SelectorIds.Add(id.Groups["id"].Value);
+        }
+
+        var totalSelectorCalls = AnySelectorCallRegex.Matches(text).Count;
+        info.DynamicSelectorCount = Math.Max(0, totalSelectorCalls - literalSelectorCalls);
+
+        foreach (Match m in OwnIdAssignRegex.Matches(text).Concat(OwnIdInHtmlStringRegex.Matches(text)))
+            info.OwnIds.Add(m.Groups["id"].Value);
     }
 
     /// <summary>
@@ -437,4 +497,29 @@ public sealed class ClientAssetInfo
 
     /// <summary>Literal app-relative URLs this script calls.</summary>
     public HashSet<string> ApiCalls { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Element ids this script selects with a literal selector (getElementById,
+    /// querySelector, jQuery). Ids are case-sensitive in the DOM, so no folding.
+    /// Class selectors are deliberately not collected: utility classes
+    /// (btn, active, card) are shared with every framework stylesheet, which
+    /// makes them evidence of nothing.
+    /// </summary>
+    public HashSet<string> SelectorIds { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Ids this script assigns to elements it creates itself. Selecting one of
+    /// these is not a contract with server-rendered markup.
+    /// </summary>
+    public HashSet<string> OwnIds { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Ids selected but never self-created — the ones the server-rendered DOM must supply.</summary>
+    public IEnumerable<string> SelectorIdsForeign => SelectorIds.Except(OwnIds, StringComparer.Ordinal);
+
+    /// <summary>
+    /// getElementById/querySelector call sites whose argument was not a literal.
+    /// Nonzero means the selector picture is incomplete and unbound-id reporting
+    /// for this script should stay quiet rather than accuse.
+    /// </summary>
+    public int DynamicSelectorCount { get; set; }
 }

@@ -73,6 +73,67 @@ public class ClientAssetExtractorTests : IDisposable
         Assert.Equal("js:wwwroot/js/app.js", assets[0].Id);
     }
 
+    // ---- Selector extraction -------------------------------------------------
+
+    [Fact]
+    public void Selectors_CollectsLiteralIds_FromAllThreeApis()
+    {
+        WriteAsset("wwwroot/js/cart.js", @"
+            const total = document.getElementById('cart-total');
+            document.querySelectorAll('#cart-list .item');
+            $('#checkout-button').on('click', go);");
+
+        var asset = new ClientAssetExtractor().ExtractAssets(_projectDir).Single();
+
+        Assert.Equal(new[] { "cart-list", "cart-total", "checkout-button" },
+            asset.SelectorIds.OrderBy(i => i));
+        Assert.Equal(0, asset.DynamicSelectorCount);
+    }
+
+    [Fact]
+    public void Selectors_CountsDynamicCallSites_InsteadOfGuessing()
+    {
+        WriteAsset("wwwroot/js/rows.js", @"
+            document.getElementById('summary');
+            document.getElementById('row-' + index);
+            document.querySelector(activeSelector);");
+
+        var asset = new ClientAssetExtractor().ExtractAssets(_projectDir).Single();
+
+        Assert.Equal(new[] { "summary" }, asset.SelectorIds.ToArray());
+        // Two of three call sites were computed; the graph must admit that.
+        Assert.Equal(2, asset.DynamicSelectorCount);
+    }
+
+    [Fact]
+    public void Selectors_SelfCreatedIds_AreNotAServerContract()
+    {
+        WriteAsset("wwwroot/js/popup.js", @"
+            const el = document.createElement('div');
+            el.id = 'popup-host';
+            container.insertAdjacentHTML('beforeend', '<div id=""popup-body""></div>');
+            document.getElementById('popup-host');
+            document.getElementById('popup-body');
+            document.getElementById('server-rendered');");
+
+        var asset = new ClientAssetExtractor().ExtractAssets(_projectDir).Single();
+
+        Assert.Equal(new[] { "popup-body", "popup-host" }, asset.OwnIds.OrderBy(i => i));
+        Assert.Equal(new[] { "server-rendered" }, asset.SelectorIdsForeign.ToArray());
+    }
+
+    [Fact]
+    public void Selectors_ClassTokens_AreIgnored()
+    {
+        // Utility classes are shared with every framework stylesheet; collecting
+        // them would make the contract meaningless.
+        WriteAsset("wwwroot/js/style.js", "$('.btn.active').hide(); document.querySelector('.card');");
+
+        var asset = new ClientAssetExtractor().ExtractAssets(_projectDir).Single();
+
+        Assert.Empty(asset.SelectorIds);
+    }
+
     // ---- Vendor detection ----------------------------------------------------
 
     [Fact]
