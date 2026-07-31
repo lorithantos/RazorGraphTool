@@ -68,8 +68,16 @@ you have seen everything.
 **Edges** — structural (`Contains`, `Inherits`, `Implements`, `DependsOn`), rendering
 (`PageServedBy`, `UsesLayout`, `RendersPartial`, `RendersComponent`, `DefinesSection`,
 `ReturnsView`), data flow (`HasModel`, `BindsTo`, `Reads`, `Writes`, `Calls`,
-`InjectedInto`, `ViewDataReadBy`, `ViewDataWrittenBy`), routing (`MapsToRoute`,
-`HandlesHttpMethod`, `UrlGeneratedBy`), and `Covers`.
+`InjectedInto`, `ViewDataReadBy`, `ViewDataWrittenBy`, `DomSelectedBy`), routing
+(`MapsToRoute`, `HandlesHttpMethod`, `UrlGeneratedBy`), and `Covers`.
+
+`DomSelectedBy` is the selector contract: element ids a page composition (page +
+layout + partials) renders that a script reaches with literal `getElementById` /
+`querySelector` / jQuery selectors. Selector ids no referencing page renders are
+annotated `unboundSelectorIds` on the script node — the rename-that-broke-one-side
+defect — with deliberate silences: dynamic selector call sites, Razor-computed `id`
+attributes in scope, or an unreferenced script all suppress the accusation. JS
+comments are stripped before scanning, so documentation cannot create contracts.
 
 Traversal takes a direction. This is not a convenience: several edge types are authored
 pointing the opposite way from the question asked of them — `InjectedInto` runs
