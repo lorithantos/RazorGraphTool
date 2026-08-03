@@ -29,10 +29,12 @@ dotnet run --project src/RazorGraph.Cli -- query solution-graph.json --uncovered
 dotnet run --project src/RazorGraph.Cli -- query graph.json --deep 3
 
 # Inside one method: control-flow blocks, regions, call sites with guard depths
-dotnet run --project src/RazorGraph.Cli -- body path/to/App.csproj --method "m:App.Services.OrderService.Place"
+dotnet run --project src/RazorGraph.Cli -- body path/to/App.csproj --method "m:App.Services.OrderService.Place(App.Models.Order)"
 
 # Prove a refactor kept the flow: exit 0 equivalent, 1 different, 2 error
-dotnet run --project src/RazorGraph.Cli -- body-diff path/to/App.csproj --method "m:App.OrderService.Place" --against "m:App.OrderService.PlaceOld"
+dotnet run --project src/RazorGraph.Cli -- body-diff path/to/App.csproj --method "m:App.OrderService.Place(App.Models.Order)" --against "m:App.OrderService.PlaceOld(App.Models.Order)"
+
+# Method ids carry the full parameter-type list; a parameterless method is "m:Type.Name()"
 
 # Relevance-scored subgraph for feeding to a model
 dotnet run --project src/RazorGraph.Cli -- research graph.json --focus "page:Pages/Index.cshtml"
