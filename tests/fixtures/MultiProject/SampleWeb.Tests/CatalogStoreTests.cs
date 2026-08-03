@@ -21,6 +21,16 @@ public class CatalogStoreTests
         Assert.Equal(new[] { "alpha", "beta" }, result);
     }
 
+    [Fact]
+    public void Cache_SeedsItself()
+    {
+        // All the interesting work happens in CatalogCache's field initializer,
+        // which runs inside its implicit constructor.
+        var cache = new CatalogCache();
+
+        Assert.Equal(3, cache.Size());
+    }
+
     /// <summary>Not a test method: no attribute, so it must not emit Covers edges.</summary>
     public void NotATest()
     {

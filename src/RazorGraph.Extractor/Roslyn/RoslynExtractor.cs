@@ -298,15 +298,31 @@ public sealed class RoslynExtractor : IAsyncDisposable
             .ToList();
 
     /// <summary>
-    /// Every ordinary method on the type, at any accessibility, as a candidate
-    /// graph node. Distinct from <see cref="ExtractMethods"/>, which describes the
-    /// type's public surface: a call graph that omitted private methods would
-    /// break every chain that passes through a helper.
+    /// Every ordinary method and explicit instance constructor on the type, at
+    /// any accessibility, as a candidate graph node. Distinct from
+    /// <see cref="ExtractMethods"/>, which describes the type's public surface: a
+    /// call graph that omitted private methods would break every chain that
+    /// passes through a helper.
+    ///
+    /// Constructors run real code (xUnit's primary setup idiom is the test-class
+    /// ctor), so leaving them out made everything reached only through one
+    /// invisible to coverage. An implicit default ctor is included only when the
+    /// type has instance field/property initializers — then it is exactly the
+    /// code that runs them; otherwise it runs nothing and would only ever read
+    /// as uncovered noise. Static ctors stay out for the same reason: no
+    /// syntactic call site can ever reach one.
     /// </summary>
     private List<MethodDetail> ExtractMethodNodes(INamedTypeSymbol symbol)
     {
+        var hasInitializers = HasInstanceInitializers(symbol);
+
         var members = symbol.GetMembers().OfType<IMethodSymbol>()
-            .Where(m => m.MethodKind == MethodKind.Ordinary && !m.IsImplicitlyDeclared)
+            .Where(m => m.MethodKind switch
+            {
+                MethodKind.Ordinary => !m.IsImplicitlyDeclared,
+                MethodKind.Constructor => !m.IsImplicitlyDeclared || hasInitializers,
+                _ => false
+            })
             .ToList();
 
         // Lifecycle hooks only count as such on a type that actually has tests;
@@ -331,7 +347,10 @@ public sealed class RoslynExtractor : IAsyncDisposable
                     IsPublic = m.DeclaredAccessibility == Accessibility.Public,
                     IsStatic = m.IsStatic,
                     IsTest = IsTestMethod(m),
-                    IsTestLifecycle = hasTests && IsLifecycleMethod(m),
+                    // A test class's ctor is xUnit's primary setup hook — the
+                    // framework runs it before every test, no test calls it.
+                    IsTestLifecycle = hasTests
+                        && (IsLifecycleMethod(m) || m.MethodKind == MethodKind.Constructor),
                     // Interface members and abstract methods have no body. They are
                     // still nodes worth having (calls bind to them), but they are not
                     // code that a test could execute.
@@ -376,9 +395,9 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// A hook the framework runs around each test rather than a method any test
     /// calls. Work done here is real coverage, but no Calls edge from a test will
     /// ever reach it. Only meaningful on a type that has test methods — the
-    /// caller gates on that. Constructor-based setup is not represented, because
-    /// constructors are not graph nodes; a base-class hook is likewise missed,
-    /// since it is extracted under the base type, which has no tests of its own.
+    /// caller gates on that, and also flags test-class constructors, which this
+    /// predicate does not see. A base-class hook is still missed: it is extracted
+    /// under the base type, which has no tests of its own.
     /// </summary>
     private static bool IsLifecycleMethod(IMethodSymbol method)
     {
@@ -416,10 +435,11 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// reference-equal; the name is the same either way, and so is the MethodId
     /// the node was registered under.
     ///
-    /// Besides explicit invocations, a using/await using counts as a call to the
-    /// resource's Dispose/DisposeAsync: the compiler emits that call with no
-    /// invocation syntax at the site, and without the edge a dispose method
-    /// reads as unreached by the very code that guarantees it runs.
+    /// Besides explicit invocations, two compiler-emitted calls carry edges: a
+    /// new-expression is a call to the constructor, and a using/await using is a
+    /// call to the resource's Dispose/DisposeAsync. Neither has invocation
+    /// syntax at the site, and without the edges the methods read as unreached
+    /// by the very code that guarantees they run.
     /// </summary>
     public IEnumerable<(string FromId, string ToId)> ExtractCallEdges()
     {
@@ -440,20 +460,9 @@ public sealed class RoslynExtractor : IAsyncDisposable
                     if (model.GetDeclaredSymbol(decl) is not IMethodSymbol caller) continue;
                     var fromId = MethodId(caller);
 
-                    foreach (var invocation in decl.DescendantNodes().OfType<InvocationExpressionSyntax>())
+                    foreach (var target in CallTargets(decl, model))
                     {
-                        var symbolInfo = model.GetSymbolInfo(invocation);
-                        // CandidateSymbols covers calls the compiler could not fully bind
-                        // (an overload set narrowed by a dynamic or erroneous argument).
-                        var target = symbolInfo.Symbol as IMethodSymbol
-                            ?? symbolInfo.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
-                        if (target == null) continue;
-
-                        var def = target.OriginalDefinition;
-                        var assembly = def.ContainingAssembly?.Name;
-                        if (assembly == null || !inScope.Contains(assembly)) continue;
-
-                        var toId = MethodId(def);
+                        if (InScopeMethodId(target, inScope) is not { } toId) continue;
                         if (toId == fromId) continue; // direct recursion adds no navigational value
 
                         yield return (fromId, toId);
@@ -462,17 +471,101 @@ public sealed class RoslynExtractor : IAsyncDisposable
                     foreach (var (resourceType, isAsync) in DisposedResources(decl, model))
                     {
                         if (ResolveDisposeMethod(resourceType, isAsync) is not { } dispose) continue;
-
-                        var def = dispose.OriginalDefinition;
-                        var assembly = def.ContainingAssembly?.Name;
-                        if (assembly == null || !inScope.Contains(assembly)) continue;
-
-                        var toId = MethodId(def);
+                        if (InScopeMethodId(dispose, inScope) is not { } toId) continue;
                         if (toId == fromId) continue;
 
                         yield return (fromId, toId);
                     }
                 }
+
+                // Field and property initializers execute inside the instance
+                // constructors, not inside any method declaration, so the walk
+                // above never sees them. Their calls are attributed to every
+                // instance ctor of the type — including the implicit default
+                // ctor, which in this case is exactly the code that runs them.
+                // (Overapproximation: a ctor chaining this(...) does not rerun
+                // initializers, but the work is still one ctor away.)
+                foreach (var typeDecl in tree.GetRoot().DescendantNodes().OfType<TypeDeclarationSyntax>())
+                {
+                    var initializers = InstanceInitializers(typeDecl).ToList();
+                    if (initializers.Count == 0) continue;
+                    if (model.GetDeclaredSymbol(typeDecl) is not INamedTypeSymbol type) continue;
+
+                    var ctorIds = type.InstanceConstructors.Select(MethodId).Distinct().ToList();
+
+                    foreach (var initializer in initializers)
+                        foreach (var target in CallTargets(initializer, model))
+                        {
+                            if (InScopeMethodId(target, inScope) is not { } toId) continue;
+
+                            foreach (var ctorId in ctorIds)
+                                if (toId != ctorId)
+                                    yield return (ctorId, toId);
+                        }
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Every method a scope calls: explicit invocations, plus new-expressions —
+    /// a constructor call with no invocation syntax at the site. CandidateSymbols
+    /// covers calls the compiler could not fully bind (an overload set narrowed
+    /// by a dynamic or erroneous argument).
+    /// </summary>
+    private static IEnumerable<IMethodSymbol> CallTargets(SyntaxNode scope, SemanticModel model)
+    {
+        foreach (var node in scope.DescendantNodesAndSelf())
+        {
+            if (node is not InvocationExpressionSyntax and not BaseObjectCreationExpressionSyntax)
+                continue;
+
+            var info = model.GetSymbolInfo(node);
+            var target = info.Symbol as IMethodSymbol
+                ?? info.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
+            if (target != null) yield return target;
+        }
+    }
+
+    /// <summary>
+    /// MethodId for a call target, or null when the target is declared outside
+    /// the loaded projects — an edge to String.Format is noise, not navigation.
+    /// </summary>
+    private static string? InScopeMethodId(IMethodSymbol target, IReadOnlySet<string> inScope)
+    {
+        var def = target.OriginalDefinition;
+        var assembly = def.ContainingAssembly?.Name;
+        if (assembly == null || !inScope.Contains(assembly)) return null;
+        return MethodId(def);
+    }
+
+    /// <summary>Symbol-side gate for the implicit-ctor node decision.</summary>
+    private static bool HasInstanceInitializers(INamedTypeSymbol symbol) =>
+        symbol.DeclaringSyntaxReferences
+            .Select(r => r.GetSyntax())
+            .OfType<TypeDeclarationSyntax>()
+            .Any(t => InstanceInitializers(t).Any());
+
+    /// <summary>
+    /// Instance field and property initializers of one type declaration. Static
+    /// initializers are excluded on purpose: they run in the static ctor, which
+    /// has no syntactic call sites and is not a graph node.
+    /// </summary>
+    private static IEnumerable<EqualsValueClauseSyntax> InstanceInitializers(TypeDeclarationSyntax typeDecl)
+    {
+        foreach (var member in typeDecl.Members)
+        {
+            switch (member)
+            {
+                case FieldDeclarationSyntax f when !f.Modifiers.Any(SyntaxKind.StaticKeyword):
+                    foreach (var variable in f.Declaration.Variables)
+                        if (variable.Initializer != null)
+                            yield return variable.Initializer;
+                    break;
+
+                case PropertyDeclarationSyntax p when !p.Modifiers.Any(SyntaxKind.StaticKeyword) && p.Initializer != null:
+                    yield return p.Initializer;
+                    break;
             }
         }
     }

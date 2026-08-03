@@ -180,7 +180,7 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
             .ToList();
 
         Assert.Equal(
-            new[] { "List_ReturnsSortedCatalogs", "Preload_CountsCatalogs" },
+            new[] { "Cache_SeedsItself", "List_ReturnsSortedCatalogs", "Preload_CountsCatalogs", "Warm_IsPositive" },
             tests.OrderBy(t => t, StringComparer.Ordinal));
         // NotATest calls production code but carries no attribute, and
         // InitializeAsync is a lifecycle hook, not a test.
@@ -261,6 +261,80 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         var dispose = Method(_solutionGraph!, "SampleLib.CatalogStore", "Dispose");
 
         Assert.False(dispose.GetProperty<bool>("isTestLifecycle"));
+    }
+
+    [Fact]
+    public void CoversEdges_FlowThroughCtorSetup()
+    {
+        var warm = Method(_solutionGraph!, "SampleLib.CatalogStore", "Warm");
+
+        // Warm is called only from CtorSetupCatalogTests' constructor, which
+        // xUnit runs before every test — no test method calls it.
+        var covering = new GraphQuery(_solutionGraph!).GetCoveringTests(warm.Id).ToList();
+
+        Assert.Single(covering);
+        Assert.Equal("Warm_IsPositive", covering[0].Test.Name);
+        Assert.Equal(1, covering[0].Depth);
+    }
+
+    [Fact]
+    public void TestClassCtor_IsLifecycle_AndNeverCovered()
+    {
+        var ctor = Method(_solutionGraph!, "SampleWeb.Tests.CtorSetupCatalogTests", ".ctor");
+
+        Assert.True(ctor.GetProperty<bool>("isTestLifecycle"));
+        Assert.False(ctor.GetProperty<bool>("isTest"));
+        Assert.DoesNotContain(_solutionGraph!.Incoming(ctor.Id), e => e.Type == EdgeType.Covers);
+    }
+
+    [Fact]
+    public void ProductionCtor_IsCovered_AndSeedsItsCallees()
+    {
+        var query = new GraphQuery(_solutionGraph!);
+
+        // InitializeAsync news up CatalogSession: the new-expression is a call
+        // edge to the ctor, and Open is only reachable through it.
+        var ctor = Method(_solutionGraph!, "SampleLib.CatalogSession", ".ctor");
+        var ctorCovering = query.GetCoveringTests(ctor.Id).ToList();
+        Assert.Single(ctorCovering);
+        Assert.Equal("Preload_CountsCatalogs", ctorCovering[0].Test.Name);
+        Assert.Equal(1, ctorCovering[0].Depth);
+
+        var open = Method(_solutionGraph!, "SampleLib.CatalogSession", "Open");
+        var openCovering = query.GetCoveringTests(open.Id).ToList();
+        Assert.Single(openCovering);
+        Assert.Equal(2, openCovering[0].Depth);
+    }
+
+    [Fact]
+    public void ImplicitCtor_WithInitializers_IsANode_AndRunsThem()
+    {
+        var query = new GraphQuery(_solutionGraph!);
+
+        // CatalogCache declares no ctor; its implicit ctor is a node because
+        // the field initializer is the code it runs. Reaching Seed proves the
+        // initializer's call was attributed to that ctor.
+        var ctor = Method(_solutionGraph!, "SampleLib.CatalogCache", ".ctor");
+        var ctorCovering = query.GetCoveringTests(ctor.Id).ToList();
+        Assert.Single(ctorCovering);
+        Assert.Equal("Cache_SeedsItself", ctorCovering[0].Test.Name);
+        Assert.Equal(1, ctorCovering[0].Depth);
+
+        var seed = Method(_solutionGraph!, "SampleLib.CatalogStore", "Seed");
+        var seedCovering = query.GetCoveringTests(seed.Id).ToList();
+        Assert.Single(seedCovering);
+        Assert.Equal(2, seedCovering[0].Depth);
+    }
+
+    [Fact]
+    public void ImplicitCtor_WithoutInitializers_IsNotANode()
+    {
+        // CatalogStore has no explicit ctor and no initializers: its implicit
+        // ctor runs nothing, so a node for it would only ever read as noise.
+        Assert.DoesNotContain(_solutionGraph!.Nodes, n =>
+            n.Type == NodeType.Method &&
+            n.Name == ".ctor" &&
+            n.GetProperty<string>("declaringType") == "SampleLib.CatalogStore");
     }
 
     [Fact]
