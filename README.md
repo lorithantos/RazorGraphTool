@@ -25,6 +25,15 @@ dotnet run --project src/RazorGraph.Cli -- query graph.json --id "page:Pages/Ind
 dotnet run --project src/RazorGraph.Cli -- query graph.json --id "pm:App.IndexModel" --trace --depth 3
 dotnet run --project src/RazorGraph.Cli -- query solution-graph.json --uncovered --project App
 
+# Deep-nesting report: methods whose bodies nest 3+ levels, deepest first
+dotnet run --project src/RazorGraph.Cli -- query graph.json --deep 3
+
+# Inside one method: control-flow blocks, regions, call sites with guard depths
+dotnet run --project src/RazorGraph.Cli -- body path/to/App.csproj --method "m:App.Services.OrderService.Place"
+
+# Prove a refactor kept the flow: exit 0 equivalent, 1 different, 2 error
+dotnet run --project src/RazorGraph.Cli -- body-diff path/to/App.csproj --method "m:App.OrderService.Place" --against "m:App.OrderService.PlaceOld"
+
 # Relevance-scored subgraph for feeding to a model
 dotnet run --project src/RazorGraph.Cli -- research graph.json --focus "page:Pages/Index.cshtml"
 ```
@@ -37,13 +46,14 @@ dotnet run --project src/RazorGraph.Cli -- research graph.json --focus "page:Pag
 `.mcp.json` in the repo root registers the server:
 
 ```bash
-dotnet build src/RazorGraph.Mcp -c Debug   # .mcp.json points at the Debug exe
+dotnet publish src/RazorGraph.Mcp -c Release -o .mcp-bin   # .mcp.json launches this published copy
 ```
 
-Restart the session and 18 tools appear: `build_graph`, `build_solution`, `load_graph`,
+Restart the session and 21 tools appear: `build_graph`, `build_solution`, `load_graph`,
 `save_graph`, `list_graphs`, `drop_graph`, `graph_summary`, `find_nodes`, `get_node`,
 `render_tree`, `page_context`, `trace_data_flow`, `find_path`, `covering_tests`,
-`covered_methods`, `uncovered_methods`, `find_server_to_js_mismatches`, `research`.
+`covered_methods`, `uncovered_methods`, `deep_methods`, `method_body_graph`,
+`method_body_diff`, `find_server_to_js_mismatches`, `research`.
 
 The server holds **several graphs at once** in a keyed registry. Every tool takes an
 optional `graphId` and falls back to the most recently added, so a solution graph and a
@@ -53,9 +63,11 @@ Results are compact JSON — the consumer is a model, not a terminal — and sea
 a `{ returned, totalMatches, truncated }` envelope. Check `truncated` before concluding
 you have seen everything.
 
-> A running server holds its own DLLs open, so rebuilding while it is attached fails with
-> MSB3021. Stop the session first. Extractor changes only reach the tools after a
-> rebuild *and* a session restart.
+> The server launches from the published `.mcp-bin` copy, not live build output, so
+> ordinary `dotnet build` keeps working while a session is attached. The published copy
+> is itself held open while any session uses it: re-publishing needs those sessions
+> closed first, and code changes only reach the tools after a re-publish *and* a session
+> restart.
 
 ## What ends up in the graph
 
@@ -65,7 +77,8 @@ you have seen everything.
 `ViewDataKey`, `Middleware`, `Route`, `HtmlElement`, `TagHelperInvocation`,
 `JavaScriptFile`, `CssFile`.
 
-**Edges** — structural (`Contains`, `Inherits`, `Implements`, `DependsOn`), rendering
+**Edges** — structural (`Contains`, `Inherits`, `Implements`, `DependsOn`, `References`
+— a page referencing a script or stylesheet), rendering
 (`PageServedBy`, `UsesLayout`, `RendersPartial`, `RendersComponent`, `DefinesSection`,
 `ReturnsView`), data flow (`HasModel`, `BindsTo`, `Reads`, `Writes`, `Calls`,
 `InjectedInto`, `ViewDataReadBy`, `ViewDataWrittenBy`, `DomSelectedBy`), routing
@@ -86,14 +99,36 @@ with silence rather than an error. Containment is followed without spending dept
 because call edges hang off `Method` nodes and a class-level trace that cannot descend
 for free would report nothing.
 
-### Two things worth knowing
+### Worth knowing
 
 **Coverage is reachability, not runtime coverage.** `Covers` edges are emitted from a
-test method to production code its call chain reaches, to depth 3, carrying the depth on
-the edge. A "covered" method is one some test *can* reach — not one a test asserted on.
-Edges are only emitted across a project boundary, so `build_solution` is required;
-`uncovered_methods` excludes bodiless interface and abstract declarations, which never
-bind a call and would otherwise swamp the report.
+test method to production code its call chain reaches — the full call closure, not a
+fixed horizon, carrying on each edge the depth it was reached at, so a consumer who
+wants direct exercise alone filters on depth. Traversal seeds from the test and from its
+class's lifecycle hooks and constructor alike: the framework runs those around every
+test, so work done there is exercised even though no test calls it. A "covered" method
+is one some test *can* reach — not one a test asserted on. Edges are only emitted across
+a project boundary, so `build_solution` is required; `uncovered_methods` excludes
+bodiless interface and abstract declarations, which never bind a call and would
+otherwise swamp the report.
+
+**Methods include constructors, and disposal is a call.** Explicit instance
+constructors are Method nodes — constructors run real code, and xUnit's primary setup
+idiom is the test-class ctor. An implicit default ctor appears only when field
+initializers run in it; static ctors stay out. A `using` / `await using` counts as a
+Calls edge to the resource's `Dispose`/`DisposeAsync`. Methods whose bodies nest carry
+a `bodyDepth` property stamped at build time, which feeds the deep-nesting report
+(`deep_methods` / `query --deep`).
+
+**Method bodies have their own graph.** `method_body_graph` (CLI: `body`) compiles the
+project and returns the graph *inside* one method: control-flow basic blocks with
+branch edges, structural regions (try/finally, lifetimes), and every call site anchored
+to its block with line and guard depth. `method_body_diff` (CLI: `body-diff`) proves
+two bodies flow-equivalent — bisimulation over the blocks, comparing operations, calls,
+canonicalized branch conditions, and exception-region context — or reports precisely
+why not. Conservative by design: a renamed local reports different; a semantically
+wrong change is never blessed. Compare against another method in the same compilation
+or against a body-graph JSON saved earlier.
 
 **Solution graphs scope ids by project.** A solution build produces
 `page:<Project>/<relPath>` and `js:<Project>/<relPath>`, because two projects can both
@@ -115,7 +150,7 @@ e.g. when the bug lives inside a shipped bundle; included vendor nodes carry
 |---|---|
 | `src/RazorGraph.Core` | Graph model, traversal, and the query surface |
 | `src/RazorGraph.Extractor` | Roslyn, Razor, and client-asset extraction; `GraphBuilder` |
-| `src/RazorGraph.Cli` | `build`, `build-solution`, `query`, `research` |
+| `src/RazorGraph.Cli` | `build`, `build-solution`, `query`, `body`, `body-diff`, `research` |
 | `src/RazorGraph.Mcp` | MCP stdio server over the graph |
 | `src/RazorGraph.Tests` | Unit and integration tests |
 | `tests/fixtures` | `SampleApp` (single project) and `MultiProject` (solution) |
