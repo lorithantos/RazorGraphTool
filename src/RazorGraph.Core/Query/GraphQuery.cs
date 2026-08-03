@@ -129,6 +129,19 @@ public sealed class GraphQuery
             .Where(m => !_graph.Incoming(m.Id).Any(e => e.Type == EdgeType.Covers));
 
     /// <summary>
+    /// Methods whose body nests control flow at least minDepth levels deep —
+    /// the christmas-tree report, deepest first. bodyDepth is stamped at
+    /// extraction time (see BodyGraphExtractor.NestingDepth); methods without
+    /// the property are flat or bodiless and never match a minDepth above 0.
+    /// </summary>
+    public IEnumerable<GraphNode> FindDeepMethods(int minDepth, string? project = null) =>
+        _graph.NodesOfType(NodeType.Method)
+            .Where(m => m.GetProperty<int>("bodyDepth") >= minDepth)
+            .Where(m => project == null ||
+                        string.Equals(m.GetProperty<string>("project"), project, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(m => m.GetProperty<int>("bodyDepth"));
+
+    /// <summary>
     /// Find all render dependencies of a Razor page (layout, partials, sections, components).
     /// </summary>
     public IEnumerable<(GraphNode Node, GraphEdge Edge)> GetRenderTree(string pageId)

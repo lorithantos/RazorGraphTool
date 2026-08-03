@@ -336,6 +336,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 int? line = syntaxRef == null
                     ? null
                     : syntaxRef.SyntaxTree.GetLineSpan(syntaxRef.Span).StartLinePosition.Line + 1;
+                var declSyntax = syntaxRef?.GetSyntax() as BaseMethodDeclarationSyntax;
 
                 return new MethodDetail
                 {
@@ -355,6 +356,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
                     // still nodes worth having (calls bind to them), but they are not
                     // code that a test could execute.
                     IsAbstract = m.IsAbstract,
+                    NestingDepth = declSyntax == null ? 0 : BodyGraphExtractor.NestingDepth(declSyntax),
                     FilePath = m.Locations.FirstOrDefault()?.SourceTree?.FilePath,
                     LineStart = line
                 };
@@ -505,6 +507,34 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// The control-flow graph of one method's body, located by the same id its
+    /// Method node is registered under. Null when the id matches nothing or the
+    /// method has no body. Requires a loaded project — body graphs are computed
+    /// from the live compilation, not from a serialized graph.
+    /// </summary>
+    public BodyGraph? GetMethodBodyGraph(string methodId)
+    {
+        if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
+
+        foreach (var loaded in _loaded)
+        {
+            foreach (var tree in loaded.Compilation.SyntaxTrees)
+            {
+                SemanticModel? model = null;
+                foreach (var decl in tree.GetRoot().DescendantNodes().OfType<BaseMethodDeclarationSyntax>())
+                {
+                    model ??= loaded.Compilation.GetSemanticModel(tree);
+                    if (model.GetDeclaredSymbol(decl) is not IMethodSymbol symbol) continue;
+                    if (MethodId(symbol) != methodId) continue;
+
+                    return BodyGraphExtractor.Extract(model, decl, MethodId);
+                }
+            }
+        }
+        return null;
     }
 
     /// <summary>
@@ -716,6 +746,12 @@ public sealed class MethodDetail
 
     /// <summary>Declared without a body — an interface member or an abstract method.</summary>
     public bool IsAbstract { get; init; }
+
+    /// <summary>
+    /// Maximum syntactic nesting depth of the body — the christmas-tree metric.
+    /// 0 for expression-bodied, abstract, and implicitly declared members.
+    /// </summary>
+    public int NestingDepth { get; init; }
 
     public string? FilePath { get; init; }
     public int? LineStart { get; init; }

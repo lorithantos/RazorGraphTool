@@ -9,6 +9,7 @@ var root = new RootCommand("RazorGraph — queryable code graph of ASP.NET Core 
 root.Add(CliCommands.Build());
 root.Add(CliCommands.BuildSolution());
 root.Add(CliCommands.Query());
+root.Add(CliCommands.Body());
 root.Add(CliCommands.Research());
 return await root.Parse(args).InvokeAsync();
 
@@ -166,6 +167,7 @@ internal static class CliCommands
         var coveringOpt = new Option<bool>("--covering-tests") { Description = "With --id of a method: which tests exercise it" };
         var coveredOpt = new Option<bool>("--covered-methods") { Description = "With --id of a test: which methods it exercises" };
         var uncoveredOpt = new Option<bool>("--uncovered") { Description = "List methods no test reaches (use with --project)" };
+        var deepOpt = new Option<int>("--deep") { Description = "List methods whose body nests control flow at least this deep (use with --project)" };
         var mismatchesOpt = new Option<bool>("--mismatches") { Description = "Report server-prepared data consumed by client JS" };
 
         var cmd = new Command("query", "Run a query against a built graph");
@@ -183,6 +185,7 @@ internal static class CliCommands
         cmd.Add(coveringOpt);
         cmd.Add(coveredOpt);
         cmd.Add(uncoveredOpt);
+        cmd.Add(deepOpt);
         cmd.Add(mismatchesOpt);
 
         cmd.SetAction((parseResult, ct) => RunQueryAsync(
@@ -202,6 +205,7 @@ internal static class CliCommands
                 CoveringTests = parseResult.GetValue(coveringOpt),
                 CoveredMethods = parseResult.GetValue(coveredOpt),
                 Uncovered = parseResult.GetValue(uncoveredOpt),
+                Deep = parseResult.GetValue(deepOpt),
                 Mismatches = parseResult.GetValue(mismatchesOpt)
             },
             ct));
@@ -225,6 +229,7 @@ internal static class CliCommands
         public bool CoveringTests { get; init; }
         public bool CoveredMethods { get; init; }
         public bool Uncovered { get; init; }
+        public int Deep { get; init; }
         public bool Mismatches { get; init; }
     }
 
@@ -239,6 +244,7 @@ internal static class CliCommands
         // long lambda.
         if (options.Mismatches) return RunMismatches(query);
         if (options.Uncovered) return RunUncovered(query, options.Project);
+        if (options.Deep > 0) return RunDeepListing(query, options.Deep, options.Project);
         if (options.Id != null) return RunNodeReport(query, options.Id, options);
         if (options.Type != null && Enum.TryParse<NodeType>(options.Type, true, out var type))
             return RunTypeListing(query, type, options.Name, options.Project);
@@ -270,6 +276,17 @@ internal static class CliCommands
         foreach (var m in uncovered.Take(200))
             Console.WriteLine($"  [{m.GetProperty<string>("project")}] {m.Name}  ({m.FilePath}:{m.LineStart})");
         if (uncovered.Count > 200) Console.WriteLine($"  ... {uncovered.Count - 200} more not shown");
+        return 0;
+    }
+
+    private static int RunDeepListing(GraphQuery query, int minDepth, string? project)
+    {
+        var deep = query.FindDeepMethods(minDepth, project).ToList();
+        Console.WriteLine($"{deep.Count} method(s) with body nesting depth >= {minDepth}"
+            + (project == null ? " (all projects)" : $" in {project}") + ":");
+        foreach (var m in deep)
+            Console.WriteLine($"  depth {m.GetProperty<int>("bodyDepth")}: [{m.GetProperty<string>("project")}] "
+                + $"{m.GetProperty<string>("declaringType")}.{m.Name}  ({m.FilePath}:{m.LineStart})");
         return 0;
     }
 
@@ -367,6 +384,76 @@ internal static class CliCommands
             Console.WriteLine($"  [{n.Id}] {n.Name} ({n.FilePath})");
         return 0;
     }
+
+    public static Command Body()
+    {
+        var pathArg = new Argument<FileInfo>("path") { Description = "Path to a .csproj, .sln, or .slnx file" };
+        var methodOpt = new Option<string>("--method")
+        {
+            Description = "Method node id (m:...) whose body to graph",
+            Required = true
+        };
+        var projectOpt = new Option<string?>("--project")
+        {
+            Description = "Project name inside the solution; narrows the compile when path is a solution"
+        };
+
+        var cmd = new Command("body",
+            "Emit one method's internal graph as JSON: control-flow blocks, regions, and call sites with guard depths. Compiles the project.");
+        cmd.Add(pathArg);
+        cmd.Add(methodOpt);
+        cmd.Add(projectOpt);
+
+        cmd.SetAction((parseResult, ct) => RunBodyAsync(
+            parseResult.GetValue(pathArg)!,
+            parseResult.GetValue(methodOpt)!,
+            parseResult.GetValue(projectOpt),
+            ct));
+
+        return cmd;
+    }
+
+    private static async Task<int> RunBodyAsync(
+        FileInfo path, string methodId, string? projectName, CancellationToken ct)
+    {
+        if (!path.Exists)
+        {
+            Console.Error.WriteLine($"File not found: {path.FullName}");
+            return 1;
+        }
+
+        RoslynExtractor.EnsureMsBuildRegistered();
+
+        await using var roslyn = new RoslynExtractor();
+        if (IsSolutionFile(path))
+        {
+            if (string.IsNullOrWhiteSpace(projectName))
+                await roslyn.LoadAllProjectsAsync(path.FullName, ct);
+            else
+                await roslyn.LoadSolutionAsync(path.FullName, projectName, ct);
+        }
+        else
+        {
+            await roslyn.LoadProjectAsync(path.FullName, ct);
+        }
+
+        var body = roslyn.GetMethodBodyGraph(methodId);
+        if (body == null)
+        {
+            Console.Error.WriteLine($"No body graph for '{methodId}': id not found in the compilation, or the method has no body.");
+            return 1;
+        }
+
+        Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(body, BodyJson));
+        return 0;
+    }
+
+    private static readonly System.Text.Json.JsonSerializerOptions BodyJson = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+    };
 
     public static Command Research()
     {

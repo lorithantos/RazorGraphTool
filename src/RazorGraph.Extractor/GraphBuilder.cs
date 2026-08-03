@@ -257,6 +257,7 @@ public sealed class GraphBuilder : IAsyncDisposable
             if (method.IsTest) node.SetProperty("isTest", true);
             if (method.IsTestLifecycle) node.SetProperty("isTestLifecycle", true);
             if (method.IsAbstract) node.SetProperty("isAbstract", true);
+            if (method.NestingDepth > 0) node.SetProperty("bodyDepth", method.NestingDepth);
             node.SetProperty("isPublic", method.IsPublic);
 
             _graph.AddNode(node);

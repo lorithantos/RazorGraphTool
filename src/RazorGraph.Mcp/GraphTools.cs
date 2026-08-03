@@ -9,6 +9,7 @@ using RazorGraph.Core.Graph;
 using RazorGraph.Core.Query;
 using RazorGraph.Core.Serialization;
 using RazorGraph.Extractor;
+using RazorGraph.Extractor.Roslyn;
 
 /// <summary>
 /// MCP tool surface over RazorGraph. All results are compact JSON — the consumer
@@ -331,6 +332,54 @@ public sealed class GraphTools(GraphStore store)
         var all = new GraphQuery(graph).FindUncoveredMethods(project).ToList();
         var page = all.Take(Math.Max(1, limit)).Select(NodeSummary).ToList();
         return ToJson(new { returned = page.Count, totalMatches = all.Count, truncated = all.Count > page.Count, methods = page });
+    }
+
+    [McpServerTool(Name = "deep_methods")]
+    [Description("Methods whose body nests control flow at least minDepth levels deep — the deep-nesting (christmas-tree) report, deepest first. bodyDepth is syntactic nesting stamped at build time; expression-bodied and flat methods never appear.")]
+    public string DeepMethods(
+        [Description("Minimum nesting depth to report (e.g. 4)")] int minDepth,
+        [Description("Project name to restrict to")] string? project = null,
+        [Description("Max nodes to return (default 50)")] int limit = 50,
+        [Description(GraphIdDescription)] string? graphId = null)
+    {
+        var graph = store.Require(graphId).Graph;
+        var all = new GraphQuery(graph).FindDeepMethods(minDepth, project).ToList();
+        var page = all.Take(Math.Max(1, limit))
+            .Select(m => new { depth = m.GetProperty<int>("bodyDepth"), node = NodeSummary(m) })
+            .ToList();
+        return ToJson(new { returned = page.Count, totalMatches = all.Count, truncated = all.Count > page.Count, methods = page });
+    }
+
+    [McpServerTool(Name = "method_body_graph")]
+    [Description("The graph INSIDE one method: control-flow basic blocks with branch edges, structural regions (try/finally, lifetimes), and every call site anchored to its block with line and guard depth (conditions/loops that must be entered for it to run). Call targets use the same m: ids as the main graph. Slow — compiles the project; a serialized graph is not enough.")]
+    public async Task<string> MethodBodyGraph(
+        [Description("Absolute path to a .csproj, .sln, or .slnx file")] string path,
+        [Description("Method node id (m:...) whose body to graph")] string methodId,
+        [Description("Project name inside the solution; narrows the compile when path is a solution")] string? projectName = null,
+        CancellationToken ct = default)
+    {
+        var full = Path.GetFullPath(path);
+        if (!File.Exists(full)) throw new McpException($"File not found: {full}");
+
+        RoslynExtractor.EnsureMsBuildRegistered();
+
+        await using var roslyn = new RoslynExtractor();
+        if (IsSolution(full))
+        {
+            if (string.IsNullOrWhiteSpace(projectName))
+                await roslyn.LoadAllProjectsAsync(full, ct);
+            else
+                await roslyn.LoadSolutionAsync(full, projectName, ct);
+        }
+        else
+        {
+            await roslyn.LoadProjectAsync(full, ct);
+        }
+
+        var body = roslyn.GetMethodBodyGraph(methodId)
+            ?? throw new McpException(
+                $"No body graph for '{methodId}': id not found in the compilation, or the method has no body.");
+        return ToJson(body);
     }
 
     // ---- Research ------------------------------------------------------------

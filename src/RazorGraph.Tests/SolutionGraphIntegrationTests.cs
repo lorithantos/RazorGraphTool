@@ -366,6 +366,29 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void MethodNodes_CarryBodyDepth()
+    {
+        // NestedFlow.Tally is deliberately foreach > if > for > if.
+        var tally = Method(_solutionGraph!, "SampleLib.NestedFlow", "Tally");
+        Assert.Equal(4, tally.GetProperty<int>("bodyDepth"));
+
+        // Flat methods carry no property at all; typed access defaults to 0.
+        var zero = Method(_solutionGraph!, "SampleLib.NestedFlow", "Zero");
+        Assert.False(zero.Properties.ContainsKey("bodyDepth"));
+        Assert.Equal(0, zero.GetProperty<int>("bodyDepth"));
+    }
+
+    [Fact]
+    public void FindDeepMethods_ReportsOnlyDeepBodies_DeepestFirst()
+    {
+        var deep = new GraphQuery(_solutionGraph!).FindDeepMethods(4, "SampleLib").ToList();
+
+        Assert.Contains(deep, m => m.Name == "Tally");
+        Assert.DoesNotContain(deep, m => m.Name == "List");
+        Assert.Equal(deep.OrderByDescending(m => m.GetProperty<int>("bodyDepth")).Select(m => m.Id), deep.Select(m => m.Id));
+    }
+
+    [Fact]
     public void FindUncoveredMethods_ReportsTheUnreachedMethod()
     {
         var uncovered = new GraphQuery(_solutionGraph!)
