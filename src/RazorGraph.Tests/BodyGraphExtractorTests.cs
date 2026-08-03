@@ -61,15 +61,16 @@ public class BodyGraphExtractorTests : IAsyncLifetime
 
         Assert.Contains(body.Blocks, b => b.Kind == "Entry");
         Assert.Contains(body.Blocks, b => b.Kind == "Exit");
-        // Two ifs and two loop conditions: conditional branch edges must exist.
-        Assert.Contains(body.Blocks, b => b.BranchesTo != null && b.BranchWhen != null);
+        // Two ifs and two loop conditions: conditional blocks must exist.
+        Assert.Contains(body.Blocks, b => b.Condition != null && b.WhenTrue != null && b.WhenFalse != null);
 
         // Every edge points at a real block.
         var ordinals = body.Blocks.Select(b => b.Ordinal).ToHashSet();
         Assert.All(body.Blocks, b =>
         {
             if (b.FallsTo is { } f) Assert.Contains(f, ordinals);
-            if (b.BranchesTo is { } c) Assert.Contains(c, ordinals);
+            if (b.WhenTrue is { } t) Assert.Contains(t, ordinals);
+            if (b.WhenFalse is { } w) Assert.Contains(w, ordinals);
         });
     }
 
@@ -77,6 +78,48 @@ public class BodyGraphExtractorTests : IAsyncLifetime
     public void BodyGraph_OfUnknownMethod_IsNull()
     {
         Assert.Null(_roslyn!.GetMethodBodyGraph("m:SampleLib.NestedFlow.DoesNotExist()"));
+    }
+
+    [Fact]
+    public void Compare_MethodWithItself_IsEquivalent()
+    {
+        var one = _roslyn!.GetMethodBodyGraph(TallyId)!;
+        var two = _roslyn!.GetMethodBodyGraph(TallyId)!;
+
+        var diff = BodyGraphComparer.Compare(one, two);
+
+        Assert.True(diff.Equivalent, string.Join(" | ", diff.Differences));
+    }
+
+    [Fact]
+    public void Compare_NestedAndGuardClauseTwins_ProvesFlowEquivalence()
+    {
+        // Tally is foreach > if > for > if (depth 4); TallyFlat does the same
+        // work with inverted guard clauses (depth 3). Condition canonicalization
+        // folds the inversions, so the prover must find identical flow — this is
+        // the safety proof for the flattening transform.
+        var nested = _roslyn!.GetMethodBodyGraph(TallyId)!;
+        var flat = _roslyn!.GetMethodBodyGraph(
+            "m:SampleLib.NestedFlow.TallyFlat(System.Collections.Generic.IEnumerable<int>)")!;
+
+        var diff = BodyGraphComparer.Compare(nested, flat);
+
+        Assert.True(diff.Equivalent, string.Join(" | ", diff.Differences));
+        Assert.Equal(4, diff.NestingDepthLeft);
+        Assert.Equal(3, diff.NestingDepthRight);
+    }
+
+    [Fact]
+    public void Compare_DifferentMethods_ReportsPreciseDifferences()
+    {
+        var tally = _roslyn!.GetMethodBodyGraph(TallyId)!;
+        var zero = _roslyn!.GetMethodBodyGraph("m:SampleLib.NestedFlow.Zero()")!;
+
+        var diff = BodyGraphComparer.Compare(tally, zero);
+
+        Assert.False(diff.Equivalent);
+        Assert.NotEmpty(diff.Differences);
+        Assert.Contains(SeedId, diff.CallsOnlyInLeft);
     }
 
     private static string FixtureDir()

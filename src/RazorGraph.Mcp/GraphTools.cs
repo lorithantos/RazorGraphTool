@@ -382,6 +382,57 @@ public sealed class GraphTools(GraphStore store)
         return ToJson(body);
     }
 
+    [McpServerTool(Name = "method_body_diff")]
+    [Description("Prove two method bodies flow-equivalent, or report precisely why not: bisimulation over control-flow blocks comparing operations, calls, canonicalized branch conditions (guard inversion folds away), and exception-region context. Conservative by design — a renamed local reports different; a semantically wrong change is never blessed. Compare a method against another in the same compilation (againstMethodId) or against a saved body-graph JSON (baselinePath). Slow — compiles the project.")]
+    public async Task<string> MethodBodyDiff(
+        [Description("Absolute path to a .csproj, .sln, or .slnx file")] string path,
+        [Description("Method node id (m:...) — the right side of the comparison")] string methodId,
+        [Description("Another method id in the same compilation to compare against (left side)")] string? againstMethodId = null,
+        [Description("Body-graph JSON file saved earlier (left side)")] string? baselinePath = null,
+        [Description("Project name inside the solution; narrows the compile when path is a solution")] string? projectName = null,
+        CancellationToken ct = default)
+    {
+        if ((againstMethodId == null) == (baselinePath == null))
+            throw new McpException("Exactly one of againstMethodId or baselinePath is required.");
+
+        var full = Path.GetFullPath(path);
+        if (!File.Exists(full)) throw new McpException($"File not found: {full}");
+
+        RoslynExtractor.EnsureMsBuildRegistered();
+
+        await using var roslyn = new RoslynExtractor();
+        if (IsSolution(full))
+        {
+            if (string.IsNullOrWhiteSpace(projectName))
+                await roslyn.LoadAllProjectsAsync(full, ct);
+            else
+                await roslyn.LoadSolutionAsync(full, projectName, ct);
+        }
+        else
+        {
+            await roslyn.LoadProjectAsync(full, ct);
+        }
+
+        var right = roslyn.GetMethodBodyGraph(methodId)
+            ?? throw new McpException($"No body graph for '{methodId}'.");
+
+        BodyGraph left;
+        if (againstMethodId != null)
+        {
+            left = roslyn.GetMethodBodyGraph(againstMethodId)
+                ?? throw new McpException($"No body graph for '{againstMethodId}'.");
+        }
+        else
+        {
+            var baselineFull = Path.GetFullPath(baselinePath!);
+            if (!File.Exists(baselineFull)) throw new McpException($"Baseline file not found: {baselineFull}");
+            left = JsonSerializer.Deserialize<BodyGraph>(await File.ReadAllTextAsync(baselineFull, ct), Json)
+                ?? throw new McpException($"Baseline file is not a body graph: {baselineFull}");
+        }
+
+        return ToJson(BodyGraphComparer.Compare(left, right));
+    }
+
     // ---- Research ------------------------------------------------------------
 
     [McpServerTool(Name = "research")]

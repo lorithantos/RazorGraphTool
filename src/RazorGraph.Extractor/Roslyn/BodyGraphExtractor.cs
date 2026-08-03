@@ -79,18 +79,41 @@ public static class BodyGraphExtractor
         var regions = new List<BodyRegion>();
         IndexRegion(cfg.Root, parentId: null, regionIds, regions);
 
-        var blocks = cfg.Blocks.Select(block => new BodyBlock
+        var blocks = cfg.Blocks.Select(block =>
         {
-            Ordinal = block.Ordinal,
-            Kind = block.Kind.ToString(),
-            RegionId = regionIds[block.EnclosingRegion!],
-            IsReachable = block.IsReachable,
-            FallsTo = block.FallThroughSuccessor?.Destination?.Ordinal,
-            BranchesTo = block.ConditionalSuccessor?.Destination?.Ordinal,
-            BranchWhen = block.ConditionKind == ControlFlowConditionKind.None
-                ? null
-                : block.ConditionKind.ToString(),
-            Calls = CallSites(block, decl, idFor).ToList()
+            var fallsTo = block.FallThroughSuccessor?.Destination?.Ordinal;
+            var branchesTo = block.ConditionalSuccessor?.Destination?.Ordinal;
+
+            // Conditional blocks are stored as (condition, whenTrue, whenFalse)
+            // with the condition canonicalized, so that `if (c) X` and the
+            // guard-clause `if (!c) skip; X` — identical flow, opposite spelling
+            // — produce identical block records and become provably equivalent.
+            string? condition = null;
+            int? whenTrue = null, whenFalse = null;
+            if (block.ConditionKind != ControlFlowConditionKind.None && block.BranchValue is { } branchValue)
+            {
+                var (text, swap) = CanonicalCondition(branchValue);
+                condition = text;
+                (whenTrue, whenFalse) = block.ConditionKind == ControlFlowConditionKind.WhenTrue
+                    ? (branchesTo, fallsTo)
+                    : (fallsTo, branchesTo);
+                if (swap) (whenTrue, whenFalse) = (whenFalse, whenTrue);
+                fallsTo = null;
+            }
+
+            return new BodyBlock
+            {
+                Ordinal = block.Ordinal,
+                Kind = block.Kind.ToString(),
+                RegionId = regionIds[block.EnclosingRegion!],
+                IsReachable = block.IsReachable,
+                FallsTo = fallsTo,
+                Condition = condition,
+                WhenTrue = whenTrue,
+                WhenFalse = whenFalse,
+                Operations = block.Operations.Select(o => NormalizeText(o.Syntax)).ToList(),
+                Calls = CallSites(block, decl, idFor).ToList()
+            };
         }).ToList();
 
         return new BodyGraph
@@ -120,6 +143,54 @@ public static class BodyGraphExtractor
         foreach (var nested in region.NestedRegions)
             IndexRegion(nested, id, regionIds, regions);
     }
+
+    /// <summary>
+    /// A canonical (text, swapBranches) form of a branch condition. Logical
+    /// negation and complementary comparison operators fold away: !c, and
+    /// c's complement with swapped targets, both canonicalize to c. Ordering
+    /// comparisons are only folded for non-floating operands — with NaN,
+    /// !(a &lt; b) is not a &gt;= b, and an equivalence prover must never
+    /// assume it is. ==/!= stay complementary even for NaN.
+    /// </summary>
+    private static (string Text, bool Swap) CanonicalCondition(IOperation condition)
+    {
+        switch (condition)
+        {
+            case IUnaryOperation { OperatorKind: UnaryOperatorKind.Not } not:
+                var (text, swap) = CanonicalCondition(not.Operand);
+                return (text, !swap);
+
+            case IBinaryOperation binary when ComparisonPartner(binary) is { } partner:
+                var left = NormalizeText(binary.LeftOperand.Syntax);
+                var right = NormalizeText(binary.RightOperand.Syntax);
+                return ($"{left} {partner.Symbol} {right}", partner.Swap);
+
+            default:
+                return (NormalizeText(condition.Syntax), false);
+        }
+    }
+
+    private static (string Symbol, bool Swap)? ComparisonPartner(IBinaryOperation binary)
+    {
+        var floating = IsFloating(binary.LeftOperand.Type) || IsFloating(binary.RightOperand.Type);
+        return binary.OperatorKind switch
+        {
+            BinaryOperatorKind.Equals => ("==", false),
+            BinaryOperatorKind.NotEquals => ("==", true),
+            BinaryOperatorKind.LessThan when !floating => ("<", false),
+            BinaryOperatorKind.GreaterThanOrEqual when !floating => ("<", true),
+            BinaryOperatorKind.LessThanOrEqual when !floating => ("<=", false),
+            BinaryOperatorKind.GreaterThan when !floating => ("<=", true),
+            _ => null
+        };
+    }
+
+    private static bool IsFloating(ITypeSymbol? type) =>
+        type?.SpecialType is SpecialType.System_Single or SpecialType.System_Double;
+
+    private static string NormalizeText(SyntaxNode syntax) =>
+        string.Join(" ", syntax.ToString().Split(
+            (char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 
     private static IEnumerable<BodyCallSite> CallSites(
         BasicBlock block, BaseMethodDeclarationSyntax decl, Func<IMethodSymbol, string> idFor)
@@ -176,10 +247,14 @@ public sealed class BodyBlock
     public required string Kind { get; init; }
     public int RegionId { get; init; }
     public bool IsReachable { get; init; }
+    /// <summary>Unconditional successor; null when the block branches or terminates.</summary>
     public int? FallsTo { get; init; }
-    public int? BranchesTo { get; init; }
-    /// <summary>WhenTrue/WhenFalse when the block ends in a conditional branch.</summary>
-    public string? BranchWhen { get; init; }
+    /// <summary>Canonicalized branch condition; null for unconditional blocks.</summary>
+    public string? Condition { get; init; }
+    public int? WhenTrue { get; init; }
+    public int? WhenFalse { get; init; }
+    /// <summary>Source text of each operation, whitespace-normalized — what equivalence compares.</summary>
+    public required List<string> Operations { get; init; }
     public required List<BodyCallSite> Calls { get; init; }
 }
 
