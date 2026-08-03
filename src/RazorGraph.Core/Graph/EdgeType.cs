@@ -18,7 +18,6 @@ public enum EdgeType
     // Data flow
     InjectedInto,
     ReturnsView,
-    ReturnsPartial,
     BindsTo,
     Reads,
     Writes,
@@ -39,8 +38,6 @@ public enum EdgeType
 
     // Cross-layer
     UrlGeneratedBy,
-    ServiceSharedBy,
-    PartialRenderedBy,
 
     // Dependencies
     References,
