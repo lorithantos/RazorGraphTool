@@ -361,3 +361,11 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Published MCP server binary that .mcp.json launches.
+# Deliberately NOT bin/Debug: a running server holds its DLLs open, so pointing
+# Claude at the live build output made any rebuild of that configuration fail with
+# MSB3021 while a session was up. Publishing to a copy decouples the two -- build
+# and run freely; re-publish only when you want the server to pick up changes.
+# Not matched by the [Bb]in/ rule above, hence its own entry.
+.mcp-bin/

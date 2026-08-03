@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "razorgraph": {
-      "command": "src/RazorGraph.Mcp/bin/Debug/net10.0/RazorGraph.Mcp.exe",
+      "command": "D:/Repos/RazorGraphTool/.mcp-bin/RazorGraph.Mcp.exe",
       "args": []
     }
   }
