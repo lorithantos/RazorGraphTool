@@ -480,33 +480,40 @@ public sealed class RoslynExtractor : IAsyncDisposable
                     }
                 }
 
-                // Field and property initializers execute inside the instance
-                // constructors, not inside any method declaration, so the walk
-                // above never sees them. Their calls are attributed to every
-                // instance ctor of the type — including the implicit default
-                // ctor, which in this case is exactly the code that runs them.
-                // (Overapproximation: a ctor chaining this(...) does not rerun
-                // initializers, but the work is still one ctor away.)
                 foreach (var typeDecl in tree.GetRoot().DescendantNodes().OfType<TypeDeclarationSyntax>())
-                {
-                    var initializers = InstanceInitializers(typeDecl).ToList();
-                    if (initializers.Count == 0) continue;
-                    if (model.GetDeclaredSymbol(typeDecl) is not INamedTypeSymbol type) continue;
-
-                    var ctorIds = type.InstanceConstructors.Select(MethodId).Distinct().ToList();
-
-                    foreach (var initializer in initializers)
-                        foreach (var target in CallTargets(initializer, model))
-                        {
-                            if (InScopeMethodId(target, inScope) is not { } toId) continue;
-
-                            foreach (var ctorId in ctorIds)
-                                if (toId != ctorId)
-                                    yield return (ctorId, toId);
-                        }
-                }
+                    foreach (var edge in InitializerCallEdges(typeDecl, model, inScope))
+                        yield return edge;
             }
         }
+    }
+
+    /// <summary>
+    /// Call edges for one type's field and property initializers. Initializers
+    /// execute inside the instance constructors, not inside any method
+    /// declaration, so the method walk in ExtractCallEdges never sees them.
+    /// Their calls are attributed to every instance ctor of the type —
+    /// including the implicit default ctor, which in this case is exactly the
+    /// code that runs them. (Overapproximation: a ctor chaining this(...) does
+    /// not rerun initializers, but the work is still one ctor away.)
+    /// </summary>
+    private static IEnumerable<(string FromId, string ToId)> InitializerCallEdges(
+        TypeDeclarationSyntax typeDecl, SemanticModel model, IReadOnlySet<string> inScope)
+    {
+        var initializers = InstanceInitializers(typeDecl).ToList();
+        if (initializers.Count == 0) yield break;
+        if (model.GetDeclaredSymbol(typeDecl) is not INamedTypeSymbol type) yield break;
+
+        var ctorIds = type.InstanceConstructors.Select(MethodId).Distinct().ToList();
+
+        foreach (var initializer in initializers)
+            foreach (var target in CallTargets(initializer, model))
+            {
+                if (InScopeMethodId(target, inScope) is not { } toId) continue;
+
+                foreach (var ctorId in ctorIds)
+                    if (toId != ctorId)
+                        yield return (ctorId, toId);
+            }
     }
 
     /// <summary>
@@ -614,16 +621,15 @@ public sealed class RoslynExtractor : IAsyncDisposable
             {
                 case UsingStatementSyntax u:
                     var isAsync = u.AwaitKeyword.IsKind(SyntaxKind.AwaitKeyword);
-                    if (u.Declaration != null)
+                    if (u.Declaration == null)
                     {
-                        foreach (var variable in u.Declaration.Variables)
-                            if (model.GetDeclaredSymbol(variable) is ILocalSymbol local)
-                                yield return (local.Type, isAsync);
+                        if (u.Expression != null && model.GetTypeInfo(u.Expression).Type is { } expressionType)
+                            yield return (expressionType, isAsync);
+                        break;
                     }
-                    else if (u.Expression != null && model.GetTypeInfo(u.Expression).Type is { } expressionType)
-                    {
-                        yield return (expressionType, isAsync);
-                    }
+                    foreach (var variable in u.Declaration.Variables)
+                        if (model.GetDeclaredSymbol(variable) is ILocalSymbol local)
+                            yield return (local.Type, isAsync);
                     break;
 
                 case LocalDeclarationStatementSyntax l when l.UsingKeyword.IsKind(SyntaxKind.UsingKeyword):
