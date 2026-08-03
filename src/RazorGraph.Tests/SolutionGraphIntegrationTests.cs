@@ -179,9 +179,13 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
             .Select(m => m.Name)
             .ToList();
 
-        Assert.Equal(new[] { "List_ReturnsSortedCatalogs" }, tests);
-        // NotATest calls production code but carries no attribute.
+        Assert.Equal(
+            new[] { "List_ReturnsSortedCatalogs", "Preload_CountsCatalogs" },
+            tests.OrderBy(t => t, StringComparer.Ordinal));
+        // NotATest calls production code but carries no attribute, and
+        // InitializeAsync is a lifecycle hook, not a test.
         Assert.DoesNotContain("NotATest", tests);
+        Assert.DoesNotContain("InitializeAsync", tests);
     }
 
     [Fact]
@@ -221,6 +225,45 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void CoversEdges_FlowThroughLifecycleSetup()
+    {
+        var query = new GraphQuery(_solutionGraph!);
+        var preload = Method(_solutionGraph!, "SampleLib.CatalogStore", "Preload");
+
+        // Preload is called only from LifecycleCatalogTests.InitializeAsync,
+        // which xUnit runs around each test — no test method calls it. Before
+        // lifecycle seeding this reported Preload as uncovered while runtime
+        // coverage showed it exercised.
+        var covering = query.GetCoveringTests(preload.Id).ToList();
+
+        Assert.Single(covering);
+        Assert.Equal("Preload_CountsCatalogs", covering[0].Test.Name);
+        Assert.Equal(1, covering[0].Depth);
+    }
+
+    [Fact]
+    public void LifecycleHooks_AreFlagged_ButAreNotTests()
+    {
+        var initialize = Method(_solutionGraph!, "SampleWeb.Tests.LifecycleCatalogTests", "InitializeAsync");
+
+        Assert.True(initialize.GetProperty<bool>("isTestLifecycle"));
+        Assert.False(initialize.GetProperty<bool>("isTest"));
+        // The hook itself must never be the source of a Covers edge.
+        Assert.DoesNotContain(_solutionGraph!.Outgoing(initialize.Id), e => e.Type == EdgeType.Covers);
+    }
+
+    [Fact]
+    public void Dispose_OnProductionTypes_IsNotFlaggedAsLifecycle()
+    {
+        // CatalogStore is IDisposable but has no tests on the type, so its
+        // Dispose must not be flagged — the gate that keeps every production
+        // Dispose out of the lifecycle set.
+        var dispose = Method(_solutionGraph!, "SampleLib.CatalogStore", "Dispose");
+
+        Assert.False(dispose.GetProperty<bool>("isTestLifecycle"));
+    }
+
+    [Fact]
     public void FindUncoveredMethods_ReportsTheUnreachedMethod()
     {
         var uncovered = new GraphQuery(_solutionGraph!)
@@ -231,6 +274,7 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         Assert.Contains(Method(_solutionGraph!, "SampleLib.CatalogStore", "Orphan").Id, uncovered);
         Assert.DoesNotContain(Method(_solutionGraph!, "SampleLib.CatalogStore", "List").Id, uncovered);
         Assert.DoesNotContain(Method(_solutionGraph!, "SampleLib.CatalogStore", "Normalize").Id, uncovered);
+        Assert.DoesNotContain(Method(_solutionGraph!, "SampleLib.CatalogStore", "Preload").Id, uncovered);
     }
 
     [Fact]

@@ -255,6 +255,7 @@ public sealed class GraphBuilder : IAsyncDisposable
             if (method.IsAsync) node.SetProperty("isAsync", true);
             if (method.IsStatic) node.SetProperty("isStatic", true);
             if (method.IsTest) node.SetProperty("isTest", true);
+            if (method.IsTestLifecycle) node.SetProperty("isTestLifecycle", true);
             if (method.IsAbstract) node.SetProperty("isAbstract", true);
             node.SetProperty("isPublic", method.IsPublic);
 
@@ -677,19 +678,32 @@ public sealed class GraphBuilder : IAsyncDisposable
     /// <summary>
     /// Link each test method to the production code it exercises.
     ///
-    /// Reachability is followed through Calls rather than stopping at direct
-    /// invocations, because a test that goes through a builder or a fixture
-    /// helper still covers what that helper drives. The depth it was reached at
-    /// rides on the edge, so a consumer can ask for direct exercise alone; edges
-    /// are only emitted across a project boundary, since a test calling its own
-    /// helpers is not coverage of anything.
+    /// Reachability is followed through Calls to the full closure, not a fixed
+    /// horizon: coverage is a reachability claim, and a truncated closure turns
+    /// "no test reaches this" into a statement about the cutoff rather than the
+    /// code. The depth each node was reached at rides on the edge, so a consumer
+    /// who wants direct exercise alone filters on depth instead of the graph
+    /// being pre-truncated for everyone. Edges are only emitted across a project
+    /// boundary, since a test calling its own helpers is not coverage of
+    /// anything. maxDepth remains as a guardrail for callers that want one.
+    ///
+    /// Traversal seeds from each test and from its class's lifecycle hooks
+    /// (isTestLifecycle) alike: the framework runs InitializeAsync/[SetUp]
+    /// around every test in the class, so work done there is exercised by each
+    /// of them even though no test calls it. A node reachable from both seeds
+    /// keeps the shallower depth.
     /// </summary>
-    private void AddCoverageEdges(int maxDepth = 3)
+    private void AddCoverageEdges(int maxDepth = int.MaxValue)
     {
-        var tests = _graph.NodesOfType(NodeType.Method)
-            .Where(n => n.GetProperty<bool>("isTest"))
-            .ToList();
+        var methods = _graph.NodesOfType(NodeType.Method).ToList();
+
+        var tests = methods.Where(n => n.GetProperty<bool>("isTest")).ToList();
         if (tests.Count == 0) return;
+
+        var lifecycleByType = methods
+            .Where(n => n.GetProperty<bool>("isTestLifecycle"))
+            .GroupBy(n => n.GetProperty<string>("declaringType") ?? string.Empty)
+            .ToDictionary(g => g.Key, g => g.ToList());
 
         var callsOnly = new HashSet<EdgeType> { EdgeType.Calls };
 
@@ -697,15 +711,29 @@ public sealed class GraphBuilder : IAsyncDisposable
         {
             var testProject = test.GetProperty<string>("project");
 
-            // Materialised before the loop body runs: Traverse streams straight off
+            var seeds = new List<GraphNode> { test };
+            var declaringType = test.GetProperty<string>("declaringType");
+            if (declaringType != null && lifecycleByType.TryGetValue(declaringType, out var hooks))
+                seeds.AddRange(hooks);
+
+            // Materialised before edges are added: Traverse streams straight off
             // the adjacency lists, and adding a Covers edge below mutates one of
             // them mid-enumeration.
-            var reached = _graph.Traverse(test.Id, callsOnly, maxDepth).ToList();
+            var reachedAtDepth = new Dictionary<string, (GraphNode Node, int Depth)>();
+            foreach (var seed in seeds)
+            {
+                foreach (var (node, _, depth) in _graph.Traverse(seed.Id, callsOnly, maxDepth).ToList())
+                {
+                    if (!reachedAtDepth.TryGetValue(node.Id, out var existing) || depth < existing.Depth)
+                        reachedAtDepth[node.Id] = (node, depth);
+                }
+            }
 
-            foreach (var (node, _, depth) in reached)
+            foreach (var (node, depth) in reachedAtDepth.Values)
             {
                 if (node.Type != NodeType.Method) continue;
                 if (node.GetProperty<bool>("isTest")) continue;
+                if (node.GetProperty<bool>("isTestLifecycle")) continue;
 
                 var project = node.GetProperty<string>("project");
                 if (project == null || string.Equals(project, testProject, StringComparison.OrdinalIgnoreCase))

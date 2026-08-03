@@ -321,7 +321,7 @@ public sealed class GraphTools(GraphStore store)
     }
 
     [McpServerTool(Name = "uncovered_methods")]
-    [Description("Methods that no test reaches. Pass a project to scope the question to one assembly, which is almost always what you want. This is reachability through the call graph, not runtime coverage — a method listed here is provably untouched by any test's call chain to the configured depth.")]
+    [Description("Methods that no test reaches. Pass a project to scope the question to one assembly, which is almost always what you want. This is reachability through the call graph, not runtime coverage — a method listed here is unreached by any test's call chain, including setup done in test-class lifecycle hooks.")]
     public string UncoveredMethods(
         [Description("Project name to restrict to (e.g. the production assembly)")] string? project = null,
         [Description("Max nodes to return (default 50)")] int limit = 50,

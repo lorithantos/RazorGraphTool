@@ -303,9 +303,17 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// type's public surface: a call graph that omitted private methods would
     /// break every chain that passes through a helper.
     /// </summary>
-    private List<MethodDetail> ExtractMethodNodes(INamedTypeSymbol symbol) =>
-        symbol.GetMembers().OfType<IMethodSymbol>()
+    private List<MethodDetail> ExtractMethodNodes(INamedTypeSymbol symbol)
+    {
+        var members = symbol.GetMembers().OfType<IMethodSymbol>()
             .Where(m => m.MethodKind == MethodKind.Ordinary && !m.IsImplicitlyDeclared)
+            .ToList();
+
+        // Lifecycle hooks only count as such on a type that actually has tests;
+        // otherwise every IDisposable.Dispose in production code would be flagged.
+        var hasTests = members.Any(IsTestMethod);
+
+        return members
             .Select(m =>
             {
                 var syntaxRef = m.DeclaringSyntaxReferences.FirstOrDefault();
@@ -323,6 +331,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
                     IsPublic = m.DeclaredAccessibility == Accessibility.Public,
                     IsStatic = m.IsStatic,
                     IsTest = IsTestMethod(m),
+                    IsTestLifecycle = hasTests && IsLifecycleMethod(m),
                     // Interface members and abstract methods have no body. They are
                     // still nodes worth having (calls bind to them), but they are not
                     // code that a test could execute.
@@ -332,6 +341,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 };
             })
             .ToList();
+    }
 
     /// <summary>
     /// Attribute names that mark a method as a test across the three frameworks
@@ -349,6 +359,37 @@ public sealed class RoslynExtractor : IAsyncDisposable
     private static bool IsTestMethod(IMethodSymbol method) =>
         method.GetAttributes().Any(a =>
             a.AttributeClass != null && TestAttributeNames.Contains(a.AttributeClass.Name));
+
+    /// <summary>
+    /// Setup/teardown attribute names for the frameworks that mark hooks with
+    /// attributes. xUnit is absent by design: its hooks are interface members.
+    /// </summary>
+    private static readonly HashSet<string> LifecycleAttributeNames = new(StringComparer.Ordinal)
+    {
+        "SetUpAttribute", "TearDownAttribute",
+        "OneTimeSetUpAttribute", "OneTimeTearDownAttribute",       // NUnit
+        "TestInitializeAttribute", "TestCleanupAttribute",
+        "ClassInitializeAttribute", "ClassCleanupAttribute"        // MSTest
+    };
+
+    /// <summary>
+    /// A hook the framework runs around each test rather than a method any test
+    /// calls. Work done here is real coverage, but no Calls edge from a test will
+    /// ever reach it. Only meaningful on a type that has test methods — the
+    /// caller gates on that. Constructor-based setup is not represented, because
+    /// constructors are not graph nodes; a base-class hook is likewise missed,
+    /// since it is extracted under the base type, which has no tests of its own.
+    /// </summary>
+    private static bool IsLifecycleMethod(IMethodSymbol method)
+    {
+        if (method.GetAttributes().Any(a =>
+                a.AttributeClass != null && LifecycleAttributeNames.Contains(a.AttributeClass.Name)))
+            return true;
+
+        return method.Name is "InitializeAsync" or "DisposeAsync" or "Dispose"
+            && method.ContainingType.AllInterfaces.Any(i =>
+                i.Name is "IAsyncLifetime" or "IAsyncDisposable" or "IDisposable");
+    }
 
     /// <summary>
     /// Stable id for a method, shared by the declaration site and every call site.
@@ -492,6 +533,13 @@ public sealed class MethodDetail
 
     /// <summary>Carries a [Fact]/[Test]/[TestMethod]-style attribute.</summary>
     public bool IsTest { get; init; }
+
+    /// <summary>
+    /// A setup/teardown hook on a test class — [SetUp]-style attribute or an
+    /// xUnit IAsyncLifetime/IDisposable member. The framework calls it, no test
+    /// does, so coverage traversal must seed from it alongside the tests.
+    /// </summary>
+    public bool IsTestLifecycle { get; init; }
 
     /// <summary>Declared without a body — an interface member or an abstract method.</summary>
     public bool IsAbstract { get; init; }
