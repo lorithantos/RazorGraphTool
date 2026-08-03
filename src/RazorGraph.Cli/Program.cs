@@ -6,49 +6,64 @@ using RazorGraph.Extractor;
 using RazorGraph.Extractor.Roslyn;
 
 var root = new RootCommand("RazorGraph — queryable code graph of ASP.NET Core Razor apps");
-root.Add(CreateBuildCommand());
-root.Add(CreateBuildSolutionCommand());
-root.Add(CreateQueryCommand());
-root.Add(CreateResearchCommand());
+root.Add(CliCommands.Build());
+root.Add(CliCommands.BuildSolution());
+root.Add(CliCommands.Query());
+root.Add(CliCommands.Research());
 return await root.Parse(args).InvokeAsync();
 
-static Command CreateBuildCommand()
+/// <summary>
+/// Every command's logic lives here as a named static, not in a SetAction
+/// lambda. Anonymous blocks compile under unrecoverable names, cannot be
+/// called from tests, and are invisible to the code graph — this tool could
+/// not see its own CLI. Each SetAction body below is pure plumbing: read the
+/// parsed values, hand them to the method that does the work.
+/// </summary>
+internal static class CliCommands
 {
-    var pathArg = new Argument<FileInfo>("path") { Description = "Path to a .csproj or .sln file" };
-    var outputOpt = new Option<string>("--output", "-o")
+    public static Command Build()
     {
-        Description = "Output graph JSON file",
-        DefaultValueFactory = _ => "graph.json"
-    };
-    var projectOpt = new Option<string?>("--project")
-    {
-        Description = "Project name inside the solution (required when path is a .sln)"
-    };
-    var includeVendorOpt = new Option<bool>("--include-vendor")
-    {
-        Description = "Also graph vendor/minified client assets (dropped by default); their nodes carry vendor=true"
-    };
+        var pathArg = new Argument<FileInfo>("path") { Description = "Path to a .csproj or .sln file" };
+        var outputOpt = new Option<string>("--output", "-o")
+        {
+            Description = "Output graph JSON file",
+            DefaultValueFactory = _ => "graph.json"
+        };
+        var projectOpt = new Option<string?>("--project")
+        {
+            Description = "Project name inside the solution (required when path is a .sln)"
+        };
+        var includeVendorOpt = new Option<bool>("--include-vendor")
+        {
+            Description = "Also graph vendor/minified client assets (dropped by default); their nodes carry vendor=true"
+        };
 
-    var cmd = new Command("build", "Build graph from a project or solution and output JSON");
-    cmd.Add(pathArg);
-    cmd.Add(outputOpt);
-    cmd.Add(projectOpt);
-    cmd.Add(includeVendorOpt);
+        var cmd = new Command("build", "Build graph from a project or solution and output JSON");
+        cmd.Add(pathArg);
+        cmd.Add(outputOpt);
+        cmd.Add(projectOpt);
+        cmd.Add(includeVendorOpt);
 
-    cmd.SetAction(async (parseResult, ct) =>
+        cmd.SetAction((parseResult, ct) => RunBuildAsync(
+            parseResult.GetValue(pathArg)!,
+            parseResult.GetValue(outputOpt)!,
+            parseResult.GetValue(projectOpt),
+            parseResult.GetValue(includeVendorOpt),
+            ct));
+
+        return cmd;
+    }
+
+    private static async Task<int> RunBuildAsync(
+        FileInfo path, string outputPath, string? projectName, bool includeVendor, CancellationToken ct)
     {
-        var path = parseResult.GetValue(pathArg)!;
-        var outputPath = parseResult.GetValue(outputOpt)!;
-        var projectName = parseResult.GetValue(projectOpt);
-
         if (!path.Exists)
         {
             Console.Error.WriteLine($"File not found: {path.FullName}");
             return 1;
         }
 
-        var isSolution = path.Extension.Equals(".sln", StringComparison.OrdinalIgnoreCase)
-                      || path.Extension.Equals(".slnx", StringComparison.OrdinalIgnoreCase);
+        var isSolution = IsSolutionFile(path);
         if (isSolution && string.IsNullOrWhiteSpace(projectName))
         {
             Console.Error.WriteLine("--project <name> is required when building from a solution.");
@@ -59,63 +74,56 @@ static Command CreateBuildCommand()
 
         Console.WriteLine($"Building graph from {path.FullName}...");
 
-        await using var builder = new GraphBuilder
-        {
-            IncludeVendorAssets = parseResult.GetValue(includeVendorOpt)
-        };
+        await using var builder = new GraphBuilder { IncludeVendorAssets = includeVendor };
         var graph = isSolution
             ? await builder.BuildFromSolutionAsync(path.FullName, projectName!, ct)
             : await builder.BuildFromProjectAsync(path.FullName, ct);
 
-        var json = GraphSerializer.ToJson(graph);
-        var outputDir = Path.GetDirectoryName(Path.GetFullPath(outputPath));
-        if (!string.IsNullOrEmpty(outputDir)) Directory.CreateDirectory(outputDir);
-        await File.WriteAllTextAsync(outputPath, json, ct);
-
-        Console.WriteLine($"Graph built: {graph.Nodes.Count} nodes, {graph.Edges.Count} edges");
-        Console.WriteLine($"Output written to {outputPath}");
+        await WriteGraphAsync(graph, outputPath, ct);
 
         PrintSummary(graph);
         return 0;
-    });
+    }
 
-    return cmd;
-}
-
-static Command CreateBuildSolutionCommand()
-{
-    var pathArg = new Argument<FileInfo>("path") { Description = "Path to a .sln or .slnx file" };
-    var outputOpt = new Option<string>("--output", "-o")
+    public static Command BuildSolution()
     {
-        Description = "Output graph JSON file",
-        DefaultValueFactory = _ => "solution-graph.json"
-    };
+        var pathArg = new Argument<FileInfo>("path") { Description = "Path to a .sln or .slnx file" };
+        var outputOpt = new Option<string>("--output", "-o")
+        {
+            Description = "Output graph JSON file",
+            DefaultValueFactory = _ => "solution-graph.json"
+        };
 
-    var includeVendorOpt = new Option<bool>("--include-vendor")
+        var includeVendorOpt = new Option<bool>("--include-vendor")
+        {
+            Description = "Also graph vendor/minified client assets (dropped by default); their nodes carry vendor=true"
+        };
+
+        var cmd = new Command("build-solution",
+            "Build ONE graph spanning every project in a solution, with edges that cross project boundaries");
+        cmd.Add(pathArg);
+        cmd.Add(outputOpt);
+        cmd.Add(includeVendorOpt);
+
+        cmd.SetAction((parseResult, ct) => RunBuildSolutionAsync(
+            parseResult.GetValue(pathArg)!,
+            parseResult.GetValue(outputOpt)!,
+            parseResult.GetValue(includeVendorOpt),
+            ct));
+
+        return cmd;
+    }
+
+    private static async Task<int> RunBuildSolutionAsync(
+        FileInfo path, string outputPath, bool includeVendor, CancellationToken ct)
     {
-        Description = "Also graph vendor/minified client assets (dropped by default); their nodes carry vendor=true"
-    };
-
-    var cmd = new Command("build-solution",
-        "Build ONE graph spanning every project in a solution, with edges that cross project boundaries");
-    cmd.Add(pathArg);
-    cmd.Add(outputOpt);
-    cmd.Add(includeVendorOpt);
-
-    cmd.SetAction(async (parseResult, ct) =>
-    {
-        var path = parseResult.GetValue(pathArg)!;
-        var outputPath = parseResult.GetValue(outputOpt)!;
-
         if (!path.Exists)
         {
             Console.Error.WriteLine($"File not found: {path.FullName}");
             return 1;
         }
 
-        var isSolution = path.Extension.Equals(".sln", StringComparison.OrdinalIgnoreCase)
-                      || path.Extension.Equals(".slnx", StringComparison.OrdinalIgnoreCase);
-        if (!isSolution)
+        if (!IsSolutionFile(path))
         {
             Console.Error.WriteLine($"Not a solution file: {path.FullName}. Use 'build' for a .csproj.");
             return 1;
@@ -124,19 +132,10 @@ static Command CreateBuildSolutionCommand()
         RoslynExtractor.EnsureMsBuildRegistered();
         Console.WriteLine($"Building solution graph from {path.FullName}...");
 
-        await using var builder = new GraphBuilder
-        {
-            IncludeVendorAssets = parseResult.GetValue(includeVendorOpt)
-        };
+        await using var builder = new GraphBuilder { IncludeVendorAssets = includeVendor };
         var graph = await builder.BuildFromSolutionAllAsync(path.FullName, ct);
 
-        var json = GraphSerializer.ToJson(graph);
-        var outputDir = Path.GetDirectoryName(Path.GetFullPath(outputPath));
-        if (!string.IsNullOrEmpty(outputDir)) Directory.CreateDirectory(outputDir);
-        await File.WriteAllTextAsync(outputPath, json, ct);
-
-        Console.WriteLine($"Graph built: {graph.Nodes.Count} nodes, {graph.Edges.Count} edges");
-        Console.WriteLine($"Output written to {outputPath}");
+        await WriteGraphAsync(graph, outputPath, ct);
 
         var projects = graph.NodesOfType(NodeType.Project).Select(p => p.Name).OrderBy(n => n).ToList();
         if (projects.Count > 0)
@@ -145,265 +144,291 @@ static Command CreateBuildSolutionCommand()
         PrintSummary(graph);
         PrintEdgeSummary(graph);
         return 0;
-    });
+    }
 
-    return cmd;
-}
-
-static Command CreateQueryCommand()
-{
-    var graphArg = new Argument<FileInfo>("graph") { Description = "Path to a built graph JSON file" };
-    var idOpt = new Option<string?>("--id") { Description = "Look up a node by its stable id" };
-    var typeOpt = new Option<string?>("--type") { Description = "Find nodes by NodeType (e.g. RazorPage)" };
-    var nameOpt = new Option<string?>("--name") { Description = "Filter found nodes by name substring" };
-    var neighborsOpt = new Option<bool>("--neighbors") { Description = "With --id: list outgoing edges" };
-    var renderTreeOpt = new Option<bool>("--render-tree") { Description = "With --id of a page: show layout/partial render tree" };
-    var contextOpt = new Option<bool>("--context") { Description = "With --id of a page: show PageModel, ViewModel, and injected services" };
-    var traceOpt = new Option<bool>("--trace") { Description = "With --id: trace data flow edges" };
-    var depthOpt = new Option<int>("--depth") { Description = "Max traversal depth for --trace", DefaultValueFactory = _ => 3 };
-    var directionOpt = new Option<string>("--direction")
+    public static Command Query()
     {
-        Description = "Traversal direction for --trace: outgoing (default), incoming, or both",
-        DefaultValueFactory = _ => "outgoing"
-    };
-    var projectOpt = new Option<string?>("--project") { Description = "Restrict --type or --uncovered to one project" };
-    var coveringOpt = new Option<bool>("--covering-tests") { Description = "With --id of a method: which tests exercise it" };
-    var coveredOpt = new Option<bool>("--covered-methods") { Description = "With --id of a test: which methods it exercises" };
-    var uncoveredOpt = new Option<bool>("--uncovered") { Description = "List methods no test reaches (use with --project)" };
-    var mismatchesOpt = new Option<bool>("--mismatches") { Description = "Report server-prepared data consumed by client JS" };
+        var graphArg = new Argument<FileInfo>("graph") { Description = "Path to a built graph JSON file" };
+        var idOpt = new Option<string?>("--id") { Description = "Look up a node by its stable id" };
+        var typeOpt = new Option<string?>("--type") { Description = "Find nodes by NodeType (e.g. RazorPage)" };
+        var nameOpt = new Option<string?>("--name") { Description = "Filter found nodes by name substring" };
+        var neighborsOpt = new Option<bool>("--neighbors") { Description = "With --id: list outgoing edges" };
+        var renderTreeOpt = new Option<bool>("--render-tree") { Description = "With --id of a page: show layout/partial render tree" };
+        var contextOpt = new Option<bool>("--context") { Description = "With --id of a page: show PageModel, ViewModel, and injected services" };
+        var traceOpt = new Option<bool>("--trace") { Description = "With --id: trace data flow edges" };
+        var depthOpt = new Option<int>("--depth") { Description = "Max traversal depth for --trace", DefaultValueFactory = _ => 3 };
+        var directionOpt = new Option<string>("--direction")
+        {
+            Description = "Traversal direction for --trace: outgoing (default), incoming, or both",
+            DefaultValueFactory = _ => "outgoing"
+        };
+        var projectOpt = new Option<string?>("--project") { Description = "Restrict --type or --uncovered to one project" };
+        var coveringOpt = new Option<bool>("--covering-tests") { Description = "With --id of a method: which tests exercise it" };
+        var coveredOpt = new Option<bool>("--covered-methods") { Description = "With --id of a test: which methods it exercises" };
+        var uncoveredOpt = new Option<bool>("--uncovered") { Description = "List methods no test reaches (use with --project)" };
+        var mismatchesOpt = new Option<bool>("--mismatches") { Description = "Report server-prepared data consumed by client JS" };
 
-    var cmd = new Command("query", "Run a query against a built graph");
-    cmd.Add(graphArg);
-    cmd.Add(idOpt);
-    cmd.Add(typeOpt);
-    cmd.Add(nameOpt);
-    cmd.Add(neighborsOpt);
-    cmd.Add(renderTreeOpt);
-    cmd.Add(contextOpt);
-    cmd.Add(traceOpt);
-    cmd.Add(depthOpt);
-    cmd.Add(directionOpt);
-    cmd.Add(projectOpt);
-    cmd.Add(coveringOpt);
-    cmd.Add(coveredOpt);
-    cmd.Add(uncoveredOpt);
-    cmd.Add(mismatchesOpt);
+        var cmd = new Command("query", "Run a query against a built graph");
+        cmd.Add(graphArg);
+        cmd.Add(idOpt);
+        cmd.Add(typeOpt);
+        cmd.Add(nameOpt);
+        cmd.Add(neighborsOpt);
+        cmd.Add(renderTreeOpt);
+        cmd.Add(contextOpt);
+        cmd.Add(traceOpt);
+        cmd.Add(depthOpt);
+        cmd.Add(directionOpt);
+        cmd.Add(projectOpt);
+        cmd.Add(coveringOpt);
+        cmd.Add(coveredOpt);
+        cmd.Add(uncoveredOpt);
+        cmd.Add(mismatchesOpt);
 
-    cmd.SetAction(async (parseResult, ct) =>
+        cmd.SetAction((parseResult, ct) => RunQueryAsync(
+            parseResult.GetValue(graphArg)!,
+            new QueryOptions
+            {
+                Id = parseResult.GetValue(idOpt),
+                Type = parseResult.GetValue(typeOpt),
+                Name = parseResult.GetValue(nameOpt),
+                Project = parseResult.GetValue(projectOpt),
+                Neighbors = parseResult.GetValue(neighborsOpt),
+                RenderTree = parseResult.GetValue(renderTreeOpt),
+                Context = parseResult.GetValue(contextOpt),
+                Trace = parseResult.GetValue(traceOpt),
+                Depth = parseResult.GetValue(depthOpt),
+                Direction = parseResult.GetValue(directionOpt)!,
+                CoveringTests = parseResult.GetValue(coveringOpt),
+                CoveredMethods = parseResult.GetValue(coveredOpt),
+                Uncovered = parseResult.GetValue(uncoveredOpt),
+                Mismatches = parseResult.GetValue(mismatchesOpt)
+            },
+            ct));
+
+        return cmd;
+    }
+
+    /// <summary>Everything the query command parsed, so the modes below take one argument, not fifteen.</summary>
+    private sealed record QueryOptions
     {
-        var graphFile = parseResult.GetValue(graphArg)!;
+        public string? Id { get; init; }
+        public string? Type { get; init; }
+        public string? Name { get; init; }
+        public string? Project { get; init; }
+        public bool Neighbors { get; init; }
+        public bool RenderTree { get; init; }
+        public bool Context { get; init; }
+        public bool Trace { get; init; }
+        public int Depth { get; init; }
+        public required string Direction { get; init; }
+        public bool CoveringTests { get; init; }
+        public bool CoveredMethods { get; init; }
+        public bool Uncovered { get; init; }
+        public bool Mismatches { get; init; }
+    }
+
+    private static async Task<int> RunQueryAsync(FileInfo graphFile, QueryOptions options, CancellationToken ct)
+    {
         var graph = await LoadGraphAsync(graphFile, ct);
         if (graph == null) return 1;
         var query = new GraphQuery(graph);
 
-        var nodeId = parseResult.GetValue(idOpt);
-        var nodeType = parseResult.GetValue(typeOpt);
-        var name = parseResult.GetValue(nameOpt);
+        // Mode precedence, most specific first. This ordering is the command's
+        // contract; it used to be implicit in the order of if-blocks inside one
+        // long lambda.
+        if (options.Mismatches) return RunMismatches(query);
+        if (options.Uncovered) return RunUncovered(query, options.Project);
+        if (options.Id != null) return RunNodeReport(query, options.Id, options);
+        if (options.Type != null && Enum.TryParse<NodeType>(options.Type, true, out var type))
+            return RunTypeListing(query, type, options.Name, options.Project);
 
-        if (parseResult.GetValue(mismatchesOpt))
+        Console.WriteLine("Graph loaded. Use --id, --type, or --mismatches to query.");
+        Console.WriteLine($"Total: {graph.Nodes.Count} nodes, {graph.Edges.Count} edges");
+        return 0;
+    }
+
+    private static int RunMismatches(GraphQuery query)
+    {
+        var found = 0;
+        foreach (var (server, js, edge) in query.FindServerToJsMismatches())
         {
-            var found = 0;
-            foreach (var (server, js, edge) in query.FindServerToJsMismatches())
-            {
-                Console.WriteLine($"  [{server.Type}] {server.Name} --{edge.Type}--> [{js.Type}] {js.Name}");
-                found++;
-            }
-            Console.WriteLine(found == 0
-                ? "No server-to-JS mismatches found."
-                : $"{found} server-to-JS mismatch(es).");
-            return 0;
+            Console.WriteLine($"  [{server.Type}] {server.Name} --{edge.Type}--> [{js.Type}] {js.Name}");
+            found++;
+        }
+        Console.WriteLine(found == 0
+            ? "No server-to-JS mismatches found."
+            : $"{found} server-to-JS mismatch(es).");
+        return 0;
+    }
+
+    private static int RunUncovered(GraphQuery query, string? project)
+    {
+        var uncovered = query.FindUncoveredMethods(project).ToList();
+        Console.WriteLine($"{uncovered.Count} method(s) no test reaches"
+            + (project == null ? " (all projects)" : $" in {project}") + ":");
+        foreach (var m in uncovered.Take(200))
+            Console.WriteLine($"  [{m.GetProperty<string>("project")}] {m.Name}  ({m.FilePath}:{m.LineStart})");
+        if (uncovered.Count > 200) Console.WriteLine($"  ... {uncovered.Count - 200} more not shown");
+        return 0;
+    }
+
+    private static int RunNodeReport(GraphQuery query, string nodeId, QueryOptions options)
+    {
+        var node = query.GetNode(nodeId);
+        if (node == null)
+        {
+            Console.WriteLine($"Node not found: {nodeId}");
+            return 1;
         }
 
-        if (parseResult.GetValue(uncoveredOpt))
+        PrintNode(node);
+
+        if (options.Neighbors)
         {
-            var project = parseResult.GetValue(projectOpt);
-            var uncovered = query.FindUncoveredMethods(project).ToList();
-            Console.WriteLine($"{uncovered.Count} method(s) no test reaches"
-                + (project == null ? " (all projects)" : $" in {project}") + ":");
-            foreach (var m in uncovered.Take(200))
-                Console.WriteLine($"  [{m.GetProperty<string>("project")}] {m.Name}  ({m.FilePath}:{m.LineStart})");
-            if (uncovered.Count > 200) Console.WriteLine($"  ... {uncovered.Count - 200} more not shown");
-            return 0;
+            Console.WriteLine("\n--- Outgoing ---");
+            foreach (var (edge, target) in query.GetNeighbors(nodeId))
+                Console.WriteLine($"  {edge.Type} -> [{target.Type}] {target.Name}");
         }
 
-        if (nodeId != null)
+        if (options.RenderTree && node.Type == NodeType.RazorPage)
         {
-            var node = query.GetNode(nodeId);
-            if (node == null)
-            {
-                Console.WriteLine($"Node not found: {nodeId}");
-                return 1;
-            }
-
-            PrintNode(node);
-
-            if (parseResult.GetValue(neighborsOpt))
-            {
-                Console.WriteLine("\n--- Outgoing ---");
-                foreach (var (edge, target) in query.GetNeighbors(nodeId))
-                {
-                    Console.WriteLine($"  {edge.Type} -> [{target.Type}] {target.Name}");
-                }
-            }
-
-            if (parseResult.GetValue(renderTreeOpt) && node.Type == NodeType.RazorPage)
-            {
-                Console.WriteLine("\n--- Render Tree ---");
-                foreach (var (n, e) in query.GetRenderTree(nodeId))
-                {
-                    Console.WriteLine($"  {e.Type} -> [{n.Type}] {n.Name}");
-                }
-            }
-
-            if (parseResult.GetValue(contextOpt))
-            {
-                Console.WriteLine("\n--- Page Context ---");
-                var context = query.GetPageContext(nodeId);
-                if (context == null)
-                {
-                    Console.WriteLine("  Not a Razor page node; no context available.");
-                }
-                else
-                {
-                    Console.WriteLine($"  PageModel: {Describe(context.PageModel)}");
-                    Console.WriteLine($"  ViewModel: {Describe(context.ViewModel)}");
-                    Console.WriteLine($"  Injected services ({context.InjectedServices.Count}):");
-                    foreach (var svc in context.InjectedServices)
-                        Console.WriteLine($"    [{svc.Type}] {svc.Name}");
-                }
-            }
-
-            if (parseResult.GetValue(traceOpt))
-            {
-                var directionText = parseResult.GetValue(directionOpt)!;
-                if (!Enum.TryParse<TraversalDirection>(directionText, true, out var direction))
-                {
-                    Console.Error.WriteLine($"Unknown --direction '{directionText}'. Valid: outgoing, incoming, both.");
-                    return 1;
-                }
-
-                Console.WriteLine($"\n--- Data Flow ({direction}) ---");
-                var depth = parseResult.GetValue(depthOpt);
-                foreach (var (n, e, d) in query.TraceDataFlow(nodeId, depth, direction))
-                {
-                    Console.WriteLine($"  {new string(' ', d * 2)}{e.Type} -> [{n.Type}] {n.Name}");
-                }
-            }
-
-            if (parseResult.GetValue(coveringOpt))
-            {
-                Console.WriteLine("\n--- Covering Tests ---");
-                var tests = query.GetCoveringTests(nodeId).ToList();
-                if (tests.Count == 0) Console.WriteLine("  (none — no test's call chain reaches this method)");
-                foreach (var (test, depth) in tests)
-                    Console.WriteLine($"  depth {depth}: {test.Name}  ({test.FilePath}:{test.LineStart})");
-            }
-
-            if (parseResult.GetValue(coveredOpt))
-            {
-                Console.WriteLine("\n--- Covered Methods ---");
-                var methods = query.GetCoveredMethods(nodeId).ToList();
-                if (methods.Count == 0) Console.WriteLine("  (none)");
-                foreach (var (method, depth) in methods)
-                    Console.WriteLine($"  depth {depth}: [{method.GetProperty<string>("project")}] {method.Name}");
-            }
+            Console.WriteLine("\n--- Render Tree ---");
+            foreach (var (n, e) in query.GetRenderTree(nodeId))
+                Console.WriteLine($"  {e.Type} -> [{n.Type}] {n.Name}");
         }
-        else if (nodeType != null && Enum.TryParse<NodeType>(nodeType, true, out var type))
+
+        if (options.Context)
+            PrintPageContext(query, nodeId);
+
+        if (options.Trace && PrintDataFlow(query, nodeId, options.Depth, options.Direction) != 0)
+            return 1;
+
+        if (options.CoveringTests)
         {
-            var project = parseResult.GetValue(projectOpt);
-            var nodes = query.FindNodes(type, name)
-                .Where(n => project == null ||
-                            string.Equals(n.GetProperty<string>("project"), project, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-            Console.WriteLine($"Found {nodes.Count} nodes of type {type}:");
-            foreach (var n in nodes)
-            {
-                Console.WriteLine($"  [{n.Id}] {n.Name} ({n.FilePath})");
-            }
+            Console.WriteLine("\n--- Covering Tests ---");
+            var tests = query.GetCoveringTests(nodeId).ToList();
+            if (tests.Count == 0) Console.WriteLine("  (none — no test's call chain reaches this method)");
+            foreach (var (test, depth) in tests)
+                Console.WriteLine($"  depth {depth}: {test.Name}  ({test.FilePath}:{test.LineStart})");
         }
-        else
+
+        if (options.CoveredMethods)
         {
-            Console.WriteLine("Graph loaded. Use --id, --type, or --mismatches to query.");
-            Console.WriteLine($"Total: {graph.Nodes.Count} nodes, {graph.Edges.Count} edges");
+            Console.WriteLine("\n--- Covered Methods ---");
+            var methods = query.GetCoveredMethods(nodeId).ToList();
+            if (methods.Count == 0) Console.WriteLine("  (none)");
+            foreach (var (method, depth) in methods)
+                Console.WriteLine($"  depth {depth}: [{method.GetProperty<string>("project")}] {method.Name}");
         }
 
         return 0;
-    });
+    }
 
-    return cmd;
-}
+    private static void PrintPageContext(GraphQuery query, string nodeId)
+    {
+        Console.WriteLine("\n--- Page Context ---");
+        var context = query.GetPageContext(nodeId);
+        if (context == null)
+        {
+            Console.WriteLine("  Not a Razor page node; no context available.");
+            return;
+        }
 
-static Command CreateResearchCommand()
-{
-    var graphArg = new Argument<FileInfo>("graph") { Description = "Path to a built graph JSON file" };
-    var focusOpt = new Option<string[]>("--focus")
-    {
-        Description = "Node id(s) to research from (repeatable)",
-        Required = true,
-        AllowMultipleArgumentsPerToken = true
-    };
-    var queryTextOpt = new Option<string>("--query")
-    {
-        Description = "Free-text label describing the research question",
-        DefaultValueFactory = _ => ""
-    };
-    var depthOpt = new Option<int>("--depth") { Description = "Max traversal depth from focus nodes", DefaultValueFactory = _ => 3 };
-    var thresholdOpt = new Option<double>("--threshold")
-    {
-        Description = "Minimum relevance (1/(1+depth)) a node needs to be included",
-        DefaultValueFactory = _ => 0.0
-    };
-    var outputOpt = new Option<string>("--output", "-o")
-    {
-        Description = "Output research JSON file",
-        DefaultValueFactory = _ => "research.json"
-    };
+        Console.WriteLine($"  PageModel: {Describe(context.PageModel)}");
+        Console.WriteLine($"  ViewModel: {Describe(context.ViewModel)}");
+        Console.WriteLine($"  Injected services ({context.InjectedServices.Count}):");
+        foreach (var svc in context.InjectedServices)
+            Console.WriteLine($"    [{svc.Type}] {svc.Name}");
+    }
 
-    var cmd = new Command("research", "Export a relevance-scored subgraph around focus nodes for LLM consumption");
-    cmd.Add(graphArg);
-    cmd.Add(focusOpt);
-    cmd.Add(queryTextOpt);
-    cmd.Add(depthOpt);
-    cmd.Add(thresholdOpt);
-    cmd.Add(outputOpt);
-
-    cmd.SetAction(async (parseResult, ct) =>
+    private static int PrintDataFlow(GraphQuery query, string nodeId, int depth, string directionText)
     {
-        var graphFile = parseResult.GetValue(graphArg)!;
+        if (!Enum.TryParse<TraversalDirection>(directionText, true, out var direction))
+        {
+            Console.Error.WriteLine($"Unknown --direction '{directionText}'. Valid: outgoing, incoming, both.");
+            return 1;
+        }
+
+        Console.WriteLine($"\n--- Data Flow ({direction}) ---");
+        foreach (var (n, e, d) in query.TraceDataFlow(nodeId, depth, direction))
+            Console.WriteLine($"  {new string(' ', d * 2)}{e.Type} -> [{n.Type}] {n.Name}");
+        return 0;
+    }
+
+    private static int RunTypeListing(GraphQuery query, NodeType type, string? name, string? project)
+    {
+        var nodes = query.FindNodes(type, name)
+            .Where(n => project == null ||
+                        string.Equals(n.GetProperty<string>("project"), project, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        Console.WriteLine($"Found {nodes.Count} nodes of type {type}:");
+        foreach (var n in nodes)
+            Console.WriteLine($"  [{n.Id}] {n.Name} ({n.FilePath})");
+        return 0;
+    }
+
+    public static Command Research()
+    {
+        var graphArg = new Argument<FileInfo>("graph") { Description = "Path to a built graph JSON file" };
+        var focusOpt = new Option<string[]>("--focus")
+        {
+            Description = "Node id(s) to research from (repeatable)",
+            Required = true,
+            AllowMultipleArgumentsPerToken = true
+        };
+        var queryTextOpt = new Option<string>("--query")
+        {
+            Description = "Free-text label describing the research question",
+            DefaultValueFactory = _ => ""
+        };
+        var depthOpt = new Option<int>("--depth") { Description = "Max traversal depth from focus nodes", DefaultValueFactory = _ => 3 };
+        var thresholdOpt = new Option<double>("--threshold")
+        {
+            Description = "Minimum relevance (1/(1+depth)) a node needs to be included",
+            DefaultValueFactory = _ => 0.0
+        };
+        var outputOpt = new Option<string>("--output", "-o")
+        {
+            Description = "Output research JSON file",
+            DefaultValueFactory = _ => "research.json"
+        };
+
+        var cmd = new Command("research", "Export a relevance-scored subgraph around focus nodes for LLM consumption");
+        cmd.Add(graphArg);
+        cmd.Add(focusOpt);
+        cmd.Add(queryTextOpt);
+        cmd.Add(depthOpt);
+        cmd.Add(thresholdOpt);
+        cmd.Add(outputOpt);
+
+        cmd.SetAction((parseResult, ct) => RunResearchAsync(
+            parseResult.GetValue(graphArg)!,
+            parseResult.GetValue(focusOpt)!,
+            parseResult.GetValue(queryTextOpt)!,
+            parseResult.GetValue(depthOpt),
+            parseResult.GetValue(thresholdOpt),
+            parseResult.GetValue(outputOpt)!,
+            ct));
+
+        return cmd;
+    }
+
+    private static async Task<int> RunResearchAsync(
+        FileInfo graphFile, string[] focusIds, string queryText, int depth, double threshold,
+        string outputPath, CancellationToken ct)
+    {
         var graph = await LoadGraphAsync(graphFile, ct);
         if (graph == null) return 1;
 
-        var focusIds = parseResult.GetValue(focusOpt)!;
-        var depth = parseResult.GetValue(depthOpt);
-        var threshold = parseResult.GetValue(thresholdOpt);
-        var queryText = parseResult.GetValue(queryTextOpt)!;
-        var outputPath = parseResult.GetValue(outputOpt)!;
-
-        var relevance = new Dictionary<string, double>();
-        var missing = new List<string>();
-        foreach (var id in focusIds)
-        {
-            if (!graph.HasNode(id)) { missing.Add(id); continue; }
-            relevance[id] = 1.0;
-        }
-
-        if (missing.Count > 0)
-            Console.Error.WriteLine($"Warning: focus node(s) not in graph: {string.Join(", ", missing)}");
+        var relevance = SeedRelevance(graph, focusIds);
         if (relevance.Count == 0)
         {
             Console.Error.WriteLine("No focus nodes found in the graph; nothing to export.");
             return 1;
         }
 
-        foreach (var id in relevance.Keys.ToList())
-        {
-            foreach (var (node, _, d) in graph.Traverse(id, edgeFilter: null, maxDepth: depth))
-            {
-                var score = 1.0 / (1 + d);
-                if (!relevance.TryGetValue(node.Id, out var existing) || score > existing)
-                    relevance[node.Id] = score;
-            }
-        }
+        SpreadRelevance(graph, relevance, depth);
 
         var json = GraphSerializer.ToResearchDocument(graph, relevance, queryText, threshold);
         var outputDir = Path.GetDirectoryName(Path.GetFullPath(outputPath));
@@ -414,60 +439,101 @@ static Command CreateResearchCommand()
         Console.WriteLine($"Research document: {included} of {relevance.Count} reached nodes at threshold {threshold}");
         Console.WriteLine($"Output written to {outputPath}");
         return 0;
-    });
-
-    return cmd;
-}
-
-static async Task<CodeGraph?> LoadGraphAsync(FileInfo graphFile, CancellationToken ct)
-{
-    if (!graphFile.Exists)
-    {
-        Console.Error.WriteLine($"Graph file not found: {graphFile.FullName}");
-        return null;
     }
 
-    var json = await File.ReadAllTextAsync(graphFile.FullName, ct);
-    return GraphSerializer.FromJson(json);
-}
-
-static string Describe(GraphNode? node) =>
-    node == null ? "(not found)" : $"[{node.Type}] {node.Name} ({node.Id})";
-
-static void PrintNode(GraphNode node)
-{
-    Console.WriteLine($"[{node.Type}] {node.Name}");
-    Console.WriteLine($"  Id: {node.Id}");
-    Console.WriteLine($"  File: {node.FilePath}");
-    if (node.LineStart.HasValue) Console.WriteLine($"  Line: {node.LineStart}");
-    if (node.Properties.Count > 0)
+    private static Dictionary<string, double> SeedRelevance(CodeGraph graph, string[] focusIds)
     {
-        Console.WriteLine("  Properties:");
-        foreach (var p in node.Properties)
-            Console.WriteLine($"    {p.Key}: {FormatPropertyValue(p.Value)}");
+        var relevance = new Dictionary<string, double>();
+        var missing = new List<string>();
+        foreach (var id in focusIds)
+        {
+            if (!graph.HasNode(id)) { missing.Add(id); continue; }
+            relevance[id] = 1.0;
+        }
+
+        if (missing.Count > 0)
+            Console.Error.WriteLine($"Warning: focus node(s) not in graph: {string.Join(", ", missing)}");
+        return relevance;
     }
-}
 
-static string FormatPropertyValue(object value) =>
-    value is System.Collections.IEnumerable items and not string
-        ? string.Join(", ", items.Cast<object>())
-        : value.ToString() ?? "";
-
-static void PrintSummary(CodeGraph graph)
-{
-    Console.WriteLine("\n--- Nodes ---");
-    foreach (NodeType type in Enum.GetValues<NodeType>())
+    private static void SpreadRelevance(CodeGraph graph, Dictionary<string, double> relevance, int depth)
     {
-        var count = graph.NodesOfType(type).Count();
-        if (count > 0) Console.WriteLine($"  {type}: {count}");
+        foreach (var id in relevance.Keys.ToList())
+        {
+            foreach (var (node, _, d) in graph.Traverse(id, edgeFilter: null, maxDepth: depth))
+            {
+                var score = 1.0 / (1 + d);
+                if (!relevance.TryGetValue(node.Id, out var existing) || score > existing)
+                    relevance[node.Id] = score;
+            }
+        }
     }
-}
 
-static void PrintEdgeSummary(CodeGraph graph)
-{
-    Console.WriteLine("\n--- Edges ---");
-    foreach (var group in graph.Edges.GroupBy(e => e.Type).OrderByDescending(g => g.Count()))
+    private static bool IsSolutionFile(FileInfo path) =>
+        path.Extension.Equals(".sln", StringComparison.OrdinalIgnoreCase)
+        || path.Extension.Equals(".slnx", StringComparison.OrdinalIgnoreCase);
+
+    private static async Task WriteGraphAsync(CodeGraph graph, string outputPath, CancellationToken ct)
     {
-        Console.WriteLine($"  {group.Key}: {group.Count()}");
+        var json = GraphSerializer.ToJson(graph);
+        var outputDir = Path.GetDirectoryName(Path.GetFullPath(outputPath));
+        if (!string.IsNullOrEmpty(outputDir)) Directory.CreateDirectory(outputDir);
+        await File.WriteAllTextAsync(outputPath, json, ct);
+
+        Console.WriteLine($"Graph built: {graph.Nodes.Count} nodes, {graph.Edges.Count} edges");
+        Console.WriteLine($"Output written to {outputPath}");
+    }
+
+    private static async Task<CodeGraph?> LoadGraphAsync(FileInfo graphFile, CancellationToken ct)
+    {
+        if (!graphFile.Exists)
+        {
+            Console.Error.WriteLine($"Graph file not found: {graphFile.FullName}");
+            return null;
+        }
+
+        var json = await File.ReadAllTextAsync(graphFile.FullName, ct);
+        return GraphSerializer.FromJson(json);
+    }
+
+    private static string Describe(GraphNode? node) =>
+        node == null ? "(not found)" : $"[{node.Type}] {node.Name} ({node.Id})";
+
+    private static void PrintNode(GraphNode node)
+    {
+        Console.WriteLine($"[{node.Type}] {node.Name}");
+        Console.WriteLine($"  Id: {node.Id}");
+        Console.WriteLine($"  File: {node.FilePath}");
+        if (node.LineStart.HasValue) Console.WriteLine($"  Line: {node.LineStart}");
+        if (node.Properties.Count > 0)
+        {
+            Console.WriteLine("  Properties:");
+            foreach (var p in node.Properties)
+                Console.WriteLine($"    {p.Key}: {FormatPropertyValue(p.Value)}");
+        }
+    }
+
+    private static string FormatPropertyValue(object value) =>
+        value is System.Collections.IEnumerable items and not string
+            ? string.Join(", ", items.Cast<object>())
+            : value.ToString() ?? "";
+
+    private static void PrintSummary(CodeGraph graph)
+    {
+        Console.WriteLine("\n--- Nodes ---");
+        foreach (NodeType type in Enum.GetValues<NodeType>())
+        {
+            var count = graph.NodesOfType(type).Count();
+            if (count > 0) Console.WriteLine($"  {type}: {count}");
+        }
+    }
+
+    private static void PrintEdgeSummary(CodeGraph graph)
+    {
+        Console.WriteLine("\n--- Edges ---");
+        foreach (var group in graph.Edges.GroupBy(e => e.Type).OrderByDescending(g => g.Count()))
+        {
+            Console.WriteLine($"  {group.Key}: {group.Count()}");
+        }
     }
 }
