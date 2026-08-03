@@ -13,10 +13,12 @@ public class LifecycleCatalogTests : IAsyncLifetime
 {
     private int _count;
 
-    public Task InitializeAsync()
+    public async Task InitializeAsync()
     {
+        // await using in setup: DisposeAsync coverage must flow through both
+        // the lifecycle seeding and the implicit-disposal call edge at once.
+        await using var session = new CatalogSession();
         _count = new CatalogStore().Preload();
-        return Task.CompletedTask;
     }
 
     public Task DisposeAsync() => Task.CompletedTask;

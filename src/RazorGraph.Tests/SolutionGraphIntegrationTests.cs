@@ -264,6 +264,34 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void CoversEdges_IncludeUsingDisposal()
+    {
+        var dispose = Method(_solutionGraph!, "SampleLib.CatalogStore", "Dispose");
+
+        // The test body has `using var store = ...` and never calls Dispose
+        // explicitly; the implicit disposal must still count as exercise.
+        var covering = new GraphQuery(_solutionGraph!).GetCoveringTests(dispose.Id).ToList();
+
+        Assert.Single(covering);
+        Assert.Equal("List_ReturnsSortedCatalogs", covering[0].Test.Name);
+        Assert.Equal(1, covering[0].Depth);
+    }
+
+    [Fact]
+    public void CoversEdges_IncludeAwaitUsingDisposal_ThroughLifecycleSetup()
+    {
+        var disposeAsync = Method(_solutionGraph!, "SampleLib.CatalogSession", "DisposeAsync");
+
+        // The compounding case: DisposeAsync is reached only via an await using
+        // inside InitializeAsync — implicit call and lifecycle seeding together.
+        var covering = new GraphQuery(_solutionGraph!).GetCoveringTests(disposeAsync.Id).ToList();
+
+        Assert.Single(covering);
+        Assert.Equal("Preload_CountsCatalogs", covering[0].Test.Name);
+        Assert.Equal(1, covering[0].Depth);
+    }
+
+    [Fact]
     public void FindUncoveredMethods_ReportsTheUnreachedMethod()
     {
         var uncovered = new GraphQuery(_solutionGraph!)

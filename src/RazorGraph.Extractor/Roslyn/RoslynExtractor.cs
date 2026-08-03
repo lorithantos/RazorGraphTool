@@ -415,6 +415,11 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// depending on how the workspace resolved the reference, and those are not
     /// reference-equal; the name is the same either way, and so is the MethodId
     /// the node was registered under.
+    ///
+    /// Besides explicit invocations, a using/await using counts as a call to the
+    /// resource's Dispose/DisposeAsync: the compiler emits that call with no
+    /// invocation syntax at the site, and without the edge a dispose method
+    /// reads as unreached by the very code that guarantees it runs.
     /// </summary>
     public IEnumerable<(string FromId, string ToId)> ExtractCallEdges()
     {
@@ -453,9 +458,84 @@ public sealed class RoslynExtractor : IAsyncDisposable
 
                         yield return (fromId, toId);
                     }
+
+                    foreach (var (resourceType, isAsync) in DisposedResources(decl, model))
+                    {
+                        if (ResolveDisposeMethod(resourceType, isAsync) is not { } dispose) continue;
+
+                        var def = dispose.OriginalDefinition;
+                        var assembly = def.ContainingAssembly?.Name;
+                        if (assembly == null || !inScope.Contains(assembly)) continue;
+
+                        var toId = MethodId(def);
+                        if (toId == fromId) continue;
+
+                        yield return (fromId, toId);
+                    }
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Every resource a method disposes implicitly: using statements (block and
+    /// expression forms) and using declarations, with await variants marked so
+    /// the caller resolves DisposeAsync rather than Dispose.
+    /// </summary>
+    private static IEnumerable<(ITypeSymbol Type, bool IsAsync)> DisposedResources(
+        BaseMethodDeclarationSyntax decl, SemanticModel model)
+    {
+        foreach (var node in decl.DescendantNodes())
+        {
+            switch (node)
+            {
+                case UsingStatementSyntax u:
+                    var isAsync = u.AwaitKeyword.IsKind(SyntaxKind.AwaitKeyword);
+                    if (u.Declaration != null)
+                    {
+                        foreach (var variable in u.Declaration.Variables)
+                            if (model.GetDeclaredSymbol(variable) is ILocalSymbol local)
+                                yield return (local.Type, isAsync);
+                    }
+                    else if (u.Expression != null && model.GetTypeInfo(u.Expression).Type is { } expressionType)
+                    {
+                        yield return (expressionType, isAsync);
+                    }
+                    break;
+
+                case LocalDeclarationStatementSyntax l when l.UsingKeyword.IsKind(SyntaxKind.UsingKeyword):
+                    foreach (var variable in l.Declaration.Variables)
+                        if (model.GetDeclaredSymbol(variable) is ILocalSymbol local)
+                            yield return (local.Type, l.AwaitKeyword.IsKind(SyntaxKind.AwaitKeyword));
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The Dispose/DisposeAsync a using construct actually runs: the interface
+    /// implementation when the type is IDisposable/IAsyncDisposable, otherwise a
+    /// parameterless method found by shape — ref structs and pattern-based
+    /// disposal bind by name, not interface.
+    /// </summary>
+    private static IMethodSymbol? ResolveDisposeMethod(ITypeSymbol type, bool isAsync)
+    {
+        var interfaceName = isAsync ? "IAsyncDisposable" : "IDisposable";
+        var methodName = isAsync ? "DisposeAsync" : "Dispose";
+
+        var interfaceMember = type.AllInterfaces
+            .FirstOrDefault(i => i.Name == interfaceName && i.ContainingNamespace is { Name: "System", ContainingNamespace.IsGlobalNamespace: true })
+            ?.GetMembers(methodName).OfType<IMethodSymbol>().FirstOrDefault();
+        if (interfaceMember != null && type.FindImplementationForInterfaceMember(interfaceMember) is IMethodSymbol implementation)
+            return implementation;
+
+        for (ITypeSymbol? t = type; t != null; t = t.BaseType)
+        {
+            var byShape = t.GetMembers(methodName).OfType<IMethodSymbol>()
+                .FirstOrDefault(m => !m.IsStatic && m.Parameters.Length == 0);
+            if (byShape != null) return byShape;
+        }
+        return null;
     }
 
     private List<string> ExtractInjectedServices(INamedTypeSymbol symbol)

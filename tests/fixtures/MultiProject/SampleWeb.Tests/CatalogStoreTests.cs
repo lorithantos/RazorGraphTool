@@ -12,7 +12,9 @@ public class CatalogStoreTests
     [Fact]
     public void List_ReturnsSortedCatalogs()
     {
-        var store = new CatalogStore();
+        // using, not var: Dispose is called with no invocation syntax, the
+        // implicit-disposal coverage case.
+        using var store = new CatalogStore();
 
         var result = store.List();
 
