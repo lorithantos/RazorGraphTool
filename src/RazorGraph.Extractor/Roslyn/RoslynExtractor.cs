@@ -440,7 +440,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// syntax at the site, and without the edges the methods read as unreached
     /// by the very code that guarantees they run.
     /// </summary>
-    public IEnumerable<(string FromId, string ToId)> ExtractCallEdges()
+    public IEnumerable<CallEdge> ExtractCallEdges()
     {
         if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
 
@@ -448,7 +448,8 @@ public sealed class RoslynExtractor : IAsyncDisposable
             .Select(l => l.Compilation.Assembly.Name)
             .ToHashSet(StringComparer.Ordinal);
 
-        foreach (var (root, model) in LoadedSyntaxRoots())
+        foreach (var (root, model) in _loaded.SelectMany(
+                     l => l.Compilation.SyntaxTrees.Select(t => (t.GetRoot(), l.Compilation.GetSemanticModel(t)))))
         {
             foreach (var edge in root.DescendantNodes()
                 .OfType<BaseMethodDeclarationSyntax>()
@@ -466,20 +467,12 @@ public sealed class RoslynExtractor : IAsyncDisposable
         }
     }
 
-    /// <summary>Every syntax root across the loaded projects, paired with its semantic model.</summary>
-    private IEnumerable<(SyntaxNode Root, SemanticModel Model)> LoadedSyntaxRoots()
-    {
-        foreach (var loaded in _loaded)
-            foreach (var tree in loaded.Compilation.SyntaxTrees)
-                yield return (tree.GetRoot(), loaded.Compilation.GetSemanticModel(tree));
-    }
-
     /// <summary>
     /// Call edges out of one method declaration: explicit invocations and
     /// new-expressions via CallTargets, plus the implicit Dispose/DisposeAsync
     /// of everything the method holds in a using.
     /// </summary>
-    private static IEnumerable<(string FromId, string ToId)> MethodCallEdges(
+    private static IEnumerable<CallEdge> MethodCallEdges(
         BaseMethodDeclarationSyntax decl, SemanticModel model, IReadOnlySet<string> inScope)
     {
         if (model.GetDeclaredSymbol(decl) is not IMethodSymbol caller) yield break;
@@ -490,7 +483,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
             if (InScopeMethodId(target, inScope) is not { } toId) continue;
             if (toId == fromId) continue; // direct recursion adds no navigational value
 
-            yield return (fromId, toId);
+            yield return new CallEdge(fromId, toId);
         }
 
         foreach (var (resourceType, isAsync) in DisposedResources(decl, model))
@@ -499,7 +492,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
             if (InScopeMethodId(dispose, inScope) is not { } toId) continue;
             if (toId == fromId) continue;
 
-            yield return (fromId, toId);
+            yield return new CallEdge(fromId, toId);
         }
     }
 
@@ -512,7 +505,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// code that runs them. (Overapproximation: a ctor chaining this(...) does
     /// not rerun initializers, but the work is still one ctor away.)
     /// </summary>
-    private static IEnumerable<(string FromId, string ToId)> InitializerCallEdges(
+    private static IEnumerable<CallEdge> InitializerCallEdges(
         TypeDeclarationSyntax typeDecl, SemanticModel model, IReadOnlySet<string> inScope)
     {
         var initializers = InstanceInitializers(typeDecl).ToList();
@@ -528,7 +521,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
 
                 foreach (var ctorId in ctorIds)
                     if (toId != ctorId)
-                        yield return (ctorId, toId);
+                        yield return new CallEdge(ctorId, toId);
             }
     }
 
@@ -628,7 +621,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// expression forms) and using declarations, with await variants marked so
     /// the caller resolves DisposeAsync rather than Dispose.
     /// </summary>
-    private static IEnumerable<(ITypeSymbol Type, bool IsAsync)> DisposedResources(
+    private static IEnumerable<DisposedResource> DisposedResources(
         BaseMethodDeclarationSyntax decl, SemanticModel model)
     {
         foreach (var node in decl.DescendantNodes())
@@ -652,7 +645,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// Resources of one using statement: the declared variables when it has a
     /// declaration, otherwise the expression form's single resource.
     /// </summary>
-    private static IEnumerable<(ITypeSymbol Type, bool IsAsync)> UsingStatementResources(
+    private static IEnumerable<DisposedResource> UsingStatementResources(
         UsingStatementSyntax u, SemanticModel model)
     {
         var isAsync = u.AwaitKeyword.IsKind(SyntaxKind.AwaitKeyword);
@@ -665,16 +658,16 @@ public sealed class RoslynExtractor : IAsyncDisposable
         }
 
         if (u.Expression != null && model.GetTypeInfo(u.Expression).Type is { } expressionType)
-            yield return (expressionType, isAsync);
+            yield return new DisposedResource(expressionType, isAsync);
     }
 
     /// <summary>Typed locals of one using declaration's variable list.</summary>
-    private static IEnumerable<(ITypeSymbol Type, bool IsAsync)> DeclaredResources(
+    private static IEnumerable<DisposedResource> DeclaredResources(
         VariableDeclarationSyntax declaration, SemanticModel model, bool isAsync)
     {
         foreach (var variable in declaration.Variables)
             if (model.GetDeclaredSymbol(variable) is ILocalSymbol local)
-                yield return (local.Type, isAsync);
+                yield return new DisposedResource(local.Type, isAsync);
     }
 
     /// <summary>
@@ -738,6 +731,18 @@ public sealed class RoslynExtractor : IAsyncDisposable
         }
     }
 }
+
+/// <summary>
+/// One resolved call edge, caller to callee by method id. A named type rather
+/// than a tuple so the two ids cannot be swapped silently at a call site.
+/// </summary>
+public readonly record struct CallEdge(string FromId, string ToId);
+
+/// <summary>
+/// One resource a method disposes implicitly, and whether the disposal is
+/// await using — which resolves DisposeAsync rather than Dispose.
+/// </summary>
+public readonly record struct DisposedResource(ITypeSymbol Type, bool IsAsync);
 
 public sealed class SymbolInfo
 {
