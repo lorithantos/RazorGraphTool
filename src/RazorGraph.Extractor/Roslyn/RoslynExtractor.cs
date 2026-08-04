@@ -118,21 +118,18 @@ public sealed class RoslynExtractor : IAsyncDisposable
     {
         if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
 
-        foreach (var loaded in _loaded)
+        foreach (var (loaded, tree) in _loaded.SelectMany(l => l.Compilation.SyntaxTrees.Select(t => (l, t))))
         {
-            foreach (var tree in loaded.Compilation.SyntaxTrees)
+            var model = loaded.Compilation.GetSemanticModel(tree);
+            var root = tree.GetRoot();
+
+            foreach (var typeDecl in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
             {
-                var model = loaded.Compilation.GetSemanticModel(tree);
-                var root = tree.GetRoot();
+                var symbol = model.GetDeclaredSymbol(typeDecl);
+                if (symbol == null) continue;
 
-                foreach (var typeDecl in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
-                {
-                    var symbol = model.GetDeclaredSymbol(typeDecl);
-                    if (symbol == null) continue;
-
-                    var info = ClassifySymbol(symbol, loaded.Name);
-                    if (info != null) yield return info;
-                }
+                var info = ClassifySymbol(symbol, loaded.Name);
+                if (info != null) yield return info;
             }
         }
     }
