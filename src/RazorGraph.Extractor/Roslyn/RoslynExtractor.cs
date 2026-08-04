@@ -451,39 +451,52 @@ public sealed class RoslynExtractor : IAsyncDisposable
             .Select(l => l.Compilation.Assembly.Name)
             .ToHashSet(StringComparer.Ordinal);
 
-        foreach (var loaded in _loaded)
+        foreach (var (root, model) in LoadedSyntaxRoots())
         {
+            foreach (var decl in root.DescendantNodes().OfType<BaseMethodDeclarationSyntax>())
+                foreach (var edge in MethodCallEdges(decl, model, inScope))
+                    yield return edge;
+
+            foreach (var typeDecl in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
+                foreach (var edge in InitializerCallEdges(typeDecl, model, inScope))
+                    yield return edge;
+        }
+    }
+
+    /// <summary>Every syntax root across the loaded projects, paired with its semantic model.</summary>
+    private IEnumerable<(SyntaxNode Root, SemanticModel Model)> LoadedSyntaxRoots()
+    {
+        foreach (var loaded in _loaded)
             foreach (var tree in loaded.Compilation.SyntaxTrees)
-            {
-                var model = loaded.Compilation.GetSemanticModel(tree);
+                yield return (tree.GetRoot(), loaded.Compilation.GetSemanticModel(tree));
+    }
 
-                foreach (var decl in tree.GetRoot().DescendantNodes().OfType<BaseMethodDeclarationSyntax>())
-                {
-                    if (model.GetDeclaredSymbol(decl) is not IMethodSymbol caller) continue;
-                    var fromId = MethodId(caller);
+    /// <summary>
+    /// Call edges out of one method declaration: explicit invocations and
+    /// new-expressions via CallTargets, plus the implicit Dispose/DisposeAsync
+    /// of everything the method holds in a using.
+    /// </summary>
+    private static IEnumerable<(string FromId, string ToId)> MethodCallEdges(
+        BaseMethodDeclarationSyntax decl, SemanticModel model, IReadOnlySet<string> inScope)
+    {
+        if (model.GetDeclaredSymbol(decl) is not IMethodSymbol caller) yield break;
+        var fromId = MethodId(caller);
 
-                    foreach (var target in CallTargets(decl, model))
-                    {
-                        if (InScopeMethodId(target, inScope) is not { } toId) continue;
-                        if (toId == fromId) continue; // direct recursion adds no navigational value
+        foreach (var target in CallTargets(decl, model))
+        {
+            if (InScopeMethodId(target, inScope) is not { } toId) continue;
+            if (toId == fromId) continue; // direct recursion adds no navigational value
 
-                        yield return (fromId, toId);
-                    }
+            yield return (fromId, toId);
+        }
 
-                    foreach (var (resourceType, isAsync) in DisposedResources(decl, model))
-                    {
-                        if (ResolveDisposeMethod(resourceType, isAsync) is not { } dispose) continue;
-                        if (InScopeMethodId(dispose, inScope) is not { } toId) continue;
-                        if (toId == fromId) continue;
+        foreach (var (resourceType, isAsync) in DisposedResources(decl, model))
+        {
+            if (ResolveDisposeMethod(resourceType, isAsync) is not { } dispose) continue;
+            if (InScopeMethodId(dispose, inScope) is not { } toId) continue;
+            if (toId == fromId) continue;
 
-                        yield return (fromId, toId);
-                    }
-                }
-
-                foreach (var typeDecl in tree.GetRoot().DescendantNodes().OfType<TypeDeclarationSyntax>())
-                    foreach (var edge in InitializerCallEdges(typeDecl, model, inScope))
-                        yield return edge;
-            }
+            yield return (fromId, toId);
         }
     }
 
@@ -620,25 +633,45 @@ public sealed class RoslynExtractor : IAsyncDisposable
             switch (node)
             {
                 case UsingStatementSyntax u:
-                    var isAsync = u.AwaitKeyword.IsKind(SyntaxKind.AwaitKeyword);
-                    if (u.Declaration == null)
-                    {
-                        if (u.Expression != null && model.GetTypeInfo(u.Expression).Type is { } expressionType)
-                            yield return (expressionType, isAsync);
-                        break;
-                    }
-                    foreach (var variable in u.Declaration.Variables)
-                        if (model.GetDeclaredSymbol(variable) is ILocalSymbol local)
-                            yield return (local.Type, isAsync);
+                    foreach (var resource in UsingStatementResources(u, model))
+                        yield return resource;
                     break;
 
                 case LocalDeclarationStatementSyntax l when l.UsingKeyword.IsKind(SyntaxKind.UsingKeyword):
-                    foreach (var variable in l.Declaration.Variables)
-                        if (model.GetDeclaredSymbol(variable) is ILocalSymbol local)
-                            yield return (local.Type, l.AwaitKeyword.IsKind(SyntaxKind.AwaitKeyword));
+                    foreach (var resource in DeclaredResources(l.Declaration, model, l.AwaitKeyword.IsKind(SyntaxKind.AwaitKeyword)))
+                        yield return resource;
                     break;
             }
         }
+    }
+
+    /// <summary>
+    /// Resources of one using statement: the declared variables when it has a
+    /// declaration, otherwise the expression form's single resource.
+    /// </summary>
+    private static IEnumerable<(ITypeSymbol Type, bool IsAsync)> UsingStatementResources(
+        UsingStatementSyntax u, SemanticModel model)
+    {
+        var isAsync = u.AwaitKeyword.IsKind(SyntaxKind.AwaitKeyword);
+
+        if (u.Declaration != null)
+        {
+            foreach (var resource in DeclaredResources(u.Declaration, model, isAsync))
+                yield return resource;
+            yield break;
+        }
+
+        if (u.Expression != null && model.GetTypeInfo(u.Expression).Type is { } expressionType)
+            yield return (expressionType, isAsync);
+    }
+
+    /// <summary>Typed locals of one using declaration's variable list.</summary>
+    private static IEnumerable<(ITypeSymbol Type, bool IsAsync)> DeclaredResources(
+        VariableDeclarationSyntax declaration, SemanticModel model, bool isAsync)
+    {
+        foreach (var variable in declaration.Variables)
+            if (model.GetDeclaredSymbol(variable) is ILocalSymbol local)
+                yield return (local.Type, isAsync);
     }
 
     /// <summary>
