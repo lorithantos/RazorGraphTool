@@ -450,13 +450,19 @@ public sealed class RoslynExtractor : IAsyncDisposable
 
         foreach (var (root, model) in LoadedSyntaxRoots())
         {
-            foreach (var decl in root.DescendantNodes().OfType<BaseMethodDeclarationSyntax>())
-                foreach (var edge in MethodCallEdges(decl, model, inScope))
-                    yield return edge;
+            foreach (var edge in root.DescendantNodes()
+                .OfType<BaseMethodDeclarationSyntax>()
+                .SelectMany(decl => MethodCallEdges(decl, model, inScope)))
+            {
+                yield return edge;
+            }
 
-            foreach (var typeDecl in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
-                foreach (var edge in InitializerCallEdges(typeDecl, model, inScope))
-                    yield return edge;
+            foreach (var edge in root.DescendantNodes()
+                .OfType<TypeDeclarationSyntax>()
+                .SelectMany(typeDecl => InitializerCallEdges(typeDecl, model, inScope)))
+            {
+                yield return edge;
+            }
         }
     }
 
