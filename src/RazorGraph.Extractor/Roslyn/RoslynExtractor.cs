@@ -368,6 +368,9 @@ public sealed class RoslynExtractor : IAsyncDisposable
                     NestingDepth = declSyntax == null ? 0 : BodyGraphExtractor.NestingDepth(declSyntax),
                     Throws = throws,
                     EntryPointKind = ClassifyEntryPoint(m, inScope),
+                    ExtendsTypeFullName = m.IsExtensionMethod
+                        ? m.Parameters[0].Type.OriginalDefinition.ToDisplayString()
+                        : null,
                     FilePath = m.Locations.FirstOrDefault()?.SourceTree?.FilePath,
                     LineStart = line
                 };
@@ -427,11 +430,15 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// Stable id for a method, shared by the declaration site and every call site.
     /// Built from the original definition so a generic instantiation
     /// (Repo&lt;string&gt;.Get) resolves to the same node as its definition, and
-    /// parameter types are included so overloads stay distinct.
+    /// parameter types are included so overloads stay distinct. A reduced
+    /// extension-method symbol (money.Add(b) — the this parameter folded away)
+    /// unreduces first: the declaration registered the static two-parameter
+    /// form, and without this every call edge into an extension method was
+    /// silently dropped on the id mismatch.
     /// </summary>
     public static string MethodId(IMethodSymbol method)
     {
-        var def = method.OriginalDefinition;
+        var def = (method.ReducedFrom ?? method).OriginalDefinition;
         var parameters = string.Join(",", def.Parameters.Select(p => p.Type.ToDisplayString()));
         var container = def.ContainingType?.ToDisplayString() ?? "global";
         return $"m:{container}.{def.Name}({parameters})";
@@ -1229,6 +1236,14 @@ public sealed class MethodDetail
 
     /// <summary>Entry-point classification, or null for an ordinary method; see ClassifyEntryPoint.</summary>
     public string? EntryPointKind { get; init; }
+
+    /// <summary>
+    /// For an extension method, the full name of the type it extends — the
+    /// this parameter's type. An extension is part of the extended type's
+    /// working surface even though it is declared elsewhere, and the graph
+    /// says so with an Extends edge.
+    /// </summary>
+    public string? ExtendsTypeFullName { get; init; }
 
     public string? FilePath { get; init; }
     public int? LineStart { get; init; }

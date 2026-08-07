@@ -107,6 +107,12 @@ public class Widget
         Throwing.FilteredCaller();
     }
 
+    /// <summary>The reduced extension-method call — the edge this used to lose.</summary>
+    public void OnExtensionTick(object? sender, EventArgs e)
+    {
+        new Throwing().DoubleOrThrow();
+    }
+
     /// <summary>
     /// async void: the exception rethrows on the sync context, no caller can
     /// catch it. Throws directly — the depth-0 self-escape case.

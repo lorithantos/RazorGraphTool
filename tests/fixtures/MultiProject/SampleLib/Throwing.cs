@@ -101,3 +101,15 @@ public class Throwing
         }
     }
 }
+
+/// <summary>
+/// The extension-method fixture: callers use the reduced form (host.DoubleOrThrow()),
+/// which drops the this parameter from the bound symbol — the id-mismatch case
+/// that silently severed every call edge into an extension method. The escape
+/// chain through it is the regression proof.
+/// </summary>
+public static class ThrowingExtensions
+{
+    public static int DoubleOrThrow(this Throwing host)
+        => Throwing.UnguardedThrow() * 2;
+}

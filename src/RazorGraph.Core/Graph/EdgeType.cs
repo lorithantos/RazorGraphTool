@@ -54,5 +54,10 @@ public enum EdgeType
     // only handling en route was a filtered catch (conditional).
     Escapes,
 
+    // Extension surface. Emitted from an extension method to the in-solution
+    // type it extends: the method is part of that type's working surface even
+    // though containment says it lives on a static class elsewhere.
+    Extends,
+
     Unknown
 }

@@ -126,6 +126,8 @@ public sealed class GraphBuilder : IAsyncDisposable
             AddInheritanceEdges(sym);
         }
 
+        AddExtensionEdges();
+
         foreach (var sym in symbols)
         {
             AddInjectionEdges(sym);
@@ -447,16 +449,52 @@ public sealed class GraphBuilder : IAsyncDisposable
     }
 
     /// <summary>
+    /// Emits Extends edges from extension methods to the in-solution types
+    /// they extend. Runs after every symbol is a node — extensions routinely
+    /// live in a different file (and project) from the type they serve. An
+    /// extension on an out-of-solution type (string, IEnumerable) has no node
+    /// to point at and simply carries its extendsType property.
+    /// </summary>
+    private void AddExtensionEdges()
+    {
+        var idByFullName = _symbols
+            .GroupBy(s => s.FullName, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.Ordinal);
+
+        foreach (var sym in _symbols)
+            foreach (var method in sym.MethodNodes)
+            {
+                if (method.ExtendsTypeFullName is not { } extended) continue;
+                if (_graph.GetNode(method.Id) is { } node)
+                    node.SetProperty("extendsType", extended);
+
+                if (!idByFullName.TryGetValue(extended, out var typeId)) continue;
+                if (!_graph.HasNode(method.Id) || !_graph.HasNode(typeId)) continue;
+
+                _graph.AddEdge(new GraphEdge
+                {
+                    FromId = method.Id,
+                    ToId = typeId,
+                    Type = EdgeType.Extends
+                });
+            }
+    }
+
+    /// <summary>
     /// Stamps the callback entry points: methods out-of-solution code holds a
     /// delegate to. Runs after AddMethodNodes so an existing classification
     /// (an event-handler-shaped method registered to a framework event is
-    /// both) keeps the more specific kind.
+    /// both) keeps the more specific kind. Test methods are excluded for the
+    /// same reason ClassifyEntryPoint excludes them — every Assert.Throws
+    /// lambda hands out-of-solution, and the test host catches what tests
+    /// throw.
     /// </summary>
     private void AddCallbackEntryPoints()
     {
         foreach (var targetId in _roslyn.ExtractCallbackTargets())
         {
             if (_graph.GetNode(targetId) is not { } node) continue;
+            if (node.GetProperty<bool>("isTest") || node.GetProperty<bool>("isTestLifecycle")) continue;
             if (node.GetProperty<string>("entryPointKind") == null)
                 node.SetProperty("entryPointKind", "callback");
         }

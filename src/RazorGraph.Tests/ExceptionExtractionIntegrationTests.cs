@@ -160,11 +160,43 @@ public class ExceptionExtractionIntegrationTests : IAsyncLifetime
             .FindEscapingExceptions(project: "SampleWeb")
             .ToList();
 
-        // OnGet, OnTick, OnFilteredTick, FireAndForget, CompareItems,
-        // RegisterLambda, InvokeAsync — and nothing at OnPost.
-        Assert.Equal(7, escapes.Count);
+        // OnGet, OnTick, OnFilteredTick, OnExtensionTick, FireAndForget,
+        // CompareItems, RegisterLambda, InvokeAsync — and nothing at OnPost.
+        Assert.Equal(8, escapes.Count);
         Assert.DoesNotContain(escapes, e => e.EntryPoint.Name == "OnPost");
         Assert.Equal(0, escapes[0].Edge.GetProperty<int>("depth")); // shallowest first
+    }
+
+    // ---- Extension methods ------------------------------------------------
+
+    // The reduced call form drops the this parameter from the bound symbol;
+    // before MethodId unreduced it, every edge into an extension method was
+    // silently lost on the id mismatch — and with it, coverage and escapes.
+    [Fact]
+    public void ExtensionMethods_ReducedCallsBindToTheDeclarationNode()
+    {
+        var doubleOrThrow = MethodNode("ThrowingExtensions", "DoubleOrThrow");
+        var onExtensionTick = MethodNode("Widget", "OnExtensionTick");
+
+        Assert.Contains(_graph!.Outgoing(onExtensionTick.Id),
+            e => e.Type == EdgeType.Calls && e.ToId == doubleOrThrow.Id);
+
+        var escape = Assert.Single(IncomingEscapes(onExtensionTick));
+        Assert.Equal(2, escape.GetProperty<int>("depth"));
+        Assert.Equal(
+            new List<string> { UnguardedThrowId, doubleOrThrow.Id, onExtensionTick.Id },
+            escape.GetProperty<List<string>>("path"));
+    }
+
+    [Fact]
+    public void ExtensionMethods_CarryAnExtendsEdgeToTheirType()
+    {
+        var doubleOrThrow = MethodNode("ThrowingExtensions", "DoubleOrThrow");
+
+        Assert.Equal("SampleLib.Throwing", doubleOrThrow.GetProperty<string>("extendsType"));
+        var extends = Assert.Single(
+            _graph!.Outgoing(doubleOrThrow.Id), e => e.Type == EdgeType.Extends);
+        Assert.Equal("Throwing", _graph!.GetNode(extends.ToId)!.Name);
     }
 
     // ---- Delegates and invisible registration -----------------------------

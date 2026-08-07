@@ -87,7 +87,8 @@ you have seen everything.
 (`PageServedBy`, `UsesLayout`, `RendersPartial`, `RendersComponent`, `DefinesSection`,
 `ReturnsView`), data flow (`HasModel`, `BindsTo`, `Reads`, `Writes`, `Calls`,
 `InjectedInto`, `ViewDataReadBy`, `ViewDataWrittenBy`, `DomSelectedBy`), routing
-(`MapsToRoute`, `HandlesHttpMethod`, `UrlGeneratedBy`), `Covers`, and `Escapes`.
+(`MapsToRoute`, `HandlesHttpMethod`, `UrlGeneratedBy`), `Covers`, `Escapes`, and
+`Extends` — an extension method pointing at the in-solution type it extends.
 
 `DomSelectedBy` is the selector contract: element ids a page composition (page +
 layout + partials) renders that a script reaches with literal `getElementById` /
@@ -116,6 +117,15 @@ is one some test *can* reach — not one a test asserted on. Edges are only emit
 a project boundary, so `build_solution` is required; `uncovered_methods` excludes
 bodiless interface and abstract declarations, which never bind a call and would
 otherwise swamp the report.
+
+**Extension methods are part of the type they extend.** A reduced extension call
+(`money.Add(b)`) binds to the same node as the static declaration — the `this`
+parameter unreduces before the id forms, so call edges, coverage, and escape
+chains all flow through extensions. Extension-method nodes carry an
+`extendsType` property and an `Extends` edge to the extended type when it is
+in-solution, so "the working surface of `Money`" is the type's incoming
+`Extends` edges plus its own members. (C# 14 `extension` container members are
+not yet modeled.)
 
 **Methods include constructors, and disposal is a call.** Explicit instance
 constructors are Method nodes — constructors run real code, and xUnit's primary setup
