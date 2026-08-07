@@ -84,6 +84,14 @@ public static class BodyGraphExtractor
             var fallsTo = block.FallThroughSuccessor?.Destination?.Ordinal;
             var branchesTo = block.ConditionalSuccessor?.Destination?.Ordinal;
 
+            // A throw and a return both leave FallsTo null; the branch
+            // semantics is the fact that tells them apart, and escape
+            // analysis is built on that distinction.
+            var semantics = block.FallThroughSuccessor?.Semantics;
+            var branchSemantics = semantics is null or ControlFlowBranchSemantics.Regular
+                ? null
+                : semantics.ToString();
+
             // Conditional blocks are stored as (condition, whenTrue, whenFalse)
             // with the condition canonicalized, so that `if (c) X` and the
             // guard-clause `if (!c) skip; X` — identical flow, opposite spelling
@@ -108,6 +116,7 @@ public static class BodyGraphExtractor
                 RegionId = regionIds[block.EnclosingRegion!],
                 IsReachable = block.IsReachable,
                 FallsTo = fallsTo,
+                BranchSemantics = branchSemantics,
                 Condition = condition,
                 WhenTrue = whenTrue,
                 WhenFalse = whenFalse,
@@ -137,7 +146,12 @@ public static class BodyGraphExtractor
             Kind = region.Kind.ToString(),
             ParentId = parentId,
             FirstBlock = region.FirstBlockOrdinal,
-            LastBlock = region.LastBlockOrdinal
+            LastBlock = region.LastBlockOrdinal,
+            // Object is the CFG's spelling of an untyped catch-all; null keeps
+            // "no exception type" one value instead of two.
+            ExceptionType = region.ExceptionType is { SpecialType: not SpecialType.System_Object } t
+                ? t.ToDisplayString()
+                : null
         });
 
         foreach (var nested in region.NestedRegions)
@@ -239,6 +253,8 @@ public sealed class BodyRegion
     public int? ParentId { get; init; }
     public int FirstBlock { get; init; }
     public int LastBlock { get; init; }
+    /// <summary>Caught type for Catch/Filter regions; null elsewhere and for untyped catch-all.</summary>
+    public string? ExceptionType { get; init; }
 }
 
 public sealed class BodyBlock
@@ -249,6 +265,13 @@ public sealed class BodyBlock
     public bool IsReachable { get; init; }
     /// <summary>Unconditional successor; null when the block branches or terminates.</summary>
     public int? FallsTo { get; init; }
+
+    /// <summary>
+    /// How the block leaves when it does not fall through normally — Throw,
+    /// Rethrow, Return, ProgramTermination, StructuredExceptionHandling; null
+    /// for a regular fall-through.
+    /// </summary>
+    public string? BranchSemantics { get; init; }
     /// <summary>Canonicalized branch condition; null for unconditional blocks.</summary>
     public string? Condition { get; init; }
     public int? WhenTrue { get; init; }

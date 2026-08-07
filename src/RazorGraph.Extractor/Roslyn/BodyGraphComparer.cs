@@ -125,17 +125,36 @@ public static class BodyGraphComparer
     /// The chain of exception-handling region kinds enclosing a block, root
     /// last. Root and LocalLifetime are skipped: locals moving between scopes
     /// is not a flow change, but code moving in or out of a finally is.
+    /// Regions carry their caught type, and a try region lists its handlers'
+    /// signatures — catch (A) and catch (B) are different handlers, and the
+    /// handler blocks themselves are unreachable to the bisimulation (only
+    /// implicit exception edges lead there), so the try body is where the
+    /// difference has to be visible.
     /// </summary>
     private static string ExceptionContext(BodyBlock block, BodyGraph graph)
     {
         var byId = graph.Regions.ToDictionary(r => r.Id);
+        var children = graph.Regions.ToLookup(r => r.ParentId);
         var kinds = new List<string>();
         for (var region = byId[block.RegionId]; ; region = byId[region.ParentId!.Value])
         {
-            if (region.Kind is not ("Root" or "LocalLifetime")) kinds.Add(region.Kind);
+            if (region.Kind is not ("Root" or "LocalLifetime"))
+                kinds.Add(Describe(region, children));
             if (region.ParentId == null) break;
         }
         return string.Join(" > ", kinds);
+    }
+
+    private static string Describe(BodyRegion region, ILookup<int?, BodyRegion> children)
+    {
+        var self = Signature(region);
+        if (region.Kind is not ("TryAndCatch" or "TryAndFinally")) return self;
+
+        var handlers = children[region.Id].Where(c => c.Kind != "Try").Select(Signature);
+        return $"{self}({string.Join(",", handlers)})";
+
+        static string Signature(BodyRegion r) =>
+            r.ExceptionType is { } type ? $"{r.Kind}:{type}" : r.Kind;
     }
 
     private static List<string> CallTargets(BodyGraph graph) =>

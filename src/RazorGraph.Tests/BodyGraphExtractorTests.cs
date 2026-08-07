@@ -122,6 +122,45 @@ public class BodyGraphExtractorTests : IAsyncLifetime
         Assert.Contains(SeedId, diff.CallsOnlyInLeft);
     }
 
+    [Fact]
+    public void BodyGraph_MarksThrowAndRethrowBranchSemantics()
+    {
+        var thrower = _roslyn!.GetMethodBodyGraph("m:SampleLib.Throwing.UnguardedThrow()")!;
+        var rethrower = _roslyn!.GetMethodBodyGraph("m:SampleLib.Throwing.RethrowingCaller()")!;
+
+        Assert.Contains(thrower.Blocks, b => b.BranchSemantics == "Throw");
+        Assert.Contains(rethrower.Blocks, b => b.BranchSemantics == "Rethrow");
+        // A returning block must not read as a throwing one.
+        var zero = _roslyn!.GetMethodBodyGraph("m:SampleLib.NestedFlow.Zero()")!;
+        Assert.DoesNotContain(zero.Blocks, b => b.BranchSemantics is "Throw" or "Rethrow");
+    }
+
+    [Fact]
+    public void BodyGraph_CatchRegionsCarryTheirExceptionType()
+    {
+        var guarded = _roslyn!.GetMethodBodyGraph("m:SampleLib.Throwing.GuardedCaller()")!;
+        var rethrowing = _roslyn!.GetMethodBodyGraph("m:SampleLib.Throwing.RethrowingCaller()")!;
+
+        Assert.Contains(guarded.Regions, r => r.ExceptionType == "System.InvalidOperationException");
+        // An untyped catch-all carries no type — Object is normalized to null.
+        Assert.All(rethrowing.Regions, r => Assert.Null(r.ExceptionType));
+    }
+
+    // Pinned against the hole this closed: before ExceptionType reached the
+    // comparer, two bodies identical except for what their catch clauses
+    // caught compared Equivalent.
+    [Fact]
+    public void Compare_CatchTypesDiffer_ReportsDifferent()
+    {
+        var guarded = _roslyn!.GetMethodBodyGraph("m:SampleLib.Throwing.GuardedCaller()")!;
+        var misguarded = _roslyn!.GetMethodBodyGraph("m:SampleLib.Throwing.MisguardedCaller()")!;
+
+        var diff = BodyGraphComparer.Compare(guarded, misguarded);
+
+        Assert.False(diff.Equivalent);
+        Assert.Contains(diff.Differences, d => d.Contains("exception context"));
+    }
+
     private static string FixtureDir()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
