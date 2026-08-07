@@ -170,6 +170,9 @@ internal static class CliCommands
         var uncoveredOpt = new Option<bool>("--uncovered") { Description = "List methods no test reaches (use with --project)" };
         var deepOpt = new Option<int>("--deep") { Description = "List methods whose body nests control flow at least this deep (use with --project)" };
         var mismatchesOpt = new Option<bool>("--mismatches") { Description = "Report server-prepared data consumed by client JS" };
+        var escapesOpt = new Option<bool>("--escapes") { Description = "Report exceptions that can reach an entry point uncaught (use with --project, --entry-kind, --exception)" };
+        var entryKindOpt = new Option<string?>("--entry-kind") { Description = "With --escapes: restrict to one entry-point kind (main, pageHandler, controllerAction, eventHandler, asyncVoid, frameworkOverride)" };
+        var exceptionOpt = new Option<string?>("--exception") { Description = "With --escapes: case-insensitive substring filter on the escaping exception type" };
 
         var cmd = new Command("query", "Run a query against a built graph");
         cmd.Add(graphArg);
@@ -188,6 +191,9 @@ internal static class CliCommands
         cmd.Add(uncoveredOpt);
         cmd.Add(deepOpt);
         cmd.Add(mismatchesOpt);
+        cmd.Add(escapesOpt);
+        cmd.Add(entryKindOpt);
+        cmd.Add(exceptionOpt);
 
         cmd.SetAction((parseResult, ct) => RunQueryAsync(
             parseResult.GetValue(graphArg)!,
@@ -207,7 +213,10 @@ internal static class CliCommands
                 CoveredMethods = parseResult.GetValue(coveredOpt),
                 Uncovered = parseResult.GetValue(uncoveredOpt),
                 Deep = parseResult.GetValue(deepOpt),
-                Mismatches = parseResult.GetValue(mismatchesOpt)
+                Mismatches = parseResult.GetValue(mismatchesOpt),
+                Escapes = parseResult.GetValue(escapesOpt),
+                EntryKind = parseResult.GetValue(entryKindOpt),
+                ExceptionFilter = parseResult.GetValue(exceptionOpt)
             },
             ct));
 
@@ -232,6 +241,9 @@ internal static class CliCommands
         public bool Uncovered { get; init; }
         public int Deep { get; init; }
         public bool Mismatches { get; init; }
+        public bool Escapes { get; init; }
+        public string? EntryKind { get; init; }
+        public string? ExceptionFilter { get; init; }
     }
 
     private static async Task<int> RunQueryAsync(FileInfo graphFile, QueryOptions options, CancellationToken ct)
@@ -244,6 +256,7 @@ internal static class CliCommands
         // contract; it used to be implicit in the order of if-blocks inside one
         // long lambda.
         if (options.Mismatches) return RunMismatches(query);
+        if (options.Escapes) return RunEscapes(query, options.EntryKind, options.ExceptionFilter, options.Project);
         if (options.Uncovered) return RunUncovered(query, options.Project);
         if (options.Deep > 0) return RunDeepListing(query, options.Deep, options.Project);
         if (options.Id != null) return RunNodeReport(query, options.Id, options);
@@ -266,6 +279,31 @@ internal static class CliCommands
         Console.WriteLine(found == 0
             ? "No server-to-JS mismatches found."
             : $"{found} server-to-JS mismatch(es).");
+        return 0;
+    }
+
+    private static int RunEscapes(GraphQuery query, string? entryKind, string? exceptionFilter, string? project)
+    {
+        var escapes = query.FindEscapingExceptions(entryKind, exceptionFilter, project).ToList();
+        Console.WriteLine($"{escapes.Count} exception escape(s)"
+            + (project == null ? " (all projects)" : $" into {project}") + ":");
+
+        foreach (var (thrower, entry, edge) in escapes)
+        {
+            var conditional = edge.GetProperty<bool>("conditional") ? " (conditional — filtered catch en route)" : "";
+            Console.WriteLine(
+                $"  {edge.GetProperty<string>("exceptionType")} -> "
+                + $"[{entry.GetProperty<string>("entryPointKind")}] {entry.GetProperty<string>("declaringType")}.{entry.Name} "
+                + $"({entry.FilePath}:{entry.LineStart}){conditional}");
+            Console.WriteLine(
+                $"    thrown by {thrower.GetProperty<string>("declaringType")}.{thrower.Name}, "
+                + $"depth {edge.GetProperty<int>("depth")}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Static reachability over in-solution code only: BCL throwers are invisible,");
+        Console.WriteLine("virtual dispatch is not widened, lambdas/local functions are not followed,");
+        Console.WriteLine("and top-level-statement Main is not an entry point.");
         return 0;
     }
 

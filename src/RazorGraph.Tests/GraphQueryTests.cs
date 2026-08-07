@@ -36,6 +36,60 @@ public class GraphQueryTests
         return graph;
     }
 
+    /// <summary>A hand-built escape graph: one depth-0 self-escape at Main, one depth-2 chain into an event handler.</summary>
+    private static CodeGraph BuildEscapeGraph()
+    {
+        var graph = new CodeGraph();
+
+        var main = new GraphNode { Id = "m:Cli.Program.Main()", Type = NodeType.Method, Name = "Main" };
+        main.SetProperty("entryPointKind", "main");
+        main.SetProperty("project", "Cli");
+        graph.AddNode(main);
+
+        var handler = new GraphNode { Id = "m:Web.Widget.OnTick(object,System.EventArgs)", Type = NodeType.Method, Name = "OnTick" };
+        handler.SetProperty("entryPointKind", "eventHandler");
+        handler.SetProperty("project", "Web");
+        graph.AddNode(handler);
+
+        graph.AddNode(new GraphNode { Id = "m:Lib.Thrower.Boom()", Type = NodeType.Method, Name = "Boom" });
+
+        var selfEscape = new GraphEdge { FromId = "m:Cli.Program.Main()", ToId = "m:Cli.Program.Main()", Type = EdgeType.Escapes };
+        selfEscape.Properties["exceptionType"] = "System.Exception";
+        selfEscape.Properties["depth"] = 0;
+        graph.AddEdge(selfEscape);
+
+        var chained = new GraphEdge { FromId = "m:Lib.Thrower.Boom()", ToId = "m:Web.Widget.OnTick(object,System.EventArgs)", Type = EdgeType.Escapes };
+        chained.Properties["exceptionType"] = "Lib.FooException";
+        chained.Properties["depth"] = 2;
+        graph.AddEdge(chained);
+
+        return graph;
+    }
+
+    [Fact]
+    public void FindEscapingExceptions_OrdersShallowestFirstAndResolvesNodes()
+    {
+        var escapes = new GraphQuery(BuildEscapeGraph()).FindEscapingExceptions().ToList();
+
+        Assert.Equal(2, escapes.Count);
+        Assert.Equal("Main", escapes[0].EntryPoint.Name);   // depth 0 before depth 2
+        Assert.Equal("Main", escapes[0].Thrower.Name);      // a self-escape names itself
+        Assert.Equal("Boom", escapes[1].Thrower.Name);
+        Assert.Equal("OnTick", escapes[1].EntryPoint.Name);
+    }
+
+    [Fact]
+    public void FindEscapingExceptions_EveryFilterNarrows()
+    {
+        var query = new GraphQuery(BuildEscapeGraph());
+
+        Assert.Single(query.FindEscapingExceptions(entryPointKind: "eventHandler"));
+        Assert.Single(query.FindEscapingExceptions(exceptionTypeContains: "fooex")); // case-insensitive
+        Assert.Single(query.FindEscapingExceptions(project: "Cli"));
+        Assert.Single(query.FindEscapingExceptions(entryPointId: "m:Cli.Program.Main()"));
+        Assert.Empty(query.FindEscapingExceptions(entryPointKind: "pageHandler"));
+    }
+
     [Fact]
     public void FindNodes_FiltersByTypeAndName()
     {

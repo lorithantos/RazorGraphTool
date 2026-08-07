@@ -142,6 +142,37 @@ public sealed class GraphQuery
             .OrderByDescending(m => m.GetProperty<int>("bodyDepth"));
 
     /// <summary>
+    /// Exception escapes, shallowest first: Escapes edges (precomputed at
+    /// build time) resolved to their thrower and entry-point nodes. Every
+    /// filter narrows; all default to everything. entryPointKind matches the
+    /// entry node's stamp exactly; exceptionTypeContains is a case-insensitive
+    /// substring of the escaping type.
+    /// </summary>
+    public IEnumerable<(GraphNode Thrower, GraphNode EntryPoint, GraphEdge Edge)> FindEscapingExceptions(
+        string? entryPointKind = null,
+        string? exceptionTypeContains = null,
+        string? project = null,
+        string? entryPointId = null) =>
+        _graph.Edges
+            .Where(e => e.Type == EdgeType.Escapes)
+            .Where(e => entryPointId == null || e.ToId == entryPointId)
+            .Where(e => exceptionTypeContains == null ||
+                        (e.GetProperty<string>("exceptionType") ?? "")
+                            .Contains(exceptionTypeContains, StringComparison.OrdinalIgnoreCase))
+            .Select(e => (Thrower: _graph.GetNode(e.FromId), EntryPoint: _graph.GetNode(e.ToId), Edge: e))
+            .Where(t => t.Thrower != null && t.EntryPoint != null)
+            .Where(t => entryPointKind == null ||
+                        string.Equals(t.EntryPoint!.GetProperty<string>("entryPointKind"), entryPointKind,
+                            StringComparison.Ordinal))
+            .Where(t => project == null ||
+                        string.Equals(t.EntryPoint!.GetProperty<string>("project"), project,
+                            StringComparison.OrdinalIgnoreCase))
+            .OrderBy(t => t.Edge.GetProperty<int>("depth"))
+            .ThenBy(t => t.EntryPoint!.Id, StringComparer.Ordinal)
+            .ThenBy(t => t.Edge.GetProperty<string>("exceptionType"), StringComparer.Ordinal)
+            .Select(t => (t.Thrower!, t.EntryPoint!, t.Edge));
+
+    /// <summary>
     /// Find all render dependencies of a Razor page (layout, partials, sections, components).
     /// </summary>
     public IEnumerable<(GraphNode Node, GraphEdge Edge)> GetRenderTree(string pageId)

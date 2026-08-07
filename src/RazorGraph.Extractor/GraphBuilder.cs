@@ -25,6 +25,13 @@ public sealed class GraphBuilder : IAsyncDisposable
     private readonly List<SymbolInfo> _symbols = new();
 
     /// <summary>
+    /// Full thrown-type records (with ancestor chains) per method id, kept for
+    /// the escape sweep. The node property carries only the type names; the
+    /// chains are build-time working data, not graph data.
+    /// </summary>
+    private readonly Dictionary<string, IReadOnlyList<ThrownType>> _methodThrows = new(StringComparer.Ordinal);
+
+    /// <summary>
     /// Graph vendor and minified client assets instead of dropping them. Vendor
     /// detection always runs; this switches the policy from drop to keep, for
     /// when the bug being hunted lives inside a shipped bundle. Included vendor
@@ -125,6 +132,127 @@ public sealed class GraphBuilder : IAsyncDisposable
         }
 
         AddCallEdges();
+        AddExceptionEscapeEdges();
+    }
+
+    /// <summary>
+    /// One escaping-exception fact during the sweep: the type's ancestor
+    /// chain, whether the only handling seen so far was a filtered catch, and
+    /// the first hop toward the origin — BFS parent pointers, so one
+    /// representative shortest path is reconstructible per (method, type).
+    /// </summary>
+    private readonly record struct EscapeFact(
+        IReadOnlyList<string> AncestorChain, bool Conditional, string? FirstHop);
+
+    /// <summary>
+    /// Propagates locally-unhandled throws caller-ward over the Calls edges,
+    /// stopping where an edge's guard set handles the type, and emits an
+    /// Escapes edge for every (entry point, exception type) the worklist
+    /// reaches — the precomputed answer to "what can crash this process".
+    /// Monotone on a finite lattice (methods × thrown types, conditional
+    /// upgradeable to firm once), so indirect recursion terminates without
+    /// special handling. Runs in project and solution builds alike: escapes
+    /// need no project boundary, unlike coverage.
+    /// </summary>
+    private void AddExceptionEscapeEdges()
+    {
+        var state = new Dictionary<string, Dictionary<string, EscapeFact>>(StringComparer.Ordinal);
+        var queue = new Queue<string>();
+
+        foreach (var (methodId, throws) in _methodThrows)
+        {
+            if (!_graph.HasNode(methodId)) continue;
+
+            var facts = state[methodId] = new Dictionary<string, EscapeFact>(StringComparer.Ordinal);
+            foreach (var thrown in throws)
+                facts[thrown.Type] = new EscapeFact(thrown.AncestorChain, thrown.Conditional, FirstHop: null);
+            queue.Enqueue(methodId);
+        }
+
+        while (queue.Count > 0)
+        {
+            var methodId = queue.Dequeue();
+            var facts = state[methodId];
+
+            foreach (var edge in _graph.Incoming(methodId).Where(e => e.Type == EdgeType.Calls))
+            {
+                var guardedBy = edge.GetProperty<List<string>>("guardedBy");
+                var filteredBy = edge.GetProperty<List<string>>("filteredBy");
+                var changed = false;
+
+                foreach (var (type, fact) in facts)
+                {
+                    if (Handles(guardedBy, fact.AncestorChain)) continue;
+
+                    var conditional = fact.Conditional || Handles(filteredBy, fact.AncestorChain);
+                    if (!state.TryGetValue(edge.FromId, out var callerFacts))
+                        callerFacts = state[edge.FromId] = new Dictionary<string, EscapeFact>(StringComparer.Ordinal);
+
+                    if (callerFacts.TryGetValue(type, out var existing))
+                    {
+                        // Only a conditional→firm upgrade is new information.
+                        if (!existing.Conditional || conditional) continue;
+                    }
+
+                    callerFacts[type] = new EscapeFact(fact.AncestorChain, conditional, methodId);
+                    changed = true;
+                }
+
+                if (changed) queue.Enqueue(edge.FromId);
+            }
+        }
+
+        foreach (var entry in _graph.NodesOfType(NodeType.Method).ToList())
+        {
+            if (entry.GetProperty<string>("entryPointKind") is null) continue;
+            if (!state.TryGetValue(entry.Id, out var facts)) continue;
+
+            foreach (var (type, fact) in facts)
+            {
+                var path = ReconstructPath(entry.Id, type, fact, state);
+
+                var edge = new GraphEdge
+                {
+                    FromId = path[0],
+                    ToId = entry.Id,
+                    Type = EdgeType.Escapes
+                };
+                edge.Properties["exceptionType"] = type;
+                edge.Properties["depth"] = path.Count - 1;
+                edge.Properties["path"] = path;
+                if (fact.Conditional) edge.Properties["conditional"] = true;
+
+                _graph.AddEdge(edge);
+            }
+        }
+
+        static bool Handles(List<string>? guards, IReadOnlyList<string> ancestorChain) =>
+            guards != null
+            && (guards.Contains("*") || guards.Intersect(ancestorChain, StringComparer.Ordinal).Any());
+    }
+
+    /// <summary>
+    /// Walks the first-hop pointers from an entry point back to the throw's
+    /// origin and returns the path thrower-first. The seen-set is defensive:
+    /// hop pointers are BFS parents and cannot cycle, but a truncated path
+    /// beats an infinite loop if that invariant ever breaks.
+    /// </summary>
+    private static List<string> ReconstructPath(
+        string entryId, string type, EscapeFact fact,
+        Dictionary<string, Dictionary<string, EscapeFact>> state)
+    {
+        var path = new List<string> { entryId };
+        var seen = new HashSet<string>(StringComparer.Ordinal) { entryId };
+
+        var cursor = fact;
+        while (cursor.FirstHop is { } next && seen.Add(next))
+        {
+            path.Add(next);
+            cursor = state[next][type];
+        }
+
+        path.Reverse();
+        return path;
     }
 
     /// <summary>
@@ -258,6 +386,16 @@ public sealed class GraphBuilder : IAsyncDisposable
             if (method.IsTestLifecycle) node.SetProperty("isTestLifecycle", true);
             if (method.IsAbstract) node.SetProperty("isAbstract", true);
             if (method.NestingDepth > 0) node.SetProperty("bodyDepth", method.NestingDepth);
+            if (method.Throws.Count > 0)
+            {
+                // Names on the node for display; the full ancestor chains stay
+                // in memory for the escape sweep — persisting them would bloat
+                // every Method node for data only the build consumes.
+                node.SetProperty("throws", method.Throws.Select(t => t.Type).ToList());
+                _methodThrows[method.Id] = method.Throws;
+            }
+            if (method.EntryPointKind is { } entryPointKind)
+                node.SetProperty("entryPointKind", entryPointKind);
             node.SetProperty("isPublic", method.IsPublic);
 
             _graph.AddNode(node);
@@ -273,20 +411,58 @@ public sealed class GraphBuilder : IAsyncDisposable
 
     private void AddCallEdges()
     {
-        // Distinct because a caller invoking the same method three times is one
-        // dependency, and the graph is read as navigation rather than as a profile.
-        foreach (var (fromId, toId) in _roslyn.ExtractCallEdges().Distinct())
+        // One edge per caller→callee pair because a caller invoking the same
+        // method three times is one dependency, and the graph is read as
+        // navigation rather than as a profile. The guard context of every site
+        // rides along as the intersection across sites: an exception passes
+        // this edge unless every site guards it, so a type missing from the
+        // intersection is a possible escape — the conservative direction.
+        foreach (var group in _roslyn.ExtractCallSites().GroupBy(s => (s.FromId, s.ToId)))
         {
+            var (fromId, toId) = group.Key;
+
             // Calls into types the classifier skipped have no node to point at.
             if (!_graph.HasNode(fromId) || !_graph.HasNode(toId)) continue;
 
-            _graph.AddEdge(new GraphEdge
+            var edge = new GraphEdge
             {
                 FromId = fromId,
                 ToId = toId,
                 Type = EdgeType.Calls
-            });
+            };
+
+            var guardedBy = IntersectGuards(group.Select(s => s.GuardedBy));
+            var filteredBy = IntersectGuards(group.Select(s => s.FilteredBy));
+            if (guardedBy.Count > 0) edge.Properties["guardedBy"] = guardedBy;
+            if (filteredBy.Count > 0) edge.Properties["filteredBy"] = filteredBy;
+
+            _graph.AddEdge(edge);
         }
+    }
+
+    /// <summary>
+    /// Intersection of per-site guard sets, where "*" (untyped catch-all) is
+    /// the universe: it constrains nothing, and only survives when every site
+    /// has it. The intersection is by exact type name — two sites catching
+    /// different bases both able to stop the same exception intersect to
+    /// empty, which over-reports escapes rather than hiding one.
+    /// </summary>
+    private static List<string> IntersectGuards(IEnumerable<IReadOnlyList<string>> sites)
+    {
+        List<string>? intersection = null;
+        var allCatchAll = true;
+
+        foreach (var site in sites)
+        {
+            if (site.Contains("*")) continue;
+
+            allCatchAll = false;
+            intersection = intersection == null
+                ? site.Distinct().ToList()
+                : intersection.Intersect(site, StringComparer.Ordinal).ToList();
+        }
+
+        return allCatchAll ? new List<string> { "*" } : intersection ?? new List<string>();
     }
 
     /// <summary>

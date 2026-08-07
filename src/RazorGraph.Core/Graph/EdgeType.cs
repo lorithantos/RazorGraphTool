@@ -48,5 +48,11 @@ public enum EdgeType
     // direct exercise (depth 1) or the full blast radius.
     Covers,
 
+    // Exception flow. Emitted from a throwing method to an application entry
+    // point its exception can reach with no catch stopping it, carrying the
+    // exception type, the hop depth, one representative path, and whether the
+    // only handling en route was a filtered catch (conditional).
+    Escapes,
+
     Unknown
 }

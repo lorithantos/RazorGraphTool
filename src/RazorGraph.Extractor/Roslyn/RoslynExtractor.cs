@@ -118,6 +118,10 @@ public sealed class RoslynExtractor : IAsyncDisposable
     {
         if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
 
+        var inScope = _loaded
+            .Select(l => l.Compilation.Assembly.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
         foreach (var (loaded, tree) in _loaded.SelectMany(l => l.Compilation.SyntaxTrees.Select(t => (l, t))))
         {
             var model = loaded.Compilation.GetSemanticModel(tree);
@@ -128,13 +132,14 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 var symbol = model.GetDeclaredSymbol(typeDecl);
                 if (symbol == null) continue;
 
-                var info = ClassifySymbol(symbol, loaded.Name);
+                var info = ClassifySymbol(symbol, loaded.Name, loaded.Compilation, inScope);
                 if (info != null) yield return info;
             }
         }
     }
 
-    private SymbolInfo? ClassifySymbol(INamedTypeSymbol symbol, string projectName)
+    private SymbolInfo? ClassifySymbol(
+        INamedTypeSymbol symbol, string projectName, Compilation compilation, IReadOnlySet<string> inScope)
     {
         var baseType = symbol.BaseType?.ToDisplayString() ?? "";
         var interfaces = symbol.AllInterfaces.Select(i => i.ToDisplayString()).ToList();
@@ -156,7 +161,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 BaseType = baseType,
                 Properties = ExtractProperties(symbol),
                 Methods = ExtractMethods(symbol),
-                MethodNodes = ExtractMethodNodes(symbol),
+                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope),
                 InjectedServices = ExtractInjectedServices(symbol)
             };
         }
@@ -176,7 +181,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 LineEnd = lineEnd,
                 BaseType = baseType,
                 Methods = ExtractControllerActions(symbol),
-                MethodNodes = ExtractMethodNodes(symbol),
+                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope),
                 InjectedServices = ExtractInjectedServices(symbol)
             };
         }
@@ -196,7 +201,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 LineEnd = lineEnd,
                 ImplementedInterfaces = interfaces.Where(i => i.EndsWith("Service")).ToList(),
                 Methods = ExtractMethods(symbol),
-                MethodNodes = ExtractMethodNodes(symbol)
+                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope)
             };
         }
 
@@ -214,7 +219,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 LineStart = lineStart,
                 LineEnd = lineEnd,
                 Properties = ExtractProperties(symbol),
-                MethodNodes = ExtractMethodNodes(symbol)
+                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope)
             };
         }
 
@@ -238,7 +243,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
             ImplementedInterfaces = interfaces,
             Properties = ExtractProperties(symbol),
             Methods = ExtractMethods(symbol),
-            MethodNodes = ExtractMethodNodes(symbol),
+            MethodNodes = ExtractMethodNodes(symbol, compilation, inScope),
             InjectedServices = ExtractInjectedServices(symbol)
         };
     }
@@ -309,7 +314,8 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// as uncovered noise. Static ctors stay out for the same reason: no
     /// syntactic call site can ever reach one.
     /// </summary>
-    private List<MethodDetail> ExtractMethodNodes(INamedTypeSymbol symbol)
+    private List<MethodDetail> ExtractMethodNodes(
+        INamedTypeSymbol symbol, Compilation compilation, IReadOnlySet<string> inScope)
     {
         var hasInitializers = HasInstanceInitializers(symbol);
 
@@ -335,6 +341,12 @@ public sealed class RoslynExtractor : IAsyncDisposable
                     : syntaxRef.SyntaxTree.GetLineSpan(syntaxRef.Span).StartLinePosition.Line + 1;
                 var declSyntax = syntaxRef?.GetSyntax() as BaseMethodDeclarationSyntax;
 
+                // The semantic model must match the method's own tree — a
+                // partial class puts members in trees the type walk never saw.
+                var throws = declSyntax == null
+                    ? new List<ThrownType>()
+                    : ExtractThrows(declSyntax, compilation.GetSemanticModel(declSyntax.SyntaxTree));
+
                 return new MethodDetail
                 {
                     Id = MethodId(m),
@@ -354,6 +366,8 @@ public sealed class RoslynExtractor : IAsyncDisposable
                     // code that a test could execute.
                     IsAbstract = m.IsAbstract,
                     NestingDepth = declSyntax == null ? 0 : BodyGraphExtractor.NestingDepth(declSyntax),
+                    Throws = throws,
+                    EntryPointKind = ClassifyEntryPoint(m, inScope),
                     FilePath = m.Locations.FirstOrDefault()?.SourceTree?.FilePath,
                     LineStart = line
                 };
@@ -424,8 +438,181 @@ public sealed class RoslynExtractor : IAsyncDisposable
     }
 
     /// <summary>
-    /// Resolve call sites to (caller, callee) method-id pairs. Only calls whose
-    /// target is declared in one of the loaded projects are returned -- an edge to
+    /// The exception types that can leave this method locally: throw statements
+    /// and throw expressions whose type no enclosing catch of the same method
+    /// handles firmly. A bare rethrow contributes its catch's declared type —
+    /// System.Exception for an untyped catch, the honest upper bound. Throws
+    /// inside lambdas and local functions are skipped: they run when the
+    /// delegate runs, not when this method does, and attributing them here
+    /// would over-report. Assignability is decided on live symbols now, while
+    /// both sides still are symbols — never by name at query time.
+    /// </summary>
+    private static List<ThrownType> ExtractThrows(BaseMethodDeclarationSyntax decl, SemanticModel model)
+    {
+        var sites = new List<(ITypeSymbol? Type, SyntaxNode Site)>();
+
+        foreach (var node in decl.DescendantNodes(n => n == decl || !IsNestedFunction(n)))
+        {
+            switch (node)
+            {
+                case ThrowStatementSyntax { Expression: { } thrown } statement:
+                    sites.Add((model.GetTypeInfo(thrown).Type, statement));
+                    break;
+
+                case ThrowStatementSyntax rethrow:
+                    sites.Add((RethrownType(rethrow, decl, model), rethrow));
+                    break;
+
+                case ThrowExpressionSyntax { Expression: { } thrown } expression:
+                    sites.Add((model.GetTypeInfo(thrown).Type, expression));
+                    break;
+            }
+        }
+
+        var escaping = new List<ThrownType>();
+
+        foreach (var (type, site) in sites)
+        {
+            if (type is not INamedTypeSymbol named || named.TypeKind == TypeKind.Error) continue;
+
+            var conditional = false;
+            var handled = false;
+
+            foreach (var tryStatement in site.Ancestors().TakeWhile(a => a != decl).OfType<TryStatementSyntax>())
+            {
+                // A throw inside a catch or finally answers to the outer trys only.
+                if (!tryStatement.Block.Span.Contains(site.Span)) continue;
+
+                foreach (var catchClause in tryStatement.Catches)
+                {
+                    if (!CatchMatches(catchClause, named, model)) continue;
+                    if (catchClause.Filter == null) { handled = true; break; }
+                    conditional = true; // the filter may decline at runtime
+                }
+                if (handled) break;
+            }
+
+            if (!handled)
+                escaping.Add(new ThrownType(named.ToDisplayString(), AncestorChain(named), conditional));
+        }
+
+        // One record per type; an unconditional escape outranks a conditional one.
+        return escaping
+            .GroupBy(t => t.Type, StringComparer.Ordinal)
+            .Select(g => g.OrderBy(t => t.Conditional).First())
+            .ToList();
+
+        static bool IsNestedFunction(SyntaxNode n) =>
+            n is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax;
+    }
+
+    /// <summary>The type a bare 'throw;' rethrows: its catch's declaration, else System.Exception.</summary>
+    private static ITypeSymbol? RethrownType(
+        ThrowStatementSyntax rethrow, BaseMethodDeclarationSyntax decl, SemanticModel model)
+    {
+        var catchClause = rethrow.Ancestors().TakeWhile(a => a != decl)
+            .OfType<CatchClauseSyntax>().FirstOrDefault();
+        return catchClause?.Declaration?.Type is { } typeSyntax
+            ? model.GetTypeInfo(typeSyntax).Type
+            : model.Compilation.GetTypeByMetadataName("System.Exception");
+    }
+
+    private static bool CatchMatches(CatchClauseSyntax catchClause, INamedTypeSymbol thrown, SemanticModel model)
+    {
+        if (catchClause.Declaration?.Type is not { } typeSyntax) return true; // untyped catch-all
+        if (model.GetTypeInfo(typeSyntax).Type is not INamedTypeSymbol caught) return false;
+
+        for (ITypeSymbol? t = thrown; t != null; t = t.BaseType)
+            if (SymbolEqualityComparer.Default.Equals(t, caught)) return true;
+        return false;
+    }
+
+    /// <summary>Self first, base types after, stopping at System.Exception — what a catch set is matched against.</summary>
+    private static List<string> AncestorChain(INamedTypeSymbol type)
+    {
+        var chain = new List<string>();
+        for (ITypeSymbol? t = type; t != null; t = t.BaseType)
+        {
+            var name = t.ToDisplayString();
+            chain.Add(name);
+            if (name == "System.Exception") break;
+        }
+        return chain;
+    }
+
+    private static readonly string[] PageHandlerPrefixes =
+        { "OnGet", "OnPost", "OnPut", "OnDelete", "OnHead", "OnOptions", "OnPatch" };
+
+    /// <summary>
+    /// Classifies a method as an application entry point — a place the runtime
+    /// or a framework calls into user code, where an escaping exception has no
+    /// further user frame to stop in. First match wins; null for the ordinary
+    /// methods that are the overwhelming majority. Top-level-statement Main is
+    /// a declared blind spot: the synthesized method has no declaration syntax
+    /// and never becomes a node. Handlers registered as lambdas are another —
+    /// there is no method symbol to stamp.
+    /// </summary>
+    private static string? ClassifyEntryPoint(IMethodSymbol m, IReadOnlySet<string> inScope)
+    {
+        if (m.MethodKind != MethodKind.Ordinary) return null;
+
+        if (m.IsStatic && m.Name == "Main") return "main";
+
+        if (!m.IsStatic && m.DeclaredAccessibility == Accessibility.Public
+            && PageHandlerPrefixes.Any(p => m.Name.StartsWith(p, StringComparison.Ordinal))
+            && BaseChainHasName(m.ContainingType, "PageModel"))
+            return "pageHandler";
+
+        if (!m.IsStatic && m.DeclaredAccessibility == Accessibility.Public && IsControllerType(m.ContainingType))
+            return "controllerAction";
+
+        if (IsEventHandlerShape(m)) return "eventHandler";
+
+        if (m.IsAsync && m.ReturnsVoid) return "asyncVoid";
+
+        // An override of a virtual declared outside the loaded projects is a
+        // framework calling in — OnStartup, OnActionExecuting, OnPaint. The
+        // Object/ValueType virtuals are excluded: every record's GetHashCode
+        // would qualify, drowning the real entry points in equality plumbing.
+        if (m.IsOverride && m.OverriddenMethod is { } overridden
+            && overridden.OriginalDefinition.ContainingType?.SpecialType
+                is not (SpecialType.System_Object or SpecialType.System_ValueType)
+            && overridden.OriginalDefinition.ContainingAssembly?.Name is { } assembly
+            && !inScope.Contains(assembly))
+            return "frameworkOverride";
+
+        return null;
+    }
+
+    private static bool BaseChainHasName(INamedTypeSymbol? type, string name)
+    {
+        for (var t = type?.BaseType; t != null; t = t.BaseType)
+            if (t.Name == name) return true;
+        return false;
+    }
+
+    /// <summary>Mirrors ClassifySymbol's controller heuristic so the two never disagree.</summary>
+    private static bool IsControllerType(INamedTypeSymbol type) =>
+        (type.BaseType?.ToDisplayString() ?? "").Contains("Controller")
+        || type.GetAttributes().Any(a => a.AttributeClass?.Name == "ApiControllerAttribute");
+
+    private static bool IsEventHandlerShape(IMethodSymbol m)
+    {
+        if (m.Parameters.Length != 2) return false;
+        if (!m.ReturnsVoid && m.ReturnType.Name != "Task") return false;
+        if (m.Parameters[0].Type.SpecialType != SpecialType.System_Object) return false;
+
+        for (ITypeSymbol? t = m.Parameters[1].Type; t != null; t = t.BaseType)
+            if (t.Name == "EventArgs"
+                && t.ContainingNamespace is { Name: "System", ContainingNamespace.IsGlobalNamespace: true })
+                return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Resolve call sites to (caller, callee) method-id pairs with the
+    /// exception guards enclosing each site. Only calls whose target is
+    /// declared in one of the loaded projects are returned -- an edge to
     /// String.Format would be noise, not navigation.
     ///
     /// Membership is tested by assembly *name*, not symbol identity. A call into
@@ -440,7 +627,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// syntax at the site, and without the edges the methods read as unreached
     /// by the very code that guarantees they run.
     /// </summary>
-    public IEnumerable<CallEdge> ExtractCallEdges()
+    public IEnumerable<CallSiteInfo> ExtractCallSites()
     {
         if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
 
@@ -451,39 +638,43 @@ public sealed class RoslynExtractor : IAsyncDisposable
         foreach (var (root, model) in _loaded.SelectMany(
                      l => l.Compilation.SyntaxTrees.Select(t => (t.GetRoot(), l.Compilation.GetSemanticModel(t)))))
         {
-            foreach (var edge in root.DescendantNodes()
+            foreach (var site in root.DescendantNodes()
                 .OfType<BaseMethodDeclarationSyntax>()
-                .SelectMany(decl => MethodCallEdges(decl, model, inScope)))
+                .SelectMany(decl => MethodCallSites(decl, model, inScope)))
             {
-                yield return edge;
+                yield return site;
             }
 
-            foreach (var edge in root.DescendantNodes()
+            foreach (var site in root.DescendantNodes()
                 .OfType<TypeDeclarationSyntax>()
-                .SelectMany(typeDecl => InitializerCallEdges(typeDecl, model, inScope)))
+                .SelectMany(typeDecl => InitializerCallSites(typeDecl, model, inScope)))
             {
-                yield return edge;
+                yield return site;
             }
         }
     }
 
     /// <summary>
-    /// Call edges out of one method declaration: explicit invocations and
-    /// new-expressions via CallTargets, plus the implicit Dispose/DisposeAsync
-    /// of everything the method holds in a using.
+    /// Call sites in one method declaration: explicit invocations and
+    /// new-expressions with their enclosing catch guards, plus the implicit
+    /// Dispose/DisposeAsync of everything the method holds in a using. Dispose
+    /// sites carry no guards on purpose — disposal runs at scope exit, where
+    /// relating it to enclosing trys is subtle, and unguarded is the
+    /// conservative reading for escape analysis.
     /// </summary>
-    private static IEnumerable<CallEdge> MethodCallEdges(
+    private static IEnumerable<CallSiteInfo> MethodCallSites(
         BaseMethodDeclarationSyntax decl, SemanticModel model, IReadOnlySet<string> inScope)
     {
         if (model.GetDeclaredSymbol(decl) is not IMethodSymbol caller) yield break;
         var fromId = MethodId(caller);
 
-        foreach (var target in CallTargets(decl, model))
+        foreach (var (site, target) in CallTargetSites(decl, model))
         {
             if (InScopeMethodId(target, inScope) is not { } toId) continue;
             if (toId == fromId) continue; // direct recursion adds no navigational value
 
-            yield return new CallEdge(fromId, toId);
+            var (guardedBy, filteredBy) = SiteGuards(site, decl, model);
+            yield return new CallSiteInfo(fromId, toId, guardedBy, filteredBy);
         }
 
         foreach (var (resourceType, isAsync) in DisposedResources(decl, model))
@@ -492,20 +683,21 @@ public sealed class RoslynExtractor : IAsyncDisposable
             if (InScopeMethodId(dispose, inScope) is not { } toId) continue;
             if (toId == fromId) continue;
 
-            yield return new CallEdge(fromId, toId);
+            yield return new CallSiteInfo(fromId, toId, Array.Empty<string>(), Array.Empty<string>());
         }
     }
 
     /// <summary>
-    /// Call edges for one type's field and property initializers. Initializers
+    /// Call sites for one type's field and property initializers. Initializers
     /// execute inside the instance constructors, not inside any method
-    /// declaration, so the method walk in ExtractCallEdges never sees them.
+    /// declaration, so the method walk in ExtractCallSites never sees them.
     /// Their calls are attributed to every instance ctor of the type —
     /// including the implicit default ctor, which in this case is exactly the
     /// code that runs them. (Overapproximation: a ctor chaining this(...) does
-    /// not rerun initializers, but the work is still one ctor away.)
+    /// not rerun initializers, but the work is still one ctor away.) An
+    /// initializer cannot contain a try, so the sites are always unguarded.
     /// </summary>
-    private static IEnumerable<CallEdge> InitializerCallEdges(
+    private static IEnumerable<CallSiteInfo> InitializerCallSites(
         TypeDeclarationSyntax typeDecl, SemanticModel model, IReadOnlySet<string> inScope)
     {
         var initializers = InstanceInitializers(typeDecl).ToList();
@@ -515,14 +707,53 @@ public sealed class RoslynExtractor : IAsyncDisposable
         var ctorIds = type.InstanceConstructors.Select(MethodId).Distinct().ToList();
 
         foreach (var initializer in initializers)
-            foreach (var target in CallTargets(initializer, model))
+            foreach (var (_, target) in CallTargetSites(initializer, model))
             {
                 if (InScopeMethodId(target, inScope) is not { } toId) continue;
 
                 foreach (var ctorId in ctorIds)
                     if (toId != ctorId)
-                        yield return new CallEdge(ctorId, toId);
+                        yield return new CallSiteInfo(
+                            ctorId, toId, Array.Empty<string>(), Array.Empty<string>());
             }
+    }
+
+    /// <summary>
+    /// The catch guards enclosing one call site: types caught firmly by
+    /// enclosing trys ("*" for an untyped catch-all), and types caught only
+    /// behind a when filter — a filter may decline at runtime, so it counts as
+    /// conditional handling, never as handling. Only trys whose *block* holds
+    /// the site guard it; a site inside a catch or finally answers to the
+    /// outer trys alone.
+    /// </summary>
+    private static (List<string> GuardedBy, List<string> FilteredBy) SiteGuards(
+        SyntaxNode site, BaseMethodDeclarationSyntax decl, SemanticModel model)
+    {
+        var guardedBy = new List<string>();
+        var filteredBy = new List<string>();
+
+        foreach (var tryStatement in site.Ancestors().TakeWhile(a => a != decl).OfType<TryStatementSyntax>())
+        {
+            if (!tryStatement.Block.Span.Contains(site.Span)) continue;
+
+            foreach (var catchClause in tryStatement.Catches)
+            {
+                string caught;
+                if (catchClause.Declaration?.Type is { } typeSyntax)
+                {
+                    if (model.GetTypeInfo(typeSyntax).Type is not { } caughtType) continue;
+                    caught = caughtType.ToDisplayString();
+                }
+                else
+                {
+                    caught = "*";
+                }
+
+                (catchClause.Filter == null ? guardedBy : filteredBy).Add(caught);
+            }
+        }
+
+        return (guardedBy, filteredBy);
     }
 
     /// <summary>
@@ -554,12 +785,14 @@ public sealed class RoslynExtractor : IAsyncDisposable
     }
 
     /// <summary>
-    /// Every method a scope calls: explicit invocations, plus new-expressions —
-    /// a constructor call with no invocation syntax at the site. CandidateSymbols
-    /// covers calls the compiler could not fully bind (an overload set narrowed
-    /// by a dynamic or erroneous argument).
+    /// Every method a scope calls, with the syntax node of each site: explicit
+    /// invocations, plus new-expressions — a constructor call with no
+    /// invocation syntax at the site. CandidateSymbols covers calls the
+    /// compiler could not fully bind (an overload set narrowed by a dynamic or
+    /// erroneous argument).
     /// </summary>
-    private static IEnumerable<IMethodSymbol> CallTargets(SyntaxNode scope, SemanticModel model)
+    private static IEnumerable<(SyntaxNode Site, IMethodSymbol Target)> CallTargetSites(
+        SyntaxNode scope, SemanticModel model)
     {
         foreach (var node in scope.DescendantNodesAndSelf())
         {
@@ -569,7 +802,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
             var info = model.GetSymbolInfo(node);
             var target = info.Symbol as IMethodSymbol
                 ?? info.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
-            if (target != null) yield return target;
+            if (target != null) yield return (node, target);
         }
     }
 
@@ -733,10 +966,18 @@ public sealed class RoslynExtractor : IAsyncDisposable
 }
 
 /// <summary>
-/// One resolved call edge, caller to callee by method id. A named type rather
-/// than a tuple so the two ids cannot be swapped silently at a call site.
+/// One resolved call site, caller to callee by method id, with the exception
+/// guards enclosing the site. <paramref name="GuardedBy"/> holds types caught
+/// firmly by enclosing trys ("*" for an untyped catch-all);
+/// <paramref name="FilteredBy"/> holds types caught only behind a when filter.
+/// A named type rather than a tuple so the two ids cannot be swapped silently
+/// at a call site.
 /// </summary>
-public readonly record struct CallEdge(string FromId, string ToId);
+public sealed record CallSiteInfo(
+    string FromId,
+    string ToId,
+    IReadOnlyList<string> GuardedBy,
+    IReadOnlyList<string> FilteredBy);
 
 /// <summary>
 /// One resource a method disposes implicitly, and whether the disposal is
@@ -800,9 +1041,24 @@ public sealed class MethodDetail
     /// </summary>
     public int NestingDepth { get; init; }
 
+    /// <summary>Exception types that can leave this method locally; see ExtractThrows.</summary>
+    public List<ThrownType> Throws { get; init; } = new();
+
+    /// <summary>Entry-point classification, or null for an ordinary method; see ClassifyEntryPoint.</summary>
+    public string? EntryPointKind { get; init; }
+
     public string? FilePath { get; init; }
     public int? LineStart { get; init; }
 }
+
+/// <summary>
+/// One exception type escaping a method, with its base-type chain (self first,
+/// stopping at System.Exception) resolved at extraction — the only moment both
+/// the thrown and the caught side are live symbols, so assignability becomes a
+/// set-membership test instead of a name heuristic. Conditional means every
+/// local catch that would take it carries a when filter.
+/// </summary>
+public sealed record ThrownType(string Type, IReadOnlyList<string> AncestorChain, bool Conditional);
 
 public sealed class PropertyInfo
 {

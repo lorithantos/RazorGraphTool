@@ -350,6 +350,74 @@ public sealed class GraphTools(GraphStore store)
         return ToJson(new { returned = page.Count, totalMatches = all.Count, truncated = all.Count > page.Count, methods = page });
     }
 
+    private static readonly string[] EntryPointKinds =
+        { "main", "pageHandler", "controllerAction", "eventHandler", "asyncVoid", "frameworkOverride" };
+
+    private static readonly string[] EscapeCaveats =
+    {
+        "Throws inside BCL/out-of-solution code are invisible; a chain through framework code is not analyzed.",
+        "Calls resolve to their statically bound target; overrides reached by virtual dispatch are not widened.",
+        "Delegates, lambdas, and local functions are not followed; handlers registered as lambdas are not entry points.",
+        "catch clauses with 'when' filters count as conditional handling (conditional=true), never as handling.",
+        "Top-level-statement Main is not modeled as an entry point."
+    };
+
+    [McpServerTool(Name = "exception_escapes")]
+    [Description("Throwing operations that can reach an application entry point (Main, page handler, controller action, event handler, async-void method, framework override) without passing through a catch that handles them — the 'what can crash this process' report, shallowest chain first. Precomputed at build time over static call chains. Blind spots come back as data in 'caveats': out-of-solution (BCL) throwers are invisible, virtual dispatch is not widened, delegates/lambdas are not followed, and a catch filter counts as conditional handling, not handling.")]
+    public string ExceptionEscapes(
+        [Description("Restrict to one entry-point kind: main, pageHandler, controllerAction, eventHandler, asyncVoid, frameworkOverride")] string? entryPointKind = null,
+        [Description("Case-insensitive substring filter on the escaping exception type")] string? exceptionType = null,
+        [Description("Restrict to entry points from this project")] string? project = null,
+        [Description("Only escapes reaching this entry-point method node id (m:...)")] string? entryPointId = null,
+        [Description("Max escapes to return (default 50)")] int limit = 50,
+        [Description(GraphIdDescription)] string? graphId = null)
+    {
+        if (entryPointKind != null && !EntryPointKinds.Contains(entryPointKind, StringComparer.Ordinal))
+            throw new McpException(
+                $"Unknown entryPointKind '{entryPointKind}'. Valid kinds: {string.Join(", ", EntryPointKinds)}.");
+
+        var graph = store.Require(graphId).Graph;
+        if (entryPointId != null) RequireNode(graph, entryPointId);
+
+        // A graph saved before this analysis existed has neither stamps nor
+        // edges; silence would read as "nothing escapes", which is a claim the
+        // graph cannot back.
+        if (!graph.Edges.Any(e => e.Type == EdgeType.Escapes)
+            && !graph.NodesOfType(NodeType.Method).Any(n => n.GetProperty<string>("entryPointKind") != null))
+            throw new McpException(
+                "This graph predates exception-escape analysis. Rebuild it with build_graph or build_solution.");
+
+        var all = new GraphQuery(graph)
+            .FindEscapingExceptions(entryPointKind, exceptionType, project, entryPointId)
+            .ToList();
+        var page = all.Take(Math.Max(1, limit))
+            .Select(e => new
+            {
+                exceptionType = e.Edge.GetProperty<string>("exceptionType"),
+                conditional = e.Edge.GetProperty<bool>("conditional"),
+                depth = e.Edge.GetProperty<int>("depth"),
+                entryPoint = new
+                {
+                    node = NodeSummary(e.EntryPoint),
+                    kind = e.EntryPoint.GetProperty<string>("entryPointKind")
+                },
+                thrownBy = NodeSummary(e.Thrower),
+                path = (e.Edge.GetProperty<List<string>>("path") ?? new List<string>())
+                    .Select(id => new { id, name = graph.GetNode(id)?.Name })
+                    .ToList()
+            })
+            .ToList();
+
+        return ToJson(new
+        {
+            returned = page.Count,
+            totalMatches = all.Count,
+            truncated = all.Count > page.Count,
+            escapes = page,
+            caveats = EscapeCaveats
+        });
+    }
+
     [McpServerTool(Name = "method_body_graph")]
     [Description("The graph INSIDE one method: control-flow basic blocks with branch edges, structural regions (try/finally, lifetimes), and every call site anchored to its block with line and guard depth (conditions/loops that must be entered for it to run). Call targets use the same m: ids as the main graph. Slow — compiles the project; a serialized graph is not enough.")]
     public async Task<string> MethodBodyGraph(

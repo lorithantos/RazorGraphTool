@@ -69,6 +69,34 @@ public class GraphSerializerTests
         Assert.True(edge.GetProperty<bool>("isTagHelper"));
     }
 
+    // The escape data is exactly the shape the serializer round-trips
+    // generically (string lists); this pins that no bespoke handling is needed.
+    [Fact]
+    public void RoundTrip_PreservesThrowsAndGuardLists()
+    {
+        var graph = new CodeGraph();
+        var thrower = new GraphNode { Id = "m:App.T.Boom()", Type = NodeType.Method, Name = "Boom" };
+        thrower.SetProperty("throws", new List<string> { "System.InvalidOperationException" });
+        thrower.SetProperty("entryPointKind", "asyncVoid");
+        graph.AddNode(thrower);
+        graph.AddNode(new GraphNode { Id = "m:App.T.Caller()", Type = NodeType.Method, Name = "Caller" });
+
+        var call = new GraphEdge { FromId = "m:App.T.Caller()", ToId = "m:App.T.Boom()", Type = EdgeType.Calls };
+        call.Properties["guardedBy"] = new List<string> { "*" };
+        graph.AddEdge(call);
+
+        var restored = GraphSerializer.FromJson(GraphSerializer.ToJson(graph));
+
+        var node = restored.GetNode("m:App.T.Boom()")!;
+        Assert.Equal(
+            new List<string> { "System.InvalidOperationException" },
+            node.GetProperty<List<string>>("throws"));
+        Assert.Equal("asyncVoid", node.GetProperty<string>("entryPointKind"));
+        Assert.Equal(
+            new List<string> { "*" },
+            restored.Outgoing("m:App.T.Caller()").Single().GetProperty<List<string>>("guardedBy"));
+    }
+
     [Fact]
     public void RoundTrip_RestoredGraphHasWorkingAdjacency()
     {
