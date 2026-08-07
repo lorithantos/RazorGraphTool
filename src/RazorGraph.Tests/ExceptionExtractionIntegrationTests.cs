@@ -160,10 +160,74 @@ public class ExceptionExtractionIntegrationTests : IAsyncLifetime
             .FindEscapingExceptions(project: "SampleWeb")
             .ToList();
 
-        // OnGet, OnTick, OnFilteredTick, FireAndForget — and nothing at OnPost.
-        Assert.Equal(4, escapes.Count);
+        // OnGet, OnTick, OnFilteredTick, FireAndForget, CompareItems,
+        // RegisterLambda, InvokeAsync — and nothing at OnPost.
+        Assert.Equal(7, escapes.Count);
         Assert.DoesNotContain(escapes, e => e.EntryPoint.Name == "OnPost");
         Assert.Equal(0, escapes[0].Edge.GetProperty<int>("depth")); // shallowest first
+    }
+
+    // ---- Delegates and invisible registration -----------------------------
+
+    [Fact]
+    public void Escapes_MethodGroupHandedToTheFrameworkIsACallbackSurface()
+    {
+        var compareItems = MethodNode("CallbackHost", "CompareItems");
+        Assert.Equal("callback", compareItems.GetProperty<string>("entryPointKind"));
+
+        var escape = Assert.Single(IncomingEscapes(compareItems));
+        Assert.Equal(UnguardedThrowId, escape.FromId);
+        Assert.Equal(1, escape.GetProperty<int>("depth"));
+
+        // The registration itself is an unguarded delegate edge.
+        var edge = _graph!.Outgoing(MethodNode("CallbackHost", "RegisterComparer").Id)
+            .Single(e => e.Type == EdgeType.Calls && e.ToId == compareItems.Id);
+        Assert.True(edge.GetProperty<bool>("viaDelegate"));
+        Assert.Null(edge.GetProperty<List<string>>("guardedBy"));
+    }
+
+    [Fact]
+    public void Escapes_DelegateKeptInSolutionConnectsButIsNoEntryPoint()
+    {
+        var format = MethodNode("CallbackHost", "Format");
+
+        Assert.Null(format.GetProperty<string>("entryPointKind"));
+        Assert.True(_graph!.Outgoing(MethodNode("CallbackHost", "KeepFormatter").Id)
+            .Single(e => e.Type == EdgeType.Calls && e.ToId == format.Id)
+            .GetProperty<bool>("viaDelegate"));
+    }
+
+    [Fact]
+    public void Escapes_LambdaHandedToTheFrameworkMarksItsContainer()
+    {
+        var registerLambda = MethodNode("CallbackHost", "RegisterLambda");
+        Assert.Equal("callback", registerLambda.GetProperty<string>("entryPointKind"));
+
+        var escape = Assert.Single(IncomingEscapes(registerLambda));
+        Assert.Equal(UnguardedThrowId, escape.FromId);
+    }
+
+    [Fact]
+    public void Escapes_FrameworkInterfaceImplementationIsAnEntrySurface()
+    {
+        var invokeAsync = MethodNode("FaultyMiddleware", "InvokeAsync");
+        Assert.Equal("frameworkInterface", invokeAsync.GetProperty<string>("entryPointKind"));
+
+        var escape = Assert.Single(IncomingEscapes(invokeAsync));
+        Assert.Equal("SampleLib.CustomException", escape.GetProperty<string>("exceptionType"));
+    }
+
+    [Fact]
+    public void Throws_InsideALambdaAttributeToTheContainerAsConditional()
+    {
+        var holder = MethodNode("CallbackHost", "HoldThrowingLambda");
+
+        Assert.Equal(
+            new List<string> { "SampleLib.CustomException" },
+            holder.GetProperty<List<string>>("throws"));
+        // In-solution registration: connected facts, but no entry surface.
+        Assert.Null(holder.GetProperty<string>("entryPointKind"));
+        Assert.Empty(IncomingEscapes(holder));
     }
 
     private static GraphNode MethodNode(string declaringTypeName, string methodName) =>

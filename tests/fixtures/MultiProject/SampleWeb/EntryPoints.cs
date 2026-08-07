@@ -33,6 +33,66 @@ public class FaultyModel : PageModel
     }
 }
 
+/// <summary>
+/// The invisible-registration case: no source call site anywhere reaches
+/// InvokeAsync — the framework discovers the type through DI and calls in
+/// through the interface it declared.
+/// </summary>
+public class FaultyMiddleware : Microsoft.AspNetCore.Http.IMiddleware
+{
+    public Task InvokeAsync(
+        Microsoft.AspNetCore.Http.HttpContext context,
+        Microsoft.AspNetCore.Http.RequestDelegate next)
+    {
+        Throwing.UnguardedThrow();
+        return next(context);
+    }
+}
+
+/// <summary>
+/// Delegate registrations. CompareItems is handed to a BCL method as a method
+/// group — a callback the framework can invoke with no call site in source.
+/// Format goes only to an in-solution field: a delegate edge, not an entry
+/// point. RegisterLambda hands a lambda out-of-solution, so the container
+/// stands in as the callback surface. HoldThrowingLambda's lambda stays
+/// in-solution: its throw is attributed here as conditional, but nothing
+/// makes it an entry point.
+/// </summary>
+public class CallbackHost
+{
+    private Func<double, string>? _format;
+
+    public void RegisterComparer()
+    {
+        var items = new List<int> { 2, 1 };
+        items.Sort(CompareItems);
+    }
+
+    private static int CompareItems(int left, int right)
+        => Throwing.UnguardedThrow();
+
+    public void KeepFormatter()
+    {
+        _format = Format;
+    }
+
+    public string? Describe(double value) => _format?.Invoke(value);
+
+    private static string Format(double value) => value.ToString("F2");
+
+    public void RegisterLambda()
+    {
+        var items = new List<int> { 1 };
+        items.RemoveAll(x => Throwing.UnguardedThrow() > x);
+    }
+
+    public Action HoldThrowingLambda()
+    {
+        Action held = () => throw new CustomException("held lambda");
+        return held;
+    }
+}
+
 public class Widget
 {
     /// <summary>Event-handler shape: (object?, EventArgs) and void.</summary>

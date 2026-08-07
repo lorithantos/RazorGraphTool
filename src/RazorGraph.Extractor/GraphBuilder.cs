@@ -132,6 +132,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         }
 
         AddCallEdges();
+        AddCallbackEntryPoints();
         AddExceptionEscapeEdges();
     }
 
@@ -436,7 +437,28 @@ public sealed class GraphBuilder : IAsyncDisposable
             if (guardedBy.Count > 0) edge.Properties["guardedBy"] = guardedBy;
             if (filteredBy.Count > 0) edge.Properties["filteredBy"] = filteredBy;
 
+            // Marked only when the dependency exists purely through delegate
+            // references, so consumers reading the graph as navigation can
+            // tell "calls" from "may cause to run".
+            if (group.All(s => s.IsDelegate)) edge.Properties["viaDelegate"] = true;
+
             _graph.AddEdge(edge);
+        }
+    }
+
+    /// <summary>
+    /// Stamps the callback entry points: methods out-of-solution code holds a
+    /// delegate to. Runs after AddMethodNodes so an existing classification
+    /// (an event-handler-shaped method registered to a framework event is
+    /// both) keeps the more specific kind.
+    /// </summary>
+    private void AddCallbackEntryPoints()
+    {
+        foreach (var targetId in _roslyn.ExtractCallbackTargets())
+        {
+            if (_graph.GetNode(targetId) is not { } node) continue;
+            if (node.GetProperty<string>("entryPointKind") == null)
+                node.SetProperty("entryPointKind", "callback");
         }
     }
 

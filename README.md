@@ -129,14 +129,21 @@ a `bodyDepth` property stamped at build time, which feeds the deep-nesting repor
 `exception_escapes` (CLI: `query --escapes`) reports throwing operations that can reach
 an application entry point — declared `static Main`, Razor page handlers, controller
 actions, `(object, EventArgs)` event handlers, `async void` methods, overrides of
-framework virtuals — with no catch stopping them. Everything is precomputed at build
-time: methods carry `throws` and `entryPointKind` properties, `Calls` edges carry the
-catch guards of their sites (`guardedBy`, with `filteredBy` kept apart because a `when`
-filter may decline at runtime — it reports `conditional`, never handled), and a
-worklist sweep emits `Escapes` edges carrying the exception type, hop depth, and one
-representative path. Blind spots come back as data in the tool's `caveats`: BCL and
-out-of-solution throwers are invisible, dispatch is static, delegates/lambdas/local
-functions are not followed, and top-level-statement `Main` is not an entry point.
+framework virtuals, implementations of framework-declared interfaces (`IMiddleware`,
+`IValueConverter` — the invisible-registration pattern; core BCL plumbing interfaces
+excluded), and callbacks registered with out-of-solution code — with no catch stopping
+them. Everything is precomputed at build time: methods carry `throws` and
+`entryPointKind` properties, `Calls` edges carry the catch guards of their sites
+(`guardedBy`, with `filteredBy` kept apart because a `when` filter may decline at
+runtime — it reports `conditional`, never handled), and a worklist sweep emits
+`Escapes` edges carrying the exception type, hop depth, and one representative path.
+Delegates are followed one hop: a method-group reference becomes an unguarded `Calls`
+edge (`viaDelegate` — a try around the registration site does not catch the later
+invocation), and a method group or lambda handed to a framework marks its target (or
+the lambda's container) `callback`. Blind spots come back as data in the tool's
+`caveats`: BCL and out-of-solution throwers are invisible, dispatch is static,
+stored-and-forwarded delegates and local functions are not followed, and
+top-level-statement `Main` is not an entry point.
 
 **Method bodies have their own graph.** `method_body_graph` (CLI: `body`) compiles the
 project and returns the graph *inside* one method: control-flow basic blocks with

@@ -442,43 +442,53 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// and throw expressions whose type no enclosing catch of the same method
     /// handles firmly. A bare rethrow contributes its catch's declared type —
     /// System.Exception for an untyped catch, the honest upper bound. Throws
-    /// inside lambdas and local functions are skipped: they run when the
-    /// delegate runs, not when this method does, and attributing them here
-    /// would over-report. Assignability is decided on live symbols now, while
-    /// both sides still are symbols — never by name at query time.
+    /// inside lambdas are attributed here as conditional — the lambda runs
+    /// when the delegate runs, not when this method does, but the container is
+    /// the only node it has. Local functions stay skipped: declared is not
+    /// registered, and a dead local function would over-report. Assignability
+    /// is decided on live symbols now, while both sides still are symbols —
+    /// never by name at query time.
     /// </summary>
     private static List<ThrownType> ExtractThrows(BaseMethodDeclarationSyntax decl, SemanticModel model)
     {
-        var sites = new List<(ITypeSymbol? Type, SyntaxNode Site)>();
+        var sites = new List<(ITypeSymbol? Type, SyntaxNode Site, bool InLambda)>();
 
-        foreach (var node in decl.DescendantNodes(n => n == decl || !IsNestedFunction(n)))
+        foreach (var node in decl.DescendantNodes(n => n == decl || n is not LocalFunctionStatementSyntax))
         {
+            var inLambda = node.Ancestors().TakeWhile(a => a != decl)
+                .Any(a => a is AnonymousFunctionExpressionSyntax);
+
             switch (node)
             {
                 case ThrowStatementSyntax { Expression: { } thrown } statement:
-                    sites.Add((model.GetTypeInfo(thrown).Type, statement));
+                    sites.Add((model.GetTypeInfo(thrown).Type, statement, inLambda));
                     break;
 
                 case ThrowStatementSyntax rethrow:
-                    sites.Add((RethrownType(rethrow, decl, model), rethrow));
+                    sites.Add((RethrownType(rethrow, decl, model), rethrow, inLambda));
                     break;
 
                 case ThrowExpressionSyntax { Expression: { } thrown } expression:
-                    sites.Add((model.GetTypeInfo(thrown).Type, expression));
+                    sites.Add((model.GetTypeInfo(thrown).Type, expression, inLambda));
                     break;
             }
         }
 
         var escaping = new List<ThrownType>();
 
-        foreach (var (type, site) in sites)
+        foreach (var (type, site, inLambda) in sites)
         {
             if (type is not INamedTypeSymbol named || named.TypeKind == TypeKind.Error) continue;
 
-            var conditional = false;
+            var conditional = inLambda;
             var handled = false;
 
-            foreach (var tryStatement in site.Ancestors().TakeWhile(a => a != decl).OfType<TryStatementSyntax>())
+            // The walk stops at a lambda boundary as well as at the method: a
+            // try in the container encloses the lambda's *creation*, not its
+            // later execution, so only trys inside the same lambda guard it.
+            foreach (var tryStatement in site.Ancestors()
+                .TakeWhile(a => a != decl && a is not AnonymousFunctionExpressionSyntax)
+                .OfType<TryStatementSyntax>())
             {
                 // A throw inside a catch or finally answers to the outer trys only.
                 if (!tryStatement.Block.Span.Contains(site.Span)) continue;
@@ -501,16 +511,14 @@ public sealed class RoslynExtractor : IAsyncDisposable
             .GroupBy(t => t.Type, StringComparer.Ordinal)
             .Select(g => g.OrderBy(t => t.Conditional).First())
             .ToList();
-
-        static bool IsNestedFunction(SyntaxNode n) =>
-            n is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax;
     }
 
     /// <summary>The type a bare 'throw;' rethrows: its catch's declaration, else System.Exception.</summary>
     private static ITypeSymbol? RethrownType(
         ThrowStatementSyntax rethrow, BaseMethodDeclarationSyntax decl, SemanticModel model)
     {
-        var catchClause = rethrow.Ancestors().TakeWhile(a => a != decl)
+        var catchClause = rethrow.Ancestors()
+            .TakeWhile(a => a != decl && a is not AnonymousFunctionExpressionSyntax)
             .OfType<CatchClauseSyntax>().FirstOrDefault();
         return catchClause?.Declaration?.Type is { } typeSyntax
             ? model.GetTypeInfo(typeSyntax).Type
@@ -556,6 +564,11 @@ public sealed class RoslynExtractor : IAsyncDisposable
     {
         if (m.MethodKind != MethodKind.Ordinary) return null;
 
+        // Test methods and their hooks are framework-invoked too, but the test
+        // host catches everything they throw — that is its job — so calling
+        // them escape surfaces would only manufacture noise.
+        if (IsTestMethod(m)) return null;
+
         if (m.IsStatic && m.Name == "Main") return "main";
 
         if (!m.IsStatic && m.DeclaredAccessibility == Accessibility.Public
@@ -581,7 +594,49 @@ public sealed class RoslynExtractor : IAsyncDisposable
             && !inScope.Contains(assembly))
             return "frameworkOverride";
 
+        // Implementing an interface a framework declared is the registration
+        // pattern: IMiddleware, IValueConverter, IHostedService — the
+        // framework discovers the type and calls in through the interface it
+        // knows, with no source call site anywhere. The invisible-controller
+        // case, generalized.
+        if (ImplementsExternalInterfaceMember(m, inScope)) return "frameworkInterface";
+
         return null;
+    }
+
+    /// <summary>
+    /// Interfaces whose implementation says nothing about frameworks calling
+    /// in: the ubiquitous BCL plumbing every well-behaved type implements.
+    /// SpecialType covers the core collection/disposal set; the name-based
+    /// rest are the comparison/formatting family and xUnit's lifecycle hook
+    /// (the test host catches what those throw).
+    /// </summary>
+    private static readonly HashSet<string> PlumbingInterfaceNames = new(StringComparer.Ordinal)
+    {
+        "IEquatable", "IComparable", "IComparer", "IEqualityComparer", "IFormattable",
+        "IAsyncDisposable", "IEnumerable", "IEnumerator", "IAsyncEnumerable", "IAsyncEnumerator",
+        "IAsyncLifetime"
+    };
+
+    private static bool ImplementsExternalInterfaceMember(IMethodSymbol m, IReadOnlySet<string> inScope)
+    {
+        if (m.IsStatic) return false;
+
+        foreach (var iface in m.ContainingType.AllInterfaces)
+        {
+            if (iface.SpecialType != SpecialType.None) continue;
+            if (PlumbingInterfaceNames.Contains(iface.Name)) continue;
+            if (iface.ContainingAssembly?.Name is not { } assembly || inScope.Contains(assembly)) continue;
+
+            foreach (var member in iface.GetMembers().OfType<IMethodSymbol>())
+            {
+                if (member.MethodKind != MethodKind.Ordinary) continue;
+                if (SymbolEqualityComparer.Default.Equals(
+                        m.ContainingType.FindImplementationForInterfaceMember(member), m))
+                    return true;
+            }
+        }
+        return false;
     }
 
     private static bool BaseChainHasName(INamedTypeSymbol? type, string name)
@@ -677,6 +732,18 @@ public sealed class RoslynExtractor : IAsyncDisposable
             yield return new CallSiteInfo(fromId, toId, guardedBy, filteredBy);
         }
 
+        // A method group handed somewhere is a call the future makes. The edge
+        // carries no guards on purpose: a try around the registration site does
+        // not catch what the delegate throws when it finally runs.
+        foreach (var (_, target) in MethodGroupSites(decl, model))
+        {
+            if (InScopeMethodId(target, inScope) is not { } toId) continue;
+            if (toId == fromId) continue;
+
+            yield return new CallSiteInfo(
+                fromId, toId, Array.Empty<string>(), Array.Empty<string>(), IsDelegate: true);
+        }
+
         foreach (var (resourceType, isAsync) in DisposedResources(decl, model))
         {
             if (ResolveDisposeMethod(resourceType, isAsync) is not { } dispose) continue;
@@ -717,6 +784,119 @@ public sealed class RoslynExtractor : IAsyncDisposable
                             ctorId, toId, Array.Empty<string>(), Array.Empty<string>());
             }
     }
+
+    /// <summary>
+    /// Method-group references in one scope — an identifier or member access
+    /// naming a method where a delegate is expected. The conversion type is
+    /// the discriminator: a real method group converts to a delegate type,
+    /// which is exactly what excludes nameof and plain member reads.
+    /// </summary>
+    private static IEnumerable<(SyntaxNode Site, IMethodSymbol Target)> MethodGroupSites(
+        SyntaxNode scope, SemanticModel model)
+    {
+        foreach (var node in scope.DescendantNodesAndSelf())
+        {
+            if (node is not (IdentifierNameSyntax or MemberAccessExpressionSyntax))
+                continue;
+
+            // The name inside an invocation or member access is not itself a
+            // method group; only the outermost expression converts.
+            if (node.Parent is InvocationExpressionSyntax invocation && invocation.Expression == node)
+                continue;
+            if (node.Parent is MemberAccessExpressionSyntax) continue;
+
+            if (model.GetTypeInfo(node).ConvertedType is not INamedTypeSymbol { TypeKind: TypeKind.Delegate })
+                continue;
+
+            var info = model.GetSymbolInfo(node);
+            var target = info.Symbol as IMethodSymbol
+                ?? info.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
+            if (target != null) yield return (node, target);
+        }
+    }
+
+    /// <summary>
+    /// Methods that out-of-solution code can call back into: the target of a
+    /// method group, or the container of a lambda, handed to a receiver
+    /// declared outside the loaded projects — a framework ctor or method
+    /// argument, or an assignment to an external property or event. The
+    /// container stands in for its lambdas because a lambda has no node of its
+    /// own; its calls and throws are already attributed there, so marking the
+    /// container makes exactly those facts escapable (a deliberate
+    /// over-approximation — the container's other throws ride along). One hop
+    /// only: a delegate stored and forwarded elsewhere is not tracked.
+    /// </summary>
+    public IEnumerable<string> ExtractCallbackTargets()
+    {
+        if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
+
+        var inScope = _loaded
+            .Select(l => l.Compilation.Assembly.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var (root, model) in _loaded.SelectMany(
+                     l => l.Compilation.SyntaxTrees.Select(t => (t.GetRoot(), l.Compilation.GetSemanticModel(t)))))
+        {
+            foreach (var decl in root.DescendantNodes().OfType<BaseMethodDeclarationSyntax>())
+            {
+                if (model.GetDeclaredSymbol(decl) is not IMethodSymbol container) continue;
+
+                foreach (var (site, target) in MethodGroupSites(decl, model))
+                {
+                    if (!RegisteredOutOfSolution(site, model, inScope)) continue;
+                    if (InScopeMethodId(target, inScope) is { } targetId) yield return targetId;
+                }
+
+                foreach (var lambda in decl.DescendantNodes().OfType<AnonymousFunctionExpressionSyntax>())
+                {
+                    if (model.GetTypeInfo(lambda).ConvertedType is not INamedTypeSymbol { TypeKind: TypeKind.Delegate })
+                        continue;
+                    if (RegisteredOutOfSolution(lambda, model, inScope))
+                    {
+                        yield return MethodId(container);
+                        break; // one stamp per container is enough
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether a delegate-valued expression lands in out-of-solution hands:
+    /// an argument to an external invocation or construction, or the right
+    /// side of an assignment (including +=) whose left side is external.
+    /// Anything else — a local, a field of this solution, a return — stays
+    /// in-solution and answers false: the delegate edge still connects the
+    /// chain, it just is not a framework entry surface.
+    /// </summary>
+    private static bool RegisteredOutOfSolution(
+        SyntaxNode registration, SemanticModel model, IReadOnlySet<string> inScope)
+    {
+        for (SyntaxNode? node = registration; node is not null and not StatementSyntax; node = node.Parent)
+        {
+            switch (node.Parent)
+            {
+                case ArgumentSyntax argument:
+                    var call = argument.Ancestors().FirstOrDefault(a =>
+                        a is InvocationExpressionSyntax or BaseObjectCreationExpressionSyntax);
+                    if (call == null) return false;
+                    var callInfo = model.GetSymbolInfo(call);
+                    var callee = callInfo.Symbol as IMethodSymbol
+                        ?? callInfo.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
+                    return SymbolOutOfSolution(callee, inScope);
+
+                case AssignmentExpressionSyntax assignment when assignment.Right == node:
+                    return SymbolOutOfSolution(model.GetSymbolInfo(assignment.Left).Symbol, inScope);
+
+                case EqualsValueClauseSyntax:
+                    return false; // initializing a local or field of this solution
+            }
+        }
+        return false;
+    }
+
+    private static bool SymbolOutOfSolution(ISymbol? symbol, IReadOnlySet<string> inScope) =>
+        symbol?.ContainingAssembly?.Name is { } assembly && !inScope.Contains(assembly);
 
     /// <summary>
     /// The catch guards enclosing one call site: types caught firmly by
@@ -970,14 +1150,17 @@ public sealed class RoslynExtractor : IAsyncDisposable
 /// guards enclosing the site. <paramref name="GuardedBy"/> holds types caught
 /// firmly by enclosing trys ("*" for an untyped catch-all);
 /// <paramref name="FilteredBy"/> holds types caught only behind a when filter.
-/// A named type rather than a tuple so the two ids cannot be swapped silently
-/// at a call site.
+/// <paramref name="IsDelegate"/> marks a method-group reference rather than an
+/// invocation — a call the future makes, always unguarded. A named type
+/// rather than a tuple so the two ids cannot be swapped silently at a call
+/// site.
 /// </summary>
 public sealed record CallSiteInfo(
     string FromId,
     string ToId,
     IReadOnlyList<string> GuardedBy,
-    IReadOnlyList<string> FilteredBy);
+    IReadOnlyList<string> FilteredBy,
+    bool IsDelegate = false);
 
 /// <summary>
 /// One resource a method disposes implicitly, and whether the disposal is

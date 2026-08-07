@@ -351,21 +351,25 @@ public sealed class GraphTools(GraphStore store)
     }
 
     private static readonly string[] EntryPointKinds =
-        { "main", "pageHandler", "controllerAction", "eventHandler", "asyncVoid", "frameworkOverride" };
+    {
+        "main", "pageHandler", "controllerAction", "eventHandler", "asyncVoid",
+        "frameworkOverride", "frameworkInterface", "callback"
+    };
 
     private static readonly string[] EscapeCaveats =
     {
         "Throws inside BCL/out-of-solution code are invisible; a chain through framework code is not analyzed.",
         "Calls resolve to their statically bound target; overrides reached by virtual dispatch are not widened.",
-        "Delegates, lambdas, and local functions are not followed; handlers registered as lambdas are not entry points.",
+        "Delegate registrations are followed one hop: a method group or lambda handed to out-of-solution code marks its target (or the lambda's containing method) as a 'callback' entry point. A delegate stored and forwarded further is not tracked, and local functions are not followed.",
+        "A lambda's throws are attributed to its containing method as conditional — the container is the only node the lambda has.",
         "catch clauses with 'when' filters count as conditional handling (conditional=true), never as handling.",
         "Top-level-statement Main is not modeled as an entry point."
     };
 
     [McpServerTool(Name = "exception_escapes")]
-    [Description("Throwing operations that can reach an application entry point (Main, page handler, controller action, event handler, async-void method, framework override) without passing through a catch that handles them — the 'what can crash this process' report, shallowest chain first. Precomputed at build time over static call chains. Blind spots come back as data in 'caveats': out-of-solution (BCL) throwers are invisible, virtual dispatch is not widened, delegates/lambdas are not followed, and a catch filter counts as conditional handling, not handling.")]
+    [Description("Throwing operations that can reach an application entry point (Main, page handler, controller action, event handler, async-void method, framework override, framework-interface implementation, or a callback registered with out-of-solution code) without passing through a catch that handles them — the 'what can crash this process' report, shallowest chain first. Precomputed at build time over static call chains. Blind spots come back as data in 'caveats': out-of-solution (BCL) throwers are invisible, virtual dispatch is not widened, delegate registrations are followed one hop only, and a catch filter counts as conditional handling, not handling.")]
     public string ExceptionEscapes(
-        [Description("Restrict to one entry-point kind: main, pageHandler, controllerAction, eventHandler, asyncVoid, frameworkOverride")] string? entryPointKind = null,
+        [Description("Restrict to one entry-point kind: main, pageHandler, controllerAction, eventHandler, asyncVoid, frameworkOverride, frameworkInterface, callback")] string? entryPointKind = null,
         [Description("Case-insensitive substring filter on the escaping exception type")] string? exceptionType = null,
         [Description("Restrict to entry points from this project")] string? project = null,
         [Description("Only escapes reaching this entry-point method node id (m:...)")] string? entryPointId = null,

@@ -171,7 +171,7 @@ internal static class CliCommands
         var deepOpt = new Option<int>("--deep") { Description = "List methods whose body nests control flow at least this deep (use with --project)" };
         var mismatchesOpt = new Option<bool>("--mismatches") { Description = "Report server-prepared data consumed by client JS" };
         var escapesOpt = new Option<bool>("--escapes") { Description = "Report exceptions that can reach an entry point uncaught (use with --project, --entry-kind, --exception)" };
-        var entryKindOpt = new Option<string?>("--entry-kind") { Description = "With --escapes: restrict to one entry-point kind (main, pageHandler, controllerAction, eventHandler, asyncVoid, frameworkOverride)" };
+        var entryKindOpt = new Option<string?>("--entry-kind") { Description = "With --escapes: restrict to one entry-point kind (main, pageHandler, controllerAction, eventHandler, asyncVoid, frameworkOverride, frameworkInterface, callback)" };
         var exceptionOpt = new Option<string?>("--exception") { Description = "With --escapes: case-insensitive substring filter on the escaping exception type" };
 
         var cmd = new Command("query", "Run a query against a built graph");
@@ -302,8 +302,9 @@ internal static class CliCommands
 
         Console.WriteLine();
         Console.WriteLine("Static reachability over in-solution code only: BCL throwers are invisible,");
-        Console.WriteLine("virtual dispatch is not widened, lambdas/local functions are not followed,");
-        Console.WriteLine("and top-level-statement Main is not an entry point.");
+        Console.WriteLine("virtual dispatch is not widened, delegate registrations are followed one hop");
+        Console.WriteLine("(stored-and-forwarded delegates and local functions are not), and");
+        Console.WriteLine("top-level-statement Main is not an entry point.");
         return 0;
     }
 
