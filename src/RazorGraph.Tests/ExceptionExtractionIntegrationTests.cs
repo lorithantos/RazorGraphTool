@@ -160,9 +160,11 @@ public class ExceptionExtractionIntegrationTests : IAsyncLifetime
             .FindEscapingExceptions(project: "SampleWeb")
             .ToList();
 
-        // OnGet, OnTick, OnFilteredTick, OnExtensionTick, FireAndForget,
-        // CompareItems, RegisterLambda, InvokeAsync — and nothing at OnPost.
-        Assert.Equal(8, escapes.Count);
+        // OnGet, OnGetFlaky, OnGetWrapped, OnTick, OnFilteredTick,
+        // OnExtensionTick, FireAndForget, CompareItems, RegisterLambda,
+        // FaultyMiddleware.InvokeAsync, FaultyHosted.StartAsync — and nothing
+        // at OnPost or ShapingMiddleware.
+        Assert.Equal(11, escapes.Count);
         Assert.DoesNotContain(escapes, e => e.EntryPoint.Name == "OnPost");
         Assert.Equal(0, escapes[0].Edge.GetProperty<int>("depth")); // shallowest first
     }
@@ -240,13 +242,88 @@ public class ExceptionExtractionIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public void Escapes_FrameworkInterfaceImplementationIsAnEntrySurface()
+    public void Escapes_MiddlewareIsItsOwnEntryKind()
     {
         var invokeAsync = MethodNode("FaultyMiddleware", "InvokeAsync");
-        Assert.Equal("frameworkInterface", invokeAsync.GetProperty<string>("entryPointKind"));
+        Assert.Equal("middleware", invokeAsync.GetProperty<string>("entryPointKind"));
 
         var escape = Assert.Single(IncomingEscapes(invokeAsync));
         Assert.Equal("SampleLib.CustomException", escape.GetProperty<string>("exceptionType"));
+    }
+
+    [Fact]
+    public void Escapes_FrameworkInterfaceImplementationIsAnEntrySurface()
+    {
+        var startAsync = MethodNode("FaultyHosted", "StartAsync");
+        Assert.Equal("frameworkInterface", startAsync.GetProperty<string>("entryPointKind"));
+        Assert.Single(IncomingEscapes(startAsync));
+
+        // The non-throwing sibling is an entry surface with nothing arriving.
+        Assert.Empty(IncomingEscapes(MethodNode("FaultyHosted", "StopAsync")));
+    }
+
+    // ---- Interface dispatch (the DI default) ------------------------------
+
+    // Callers bind to IFlaky; the throw lives in FlakyService. The chain
+    // exists only because the sweep widens implementation facts to the
+    // interface's callers — before that, every DI-shaped escape died here.
+    [Fact]
+    public void Escapes_DispatchThroughAnInterfaceReachesTheHandler()
+    {
+        var onGetFlaky = MethodNode("FaultyModel", "OnGetFlaky");
+        var risky = MethodNode("FlakyService", "Risky");
+
+        var escape = Assert.Single(IncomingEscapes(onGetFlaky));
+        Assert.Equal("SampleLib.CustomException", escape.GetProperty<string>("exceptionType"));
+        Assert.Equal(2, escape.GetProperty<int>("depth"));
+        Assert.Equal(
+            new List<string> { UnguardedThrowId, risky.Id, onGetFlaky.Id },
+            escape.GetProperty<List<string>>("path"));
+    }
+
+    [Fact]
+    public void ImplementationsCarryMethodLevelImplementsEdges()
+    {
+        var risky = MethodNode("FlakyService", "Risky");
+        var interfaceRisky = MethodNode("IFlaky", "Risky");
+
+        Assert.Contains(_graph!.Outgoing(risky.Id),
+            e => e.Type == EdgeType.Implements && e.ToId == interfaceRisky.Id);
+    }
+
+    // ---- Exception boundaries (middleware shaping) ------------------------
+
+    [Fact]
+    public void Boundaries_RecordTheirCatchSets()
+    {
+        var shaping = MethodNode("ShapingMiddleware", "InvokeAsync");
+
+        Assert.Equal("middleware", shaping.GetProperty<string>("entryPointKind"));
+        Assert.Equal(
+            new List<string> { "SampleLib.CustomException" },
+            shaping.GetProperty<List<string>>("boundaryCatches"));
+    }
+
+    // A CustomException into an HTTP entry is shaped by design (the 422); an
+    // ApplicationException is outside the boundary's catch set and stays a
+    // raw failure. Both are reported — disposition, not suppression.
+    [Fact]
+    public void Escapes_IntoHttpEntries_CarryTheirBoundaryDisposition()
+    {
+        var shapingId = MethodNode("ShapingMiddleware", "InvokeAsync").Id;
+
+        var shaped = Assert.Single(IncomingEscapes(MethodNode("FaultyModel", "OnGet")));
+        Assert.Equal(
+            new List<string> { shapingId },
+            shaped.GetProperty<List<string>>("interceptedBy"));
+
+        var raw = Assert.Single(IncomingEscapes(MethodNode("FaultyModel", "OnGetWrapped")));
+        Assert.Equal("System.ApplicationException", raw.GetProperty<string>("exceptionType"));
+        Assert.Null(raw.GetProperty<List<string>>("interceptedBy"));
+
+        // Non-HTTP entries sit on no pipeline; no disposition is claimed.
+        var desktop = Assert.Single(IncomingEscapes(MethodNode("Widget", "OnTick")));
+        Assert.Null(desktop.GetProperty<List<string>>("interceptedBy"));
     }
 
     [Fact]

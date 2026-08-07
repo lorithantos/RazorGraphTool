@@ -298,13 +298,19 @@ internal static class CliCommands
             Console.WriteLine(
                 $"    thrown by {thrower.GetProperty<string>("declaringType")}.{thrower.Name}, "
                 + $"depth {edge.GetProperty<int>("depth")}");
+
+            if (edge.GetProperty<List<string>>("interceptedBy") is { Count: > 0 } shapedBy)
+                Console.WriteLine($"    shaped by boundary: {string.Join(", ", shapedBy)} — a designed response, not a raw failure");
+            else if (edge.GetProperty<List<string>>("interceptedConditionallyBy") is { Count: > 0 } maybeShapedBy)
+                Console.WriteLine($"    conditionally shaped by: {string.Join(", ", maybeShapedBy)} — the boundary may decline at runtime");
         }
 
         Console.WriteLine();
         Console.WriteLine("Static reachability over in-solution code only: BCL throwers are invisible,");
-        Console.WriteLine("virtual dispatch is not widened, delegate registrations are followed one hop");
-        Console.WriteLine("(stored-and-forwarded delegates and local functions are not), and");
-        Console.WriteLine("top-level-statement Main is not an entry point.");
+        Console.WriteLine("interface dispatch widens to in-solution implementations (class virtual");
+        Console.WriteLine("overrides do not), delegate registrations are followed one hop, boundary");
+        Console.WriteLine("interception is catch-set matching (pipeline order is not modeled), and");
+        Console.WriteLine("top-level-statement Main and minimal-API lambdas are not entry points.");
         return 0;
     }
 

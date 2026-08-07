@@ -13,10 +13,29 @@ namespace SampleWeb;
 /// </summary>
 public class FaultyModel : PageModel
 {
+    private readonly IFlaky _flaky;
+
+    public FaultyModel(IFlaky flaky) => _flaky = flaky;
+
     /// <summary>The cross-project escape: SampleLib's throw surfaces here.</summary>
     public void OnGet()
     {
         Throwing.UnguardedThrow();
+    }
+
+    /// <summary>
+    /// The DI escape: bound to the interface, thrown by the implementation.
+    /// The chain exists only because interface dispatch widens.
+    /// </summary>
+    public void OnGetFlaky()
+    {
+        _flaky.Risky();
+    }
+
+    /// <summary>ApplicationException — deliberately outside ShapingMiddleware's catch set.</summary>
+    public void OnGetWrapped()
+    {
+        Throwing.WrappingCaller();
     }
 
     /// <summary>The guarded twin — nothing escapes a catch of the base of bases.</summary>
@@ -46,6 +65,45 @@ public class FaultyMiddleware : Microsoft.AspNetCore.Http.IMiddleware
     {
         Throwing.UnguardedThrow();
         return next(context);
+    }
+}
+
+/// <summary>
+/// Framework-interface fixture that is not middleware: the host discovers it
+/// through DI registration and calls StartAsync with no source call site.
+/// </summary>
+public class FaultyHosted : Microsoft.Extensions.Hosting.IHostedService
+{
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        Throwing.UnguardedThrow();
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+}
+
+/// <summary>
+/// The exception-shaping boundary: convention middleware (found by
+/// UseMiddleware reflection — another invisible registration) converting the
+/// domain exception into a status code. Escapes of CustomException into HTTP
+/// entry points report as intercepted by this method; ApplicationException is
+/// deliberately outside its catch set and stays a raw failure.
+/// </summary>
+public class ShapingMiddleware
+{
+    public async Task InvokeAsync(
+        Microsoft.AspNetCore.Http.HttpContext context,
+        Microsoft.AspNetCore.Http.RequestDelegate next)
+    {
+        try
+        {
+            await next(context);
+        }
+        catch (CustomException)
+        {
+            context.Response.StatusCode = 422;
+        }
     }
 }
 

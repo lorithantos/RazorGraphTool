@@ -42,7 +42,16 @@ public class GraphToolsTests
         escape.Properties["exceptionType"] = "Lib.FooException";
         escape.Properties["depth"] = 1;
         escape.Properties["path"] = new List<string> { thrower.Id, handler.Id };
+        escape.Properties["interceptedBy"] = new List<string> { "m:Web.ShapingMiddleware.InvokeAsync(HttpContext,RequestDelegate)" };
         graph.AddEdge(escape);
+
+        var boundary = new GraphNode
+        {
+            Id = "m:Web.ShapingMiddleware.InvokeAsync(HttpContext,RequestDelegate)",
+            Type = NodeType.Method,
+            Name = "InvokeAsync"
+        };
+        graph.AddNode(boundary);
 
         return graph;
     }
@@ -63,6 +72,12 @@ public class GraphToolsTests
         Assert.Equal("eventHandler", escape.GetProperty("entryPoint").GetProperty("kind").GetString());
         Assert.Equal("Boom", escape.GetProperty("thrownBy").GetProperty("name").GetString());
         Assert.Equal(2, escape.GetProperty("path").GetArrayLength());
+
+        // A boundary interception reads as disposition plus the resolved boundary.
+        Assert.Equal("intercepted", escape.GetProperty("disposition").GetString());
+        var boundary = escape.GetProperty("interceptedBy").EnumerateArray().Single();
+        Assert.Equal("InvokeAsync", boundary.GetProperty("name").GetString());
+        Assert.False(boundary.GetProperty("conditional").GetBoolean());
 
         // Blind spots are data, not fine print — an empty caveats list would be a lie.
         Assert.NotEmpty(root.GetProperty("caveats").EnumerateArray());

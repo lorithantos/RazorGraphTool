@@ -150,10 +150,22 @@ runtime — it reports `conditional`, never handled), and a worklist sweep emits
 Delegates are followed one hop: a method-group reference becomes an unguarded `Calls`
 edge (`viaDelegate` — a try around the registration site does not catch the later
 invocation), and a method group or lambda handed to a framework marks its target (or
-the lambda's container) `callback`. Blind spots come back as data in the tool's
-`caveats`: BCL and out-of-solution throwers are invisible, dispatch is static,
-stored-and-forwarded delegates and local functions are not followed, and
-top-level-statement `Main` is not an entry point.
+the lambda's container) `callback`. Interface dispatch widens to in-solution
+implementations — callers bind to the interface, the throw lives in the
+implementation, and the DI-default architecture of ASP.NET depends on that join
+(method-level `Implements` edges carry it) — while class virtual overrides are not
+widened. Middleware is its own entry kind (`IMiddleware` or convention
+`*Middleware.Invoke[Async](HttpContext, …)`), and middleware that catches around
+`next` is an **exception boundary**: its catch set is recorded
+(`boundaryCatches`/`boundaryCatchesFiltered`, `IExceptionHandler` as a conditional
+catch-all), and escapes into HTTP entry points carry a disposition —
+`interceptedBy` a boundary means a shaped response by design (a ValidationException
+becoming a 400), no interception means a raw 500. Status-code *returns* (404,
+ProblemDetails) are not exceptions and never appear. Blind spots come back as data
+in the tool's `caveats`: BCL and out-of-solution throwers are invisible,
+stored-and-forwarded delegates and local functions are not followed, pipeline order
+and Map branches are not modeled, and top-level-statement `Main` and minimal-API
+lambda endpoints are not entry points.
 
 **Method bodies have their own graph.** `method_body_graph` (CLI: `body`) compiles the
 project and returns the graph *inside* one method: control-flow basic blocks with

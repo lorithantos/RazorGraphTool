@@ -127,6 +127,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         }
 
         AddExtensionEdges();
+        AddMethodImplementsEdges();
 
         foreach (var sym in symbols)
         {
@@ -177,7 +178,7 @@ public sealed class GraphBuilder : IAsyncDisposable
             var methodId = queue.Dequeue();
             var facts = state[methodId];
 
-            foreach (var edge in _graph.Incoming(methodId).Where(e => e.Type == EdgeType.Calls))
+            foreach (var edge in CallerEdges(methodId))
             {
                 var guardedBy = edge.GetProperty<List<string>>("guardedBy");
                 var filteredBy = edge.GetProperty<List<string>>("filteredBy");
@@ -205,9 +206,22 @@ public sealed class GraphBuilder : IAsyncDisposable
             }
         }
 
+        // Boundary methods that deliberately absorb exceptions on the HTTP
+        // pipeline. Escapes into HTTP-shaped entry points are matched against
+        // them: intercepted means "shaped response, by design" — a
+        // ValidationException becoming a 400 — while unmatched means a raw
+        // 500. Statically the pipeline order and Map branches are unknowable,
+        // so this is catch-set matching, and it never suppresses a report.
+        var boundaries = _graph.NodesOfType(NodeType.Method)
+            .Select(n => (n.Id,
+                Firm: n.GetProperty<List<string>>("boundaryCatches"),
+                Filtered: n.GetProperty<List<string>>("boundaryCatchesFiltered")))
+            .Where(b => b.Firm != null || b.Filtered != null)
+            .ToList();
+
         foreach (var entry in _graph.NodesOfType(NodeType.Method).ToList())
         {
-            if (entry.GetProperty<string>("entryPointKind") is null) continue;
+            if (entry.GetProperty<string>("entryPointKind") is not { } kind) continue;
             if (!state.TryGetValue(entry.Id, out var facts)) continue;
 
             foreach (var (type, fact) in facts)
@@ -225,6 +239,21 @@ public sealed class GraphBuilder : IAsyncDisposable
                 edge.Properties["path"] = path;
                 if (fact.Conditional) edge.Properties["conditional"] = true;
 
+                if (kind is "pageHandler" or "controllerAction" or "middleware")
+                {
+                    var firmHits = boundaries
+                        .Where(b => b.Id != entry.Id && Handles(b.Firm, fact.AncestorChain))
+                        .Select(b => b.Id)
+                        .ToList();
+                    var conditionalHits = boundaries
+                        .Where(b => b.Id != entry.Id && !firmHits.Contains(b.Id)
+                            && Handles(b.Filtered, fact.AncestorChain))
+                        .Select(b => b.Id)
+                        .ToList();
+                    if (firmHits.Count > 0) edge.Properties["interceptedBy"] = firmHits;
+                    if (conditionalHits.Count > 0) edge.Properties["interceptedConditionallyBy"] = conditionalHits;
+                }
+
                 _graph.AddEdge(edge);
             }
         }
@@ -232,6 +261,26 @@ public sealed class GraphBuilder : IAsyncDisposable
         static bool Handles(List<string>? guards, IReadOnlyList<string> ancestorChain) =>
             guards != null
             && (guards.Contains("*") || guards.Intersect(ancestorChain, StringComparer.Ordinal).Any());
+    }
+
+    /// <summary>
+    /// The edges that bring an escaping exception to more callers: direct
+    /// incoming Calls, plus incoming Calls of every interface method this one
+    /// implements — the caller bound to the interface, but this body is what
+    /// runs, so its throws are what arrive. Conservative across multiple
+    /// implementations: any implementation's throws reach the caller.
+    /// </summary>
+    private IEnumerable<GraphEdge> CallerEdges(string methodId)
+    {
+        foreach (var edge in _graph.Incoming(methodId))
+            if (edge.Type == EdgeType.Calls) yield return edge;
+
+        if (_graph.GetNode(methodId)?.GetProperty<List<string>>("implementsMethods") is not { } interfaces)
+            yield break;
+
+        foreach (var interfaceMethodId in interfaces)
+            foreach (var edge in _graph.Incoming(interfaceMethodId))
+                if (edge.Type == EdgeType.Calls) yield return edge;
     }
 
     /// <summary>
@@ -399,6 +448,12 @@ public sealed class GraphBuilder : IAsyncDisposable
             }
             if (method.EntryPointKind is { } entryPointKind)
                 node.SetProperty("entryPointKind", entryPointKind);
+            if (method.ImplementsIds.Count > 0)
+                node.SetProperty("implementsMethods", method.ImplementsIds);
+            if (method.BoundaryCatches.Count > 0)
+                node.SetProperty("boundaryCatches", method.BoundaryCatches);
+            if (method.BoundaryCatchesFiltered.Count > 0)
+                node.SetProperty("boundaryCatchesFiltered", method.BoundaryCatchesFiltered);
             node.SetProperty("isPublic", method.IsPublic);
 
             _graph.AddNode(node);
@@ -446,6 +501,29 @@ public sealed class GraphBuilder : IAsyncDisposable
 
             _graph.AddEdge(edge);
         }
+    }
+
+    /// <summary>
+    /// Method-level Implements edges, implementation → interface method. The
+    /// type-level edge says the class implements the interface; this one says
+    /// which body actually runs when a caller binds to the interface member —
+    /// the join escape propagation crosses DI on.
+    /// </summary>
+    private void AddMethodImplementsEdges()
+    {
+        foreach (var sym in _symbols)
+            foreach (var method in sym.MethodNodes)
+                foreach (var interfaceMethodId in method.ImplementsIds)
+                {
+                    if (!_graph.HasNode(method.Id) || !_graph.HasNode(interfaceMethodId)) continue;
+
+                    _graph.AddEdge(new GraphEdge
+                    {
+                        FromId = method.Id,
+                        ToId = interfaceMethodId,
+                        Type = EdgeType.Implements
+                    });
+                }
     }
 
     /// <summary>

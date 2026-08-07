@@ -343,9 +343,14 @@ public sealed class RoslynExtractor : IAsyncDisposable
 
                 // The semantic model must match the method's own tree — a
                 // partial class puts members in trees the type walk never saw.
-                var throws = declSyntax == null
+                var model = declSyntax == null
+                    ? null
+                    : compilation.GetSemanticModel(declSyntax.SyntaxTree);
+                var throws = declSyntax == null || model == null
                     ? new List<ThrownType>()
-                    : ExtractThrows(declSyntax, compilation.GetSemanticModel(declSyntax.SyntaxTree));
+                    : ExtractThrows(declSyntax, model);
+                var (boundaryCatches, boundaryFiltered) =
+                    BoundaryCatchSets(m, declSyntax, model);
 
                 return new MethodDetail
                 {
@@ -371,6 +376,9 @@ public sealed class RoslynExtractor : IAsyncDisposable
                     ExtendsTypeFullName = m.IsExtensionMethod
                         ? m.Parameters[0].Type.OriginalDefinition.ToDisplayString()
                         : null,
+                    ImplementsIds = InSolutionImplementedMembers(m, inScope),
+                    BoundaryCatches = boundaryCatches,
+                    BoundaryCatchesFiltered = boundaryFiltered,
                     FilePath = m.Locations.FirstOrDefault()?.SourceTree?.FilePath,
                     LineStart = line
                 };
@@ -601,8 +609,14 @@ public sealed class RoslynExtractor : IAsyncDisposable
             && !inScope.Contains(assembly))
             return "frameworkOverride";
 
+        // Middleware before the general interface check so both IMiddleware
+        // and convention middleware land under one filterable kind — the
+        // pipeline invokes them by registration, and they are where exception
+        // shaping happens.
+        if (IsHttpMiddlewareShape(m)) return "middleware";
+
         // Implementing an interface a framework declared is the registration
-        // pattern: IMiddleware, IValueConverter, IHostedService — the
+        // pattern: IValueConverter, IHostedService, IExceptionHandler — the
         // framework discovers the type and calls in through the interface it
         // knows, with no source call site anywhere. The invisible-controller
         // case, generalized.
@@ -624,6 +638,93 @@ public sealed class RoslynExtractor : IAsyncDisposable
         "IAsyncDisposable", "IEnumerable", "IEnumerator", "IAsyncEnumerable", "IAsyncEnumerator",
         "IAsyncLifetime"
     };
+
+    /// <summary>
+    /// Ids of in-solution interface methods this method implements — the join
+    /// that lets escape propagation cross DI: callers bind to the interface,
+    /// the throw lives in the implementation, and without this edge the chain
+    /// dies at the boundary that is ASP.NET's default architecture.
+    /// </summary>
+    private static List<string> InSolutionImplementedMembers(IMethodSymbol m, IReadOnlySet<string> inScope)
+    {
+        if (m.IsStatic || m.MethodKind != MethodKind.Ordinary) return new List<string>();
+
+        var ids = new List<string>();
+        foreach (var iface in m.ContainingType.AllInterfaces)
+        {
+            if (iface.ContainingAssembly?.Name is not { } assembly || !inScope.Contains(assembly)) continue;
+
+            foreach (var member in iface.GetMembers().OfType<IMethodSymbol>())
+            {
+                if (member.MethodKind != MethodKind.Ordinary) continue;
+                if (SymbolEqualityComparer.Default.Equals(
+                        m.ContainingType.FindImplementationForInterfaceMember(member), m))
+                    ids.Add(MethodId(member));
+            }
+        }
+        return ids;
+    }
+
+    /// <summary>
+    /// The exception types an HTTP boundary method deliberately absorbs. A
+    /// middleware whose catch takes a type is converting that exception into a
+    /// shaped response — design, not crash — so escapes it would intercept are
+    /// reported with that disposition rather than as raw failures. Catch sets
+    /// come from the method's own catch clauses (lambdas excluded);
+    /// IExceptionHandler has no syntactic catch — what it handles is a runtime
+    /// decision — so it records as a conditional catch-all.
+    /// </summary>
+    private static (List<string> Firm, List<string> Filtered) BoundaryCatchSets(
+        IMethodSymbol m, BaseMethodDeclarationSyntax? declSyntax, SemanticModel? model)
+    {
+        var none = (new List<string>(), new List<string>());
+
+        if (IsExceptionHandlerShape(m))
+            return (new List<string>(), new List<string> { "*" });
+        if (!IsHttpMiddlewareShape(m) || declSyntax == null || model == null) return none;
+
+        var firm = new List<string>();
+        var filtered = new List<string>();
+
+        foreach (var catchClause in declSyntax
+            .DescendantNodes(n => n == declSyntax
+                || n is not (AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax))
+            .OfType<CatchClauseSyntax>())
+        {
+            string caught;
+            if (catchClause.Declaration?.Type is { } typeSyntax)
+            {
+                if (model.GetTypeInfo(typeSyntax).Type is not { } caughtType) continue;
+                caught = caughtType.ToDisplayString();
+            }
+            else
+            {
+                caught = "*";
+            }
+
+            (catchClause.Filter == null ? firm : filtered).Add(caught);
+        }
+
+        return (firm, filtered);
+    }
+
+    /// <summary>
+    /// ASP.NET middleware by contract or by convention: IMiddleware, or a
+    /// *Middleware class with Invoke/InvokeAsync taking HttpContext first.
+    /// Convention is the overwhelmingly common form — UseMiddleware finds it
+    /// by reflection, another registration no call site ever witnesses.
+    /// </summary>
+    private static bool IsHttpMiddlewareShape(IMethodSymbol m) =>
+        m.Name is "Invoke" or "InvokeAsync"
+        && !m.IsStatic
+        && m.Parameters.Length >= 1
+        && m.Parameters[0].Type.Name == "HttpContext"
+        && (m.ContainingType.Name.EndsWith("Middleware", StringComparison.Ordinal)
+            || m.ContainingType.AllInterfaces.Any(i => i.Name == "IMiddleware"));
+
+    private static bool IsExceptionHandlerShape(IMethodSymbol m) =>
+        m.Name == "TryHandleAsync"
+        && m.ContainingType.AllInterfaces.Any(i => i.Name == "IExceptionHandler");
 
     private static bool ImplementsExternalInterfaceMember(IMethodSymbol m, IReadOnlySet<string> inScope)
     {
@@ -1244,6 +1345,15 @@ public sealed class MethodDetail
     /// says so with an Extends edge.
     /// </summary>
     public string? ExtendsTypeFullName { get; init; }
+
+    /// <summary>Ids of in-solution interface methods this method implements; see InSolutionImplementedMembers.</summary>
+    public List<string> ImplementsIds { get; init; } = new();
+
+    /// <summary>Exception types this HTTP boundary absorbs firmly; see BoundaryCatchSets.</summary>
+    public List<string> BoundaryCatches { get; init; } = new();
+
+    /// <summary>Exception types this HTTP boundary absorbs only behind a filter (or runtime decision).</summary>
+    public List<string> BoundaryCatchesFiltered { get; init; } = new();
 
     public string? FilePath { get; init; }
     public int? LineStart { get; init; }
