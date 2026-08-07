@@ -25,10 +25,10 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     private static string RepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "RazorGraphTool.sln")))
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "RazorGraphTool.slnx")))
             dir = dir.Parent;
         return dir?.FullName
-            ?? throw new InvalidOperationException("Could not locate RazorGraphTool.sln above the test directory.");
+            ?? throw new InvalidOperationException("Could not locate RazorGraphTool.slnx above the test directory.");
     }
 
     private static string FixtureDir() =>

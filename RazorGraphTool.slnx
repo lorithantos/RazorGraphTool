@@ -1,0 +1,12 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="src/RazorGraph.Cli/RazorGraph.Cli.csproj" />
+  <Project Path="src/RazorGraph.Core/RazorGraph.Core.csproj" />
+  <Project Path="src/RazorGraph.Extractor/RazorGraph.Extractor.csproj" />
+  <Project Path="src/RazorGraph.Mcp/RazorGraph.Mcp.csproj" />
+  <Project Path="src/RazorGraph.Tests/RazorGraph.Tests.csproj" />
+</Solution>

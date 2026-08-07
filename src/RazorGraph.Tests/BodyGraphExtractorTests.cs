@@ -125,10 +125,10 @@ public class BodyGraphExtractorTests : IAsyncLifetime
     private static string FixtureDir()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "RazorGraphTool.sln")))
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "RazorGraphTool.slnx")))
             dir = dir.Parent;
         return Path.Combine(
-            dir?.FullName ?? throw new InvalidOperationException("Could not locate RazorGraphTool.sln above the test directory."),
+            dir?.FullName ?? throw new InvalidOperationException("Could not locate RazorGraphTool.slnx above the test directory."),
             "tests", "fixtures", "MultiProject");
     }
 
