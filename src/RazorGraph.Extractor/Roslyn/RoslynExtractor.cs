@@ -162,6 +162,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 Properties = ExtractProperties(symbol),
                 Methods = ExtractMethods(symbol),
                 MethodNodes = ExtractMethodNodes(symbol, compilation, inScope),
+                MemberNodes = ExtractMemberNodes(symbol, inScope),
                 InjectedServices = ExtractInjectedServices(symbol)
             };
         }
@@ -182,6 +183,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 BaseType = baseType,
                 Methods = ExtractControllerActions(symbol),
                 MethodNodes = ExtractMethodNodes(symbol, compilation, inScope),
+                MemberNodes = ExtractMemberNodes(symbol, inScope),
                 InjectedServices = ExtractInjectedServices(symbol)
             };
         }
@@ -201,7 +203,8 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 LineEnd = lineEnd,
                 ImplementedInterfaces = interfaces.Where(i => i.EndsWith("Service")).ToList(),
                 Methods = ExtractMethods(symbol),
-                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope)
+                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope),
+                MemberNodes = ExtractMemberNodes(symbol, inScope)
             };
         }
 
@@ -219,7 +222,8 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 LineStart = lineStart,
                 LineEnd = lineEnd,
                 Properties = ExtractProperties(symbol),
-                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope)
+                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope),
+                MemberNodes = ExtractMemberNodes(symbol, inScope)
             };
         }
 
@@ -244,6 +248,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
             Properties = ExtractProperties(symbol),
             Methods = ExtractMethods(symbol),
             MethodNodes = ExtractMethodNodes(symbol, compilation, inScope),
+            MemberNodes = ExtractMemberNodes(symbol, inScope),
             InjectedServices = ExtractInjectedServices(symbol)
         };
     }
@@ -271,6 +276,107 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 HasBindProperty = p.GetAttributes().Any(a => a.AttributeClass?.Name == "BindPropertyAttribute")
             })
             .ToList();
+
+    /// <summary>
+    /// Every property and field of the type as a candidate graph node,
+    /// statics included — a static member is state like any other, and config
+    /// caches and singletons live exactly there. Compiler artifacts stay out:
+    /// auto-property backing fields and record equality plumbing are not
+    /// source a reader can navigate to. Distinct from
+    /// <see cref="ExtractProperties"/>, which keeps feeding the class-level
+    /// name list existing consumers read.
+    /// </summary>
+    private static List<MemberDetail> ExtractMemberNodes(INamedTypeSymbol symbol, IReadOnlySet<string> inScope)
+    {
+        var members = new List<MemberDetail>();
+        foreach (var member in symbol.GetMembers())
+        {
+            if (member.IsImplicitlyDeclared) continue;
+
+            // Razor codegen names its plumbing __tagHelperAttribute_0 and
+            // friends — generated source, so IsImplicitlyDeclared is false,
+            // but no reader navigates to it. The generated page class's real
+            // surface (Model, ViewData) has ordinary names and stays.
+            if (member.Name.StartsWith("__", StringComparison.Ordinal)) continue;
+
+            var detail = member switch
+            {
+                IPropertySymbol p => new MemberDetail
+                {
+                    Id = MemberId(p),
+                    Name = p.Name,
+                    Kind = NodeType.Property,
+                    MemberType = p.Type.ToDisplayString(),
+                    ReferencedTypeFullNames = InScopeNamedTypes(p.Type, inScope),
+                    IsPublic = p.DeclaredAccessibility == Accessibility.Public,
+                    IsStatic = p.IsStatic,
+                    IsReadOnly = p.IsReadOnly,
+                    HasBindProperty = p.GetAttributes().Any(a => a.AttributeClass?.Name == "BindPropertyAttribute")
+                },
+                // A field fronted by a property (event backing, fixed-size
+                // buffers) belongs to its AssociatedSymbol's story, not here.
+                IFieldSymbol { AssociatedSymbol: null } f => new MemberDetail
+                {
+                    Id = MemberId(f),
+                    Name = f.Name,
+                    Kind = NodeType.Field,
+                    MemberType = f.Type.ToDisplayString(),
+                    ReferencedTypeFullNames = InScopeNamedTypes(f.Type, inScope),
+                    IsPublic = f.DeclaredAccessibility == Accessibility.Public,
+                    IsStatic = f.IsStatic,
+                    IsReadOnly = f.IsReadOnly,
+                    IsConst = f.IsConst
+                },
+                _ => null
+            };
+            if (detail == null) continue;
+
+            var syntaxRef = member.DeclaringSyntaxReferences.FirstOrDefault();
+            if (syntaxRef != null)
+            {
+                detail = detail with
+                {
+                    FilePath = syntaxRef.SyntaxTree.FilePath,
+                    LineStart = syntaxRef.SyntaxTree.GetLineSpan(syntaxRef.Span).StartLinePosition.Line + 1
+                };
+            }
+            members.Add(detail);
+        }
+        return members;
+    }
+
+    /// <summary>
+    /// The in-solution named types a member's declared type mentions: the type
+    /// itself, plus type arguments and array elements, recursively — so a
+    /// List&lt;Choice&gt; property still references Choice. This is the join that
+    /// makes "who uses this type" answerable for DTOs and view models, which
+    /// participate in signatures rather than calls.
+    /// </summary>
+    private static List<string> InScopeNamedTypes(ITypeSymbol type, IReadOnlySet<string> inScope)
+    {
+        var result = new List<string>();
+        Collect(type);
+        return result.Distinct().ToList();
+
+        void Collect(ITypeSymbol t)
+        {
+            switch (t)
+            {
+                case IArrayTypeSymbol array:
+                    Collect(array.ElementType);
+                    break;
+                case INamedTypeSymbol named:
+                    if (named.TypeKind != TypeKind.Error
+                        && named.ContainingAssembly?.Name is { } assembly
+                        && inScope.Contains(assembly))
+                    {
+                        result.Add(named.OriginalDefinition.ToDisplayString());
+                    }
+                    foreach (var arg in named.TypeArguments) Collect(arg);
+                    break;
+            }
+        }
+    }
 
     private List<MethodInfo> ExtractMethods(INamedTypeSymbol symbol) =>
         symbol.GetMembers().OfType<IMethodSymbol>()
@@ -450,6 +556,19 @@ public sealed class RoslynExtractor : IAsyncDisposable
         var parameters = string.Join(",", def.Parameters.Select(p => p.Type.ToDisplayString()));
         var container = def.ContainingType?.ToDisplayString() ?? "global";
         return $"m:{container}.{def.Name}({parameters})";
+    }
+
+    /// <summary>
+    /// Stable id for a property or field node. No parameter list — members
+    /// cannot overload — and a distinct prefix per kind, so the id tells a
+    /// reader what it names the same way m:/type:/page: already do.
+    /// </summary>
+    public static string MemberId(ISymbol member)
+    {
+        var def = member.OriginalDefinition;
+        var prefix = def is IPropertySymbol ? "prop" : "field";
+        var container = def.ContainingType?.ToDisplayString() ?? "global";
+        return $"{prefix}:{container}.{def.Name}";
     }
 
     /// <summary>
@@ -894,6 +1013,142 @@ public sealed class RoslynExtractor : IAsyncDisposable
     }
 
     /// <summary>
+    /// Every read and write of an in-solution property or field, attributed to
+    /// the code that performs it: the enclosing method or constructor; the
+    /// enclosing property for accessor and expression bodies (a computed
+    /// property that reads another member is real data flow, and accessors are
+    /// not Method nodes); and the instance constructors for member-initializer
+    /// accesses, mirroring <see cref="InitializerCallSites"/>. Static-member
+    /// initializers are skipped for the same reason static ctors are not
+    /// nodes. nameof arguments are names, not accesses, and are excluded —
+    /// same reasoning as stripping JS comments before selector scanning:
+    /// mentioning a thing must not create a data-flow contract.
+    /// </summary>
+    public IEnumerable<MemberAccessInfo> ExtractMemberAccesses()
+    {
+        if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
+
+        var inScope = _loaded
+            .Select(l => l.Compilation.Assembly.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var (root, model) in _loaded.SelectMany(
+                     l => l.Compilation.SyntaxTrees.Select(t => (t.GetRoot(), l.Compilation.GetSemanticModel(t)))))
+        {
+            foreach (var name in root.DescendantNodes().OfType<IdentifierNameSyntax>())
+            {
+                var symbol = model.GetSymbolInfo(name).Symbol;
+                if (symbol is not (IPropertySymbol or IFieldSymbol)) continue;
+                if (symbol.IsImplicitlyDeclared) continue;
+                if (symbol is IFieldSymbol { AssociatedSymbol: not null }) continue;
+
+                var def = symbol.OriginalDefinition;
+                if (def.ContainingAssembly?.Name is not { } assembly || !inScope.Contains(assembly)) continue;
+                if (InsideNameof(name)) continue;
+
+                var toId = MemberId(def);
+                var (isRead, isWrite) = ClassifyAccess(TopAccessExpression(name));
+
+                foreach (var fromId in AccessAttribution(name, model))
+                {
+                    if (fromId == toId) continue; // self-access adds no navigational value
+                    yield return new MemberAccessInfo(fromId, toId, isRead, isWrite);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// The node ids an access at <paramref name="site"/> belongs to. Usually
+    /// one; every instance ctor for a member-initializer access (the same
+    /// overapproximation InitializerCallSites documents); none when the access
+    /// sits somewhere with no node to own it.
+    /// </summary>
+    private static IEnumerable<string> AccessAttribution(SyntaxNode site, SemanticModel model)
+    {
+        for (var node = site.Parent; node != null; node = node.Parent)
+        {
+            switch (node)
+            {
+                // A member initializer runs in the instance ctors, not in the
+                // member it initializes. Locals' and parameters' EqualsValue
+                // clauses fall through to the enclosing method instead.
+                case EqualsValueClauseSyntax { Parent: PropertyDeclarationSyntax prop } clause
+                    when prop.Initializer == clause:
+                    return prop.Modifiers.Any(SyntaxKind.StaticKeyword)
+                        ? Enumerable.Empty<string>()
+                        : InstanceCtorIds(prop, model);
+
+                case EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax { Parent.Parent: FieldDeclarationSyntax field } }:
+                    return field.Modifiers.Any(SyntaxKind.StaticKeyword)
+                        ? Enumerable.Empty<string>()
+                        : InstanceCtorIds(field, model);
+
+                case BaseMethodDeclarationSyntax methodDecl:
+                    return model.GetDeclaredSymbol(methodDecl) is IMethodSymbol m
+                        ? new[] { MethodId(m) }
+                        : Enumerable.Empty<string>();
+
+                // Accessor bodies, expression bodies, and indexers all live
+                // under a BasePropertyDeclaration. Events land here too and
+                // yield nothing — they are not graph nodes.
+                case BasePropertyDeclarationSyntax propDecl:
+                    return model.GetDeclaredSymbol(propDecl) is IPropertySymbol p
+                        ? new[] { MemberId(p) }
+                        : Enumerable.Empty<string>();
+            }
+        }
+        return Enumerable.Empty<string>();
+    }
+
+    private static IEnumerable<string> InstanceCtorIds(SyntaxNode memberDecl, SemanticModel model) =>
+        memberDecl.FirstAncestorOrSelf<TypeDeclarationSyntax>() is { } typeDecl
+        && model.GetDeclaredSymbol(typeDecl) is INamedTypeSymbol type
+            ? type.InstanceConstructors.Select(MethodId).Distinct()
+            : Enumerable.Empty<string>();
+
+    /// <summary>
+    /// The outermost expression this name participates in as a value: the
+    /// member access for a.B, the conditional access for a?.B. Assignment
+    /// context lives on that expression's parent, not the name's.
+    /// </summary>
+    private static ExpressionSyntax TopAccessExpression(IdentifierNameSyntax name)
+    {
+        ExpressionSyntax expr = name;
+        while (true)
+        {
+            if (expr.Parent is MemberAccessExpressionSyntax ma && ma.Name == expr) { expr = ma; continue; }
+            if (expr.Parent is MemberBindingExpressionSyntax mb && mb.Name == expr) { expr = mb; continue; }
+            if (expr.Parent is ConditionalAccessExpressionSyntax ca && ca.WhenNotNull == expr) { expr = ca; continue; }
+            return expr;
+        }
+    }
+
+    /// <summary>
+    /// Read, write, or both, from syntactic position. Compound assignment and
+    /// increment read the old value before writing; an out argument writes
+    /// blind; a ref argument must be assumed to do both. Anything
+    /// unrecognized is a read — the direction that never invents a mutation.
+    /// </summary>
+    private static (bool IsRead, bool IsWrite) ClassifyAccess(ExpressionSyntax expr) =>
+        expr.Parent switch
+        {
+            AssignmentExpressionSyntax assign when assign.Left == expr =>
+                assign.IsKind(SyntaxKind.SimpleAssignmentExpression) ? (false, true) : (true, true),
+            PrefixUnaryExpressionSyntax pre when
+                pre.IsKind(SyntaxKind.PreIncrementExpression) || pre.IsKind(SyntaxKind.PreDecrementExpression) => (true, true),
+            PostfixUnaryExpressionSyntax post when
+                post.IsKind(SyntaxKind.PostIncrementExpression) || post.IsKind(SyntaxKind.PostDecrementExpression) => (true, true),
+            ArgumentSyntax arg when arg.RefOrOutKeyword.IsKind(SyntaxKind.OutKeyword) => (false, true),
+            ArgumentSyntax arg when arg.RefOrOutKeyword.IsKind(SyntaxKind.RefKeyword) => (true, true),
+            _ => (true, false)
+        };
+
+    private static bool InsideNameof(SyntaxNode node) =>
+        node.Ancestors().OfType<InvocationExpressionSyntax>()
+            .Any(inv => inv.Expression is IdentifierNameSyntax { Identifier.ValueText: "nameof" });
+
+    /// <summary>
     /// Method-group references in one scope — an identifier or member access
     /// naming a method where a delegate is expected. The conversion type is
     /// the discriminator: a real method group converts to a delegate type,
@@ -1297,7 +1552,48 @@ public sealed class SymbolInfo
 
     /// <summary>Members promoted to their own graph nodes; see ExtractMethodNodes.</summary>
     public List<MethodDetail> MethodNodes { get; init; } = new();
+
+    /// <summary>Properties and fields promoted to their own graph nodes; see ExtractMemberNodes.</summary>
+    public List<MemberDetail> MemberNodes { get; init; } = new();
 }
+
+/// <summary>
+/// A property or field as a graph node: identity, location, declared type, and
+/// the in-solution types that declaration mentions — the raw material for the
+/// References edges that make "who uses this type" answerable for DTOs.
+/// </summary>
+public sealed record MemberDetail
+{
+    public required string Id { get; init; }
+    public required string Name { get; init; }
+
+    /// <summary>NodeType.Property or NodeType.Field.</summary>
+    public required NodeType Kind { get; init; }
+
+    /// <summary>Display string of the declared type, e.g. List&lt;Order&gt;.</summary>
+    public required string MemberType { get; init; }
+
+    /// <summary>In-solution named types the declared type mentions, recursively.</summary>
+    public List<string> ReferencedTypeFullNames { get; init; } = new();
+
+    public string? FilePath { get; init; }
+    public int? LineStart { get; init; }
+    public bool IsPublic { get; init; }
+    public bool IsStatic { get; init; }
+    public bool IsReadOnly { get; init; }
+    public bool IsConst { get; init; }
+    public bool HasBindProperty { get; init; }
+}
+
+/// <summary>
+/// One read or write of a property or field, from the node that performs it.
+/// A named type rather than a tuple for the same reason as CallSiteInfo.
+/// </summary>
+public sealed record MemberAccessInfo(
+    string FromId,
+    string ToId,
+    bool IsRead,
+    bool IsWrite);
 
 /// <summary>
 /// A method as a graph node: identity, location, and the shape a reader needs to

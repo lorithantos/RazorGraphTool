@@ -31,6 +31,9 @@ public sealed class GraphBuilder : IAsyncDisposable
     /// </summary>
     private readonly Dictionary<string, IReadOnlyList<ThrownType>> _methodThrows = new(StringComparer.Ordinal);
 
+    /// <summary>Type full name → its node id; see AddSymbolNode.</summary>
+    private readonly Dictionary<string, string> _typeIdByFullName = new(StringComparer.Ordinal);
+
     /// <summary>
     /// Graph vendor and minified client assets instead of dropping them. Vendor
     /// detection always runs; this switches the policy from drop to keep, for
@@ -119,11 +122,13 @@ public sealed class GraphBuilder : IAsyncDisposable
         {
             AddSymbolNode(sym);
             AddMethodNodes(sym);
+            AddMemberNodes(sym);
         }
 
         foreach (var sym in symbols)
         {
             AddInheritanceEdges(sym);
+            AddMemberTypeReferences(sym);
         }
 
         AddExtensionEdges();
@@ -135,6 +140,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         }
 
         AddCallEdges();
+        AddMemberAccessEdges();
         AddCallbackEntryPoints();
         AddExceptionEscapeEdges();
     }
@@ -409,6 +415,92 @@ public sealed class GraphBuilder : IAsyncDisposable
         if (sym.InjectedServices.Count > 0) node.SetProperty("injectedServices", sym.InjectedServices);
 
         _graph.AddNode(node);
+
+        // Full name → node id, for resolving member declared types to nodes
+        // later: the id prefix depends on how the type classified (type:, vm:,
+        // pm:, ...), so a name alone cannot be turned into an id. First
+        // declaration wins, matching the partial-class rule for methods.
+        _typeIdByFullName.TryAdd(sym.FullName, sym.Id);
+    }
+
+    private void AddMemberNodes(SymbolInfo sym)
+    {
+        foreach (var member in sym.MemberNodes)
+        {
+            // Same partial-class rule as methods: first declaration wins.
+            if (_graph.HasNode(member.Id)) continue;
+
+            var node = new GraphNode
+            {
+                Id = member.Id,
+                Type = member.Kind,
+                Name = member.Name,
+                FilePath = member.FilePath ?? sym.FilePath,
+                LineStart = member.LineStart
+            };
+
+            node.SetProperty("memberType", member.MemberType);
+            node.SetProperty("declaringType", sym.FullName);
+            if (sym.Project != null) node.SetProperty("project", sym.Project);
+            if (member.IsStatic) node.SetProperty("isStatic", true);
+            if (member.IsConst) node.SetProperty("isConst", true);
+            if (member.IsReadOnly) node.SetProperty("isReadOnly", true);
+            if (member.HasBindProperty) node.SetProperty("bindProperty", true);
+            node.SetProperty("isPublic", member.IsPublic);
+
+            _graph.AddNode(node);
+
+            _graph.AddEdge(new GraphEdge
+            {
+                FromId = sym.Id,
+                ToId = member.Id,
+                Type = EdgeType.Contains
+            });
+        }
+    }
+
+    /// <summary>
+    /// References edges from each member to the in-solution types its declared
+    /// type mentions. Runs in the second pass because the name→id map is only
+    /// complete once every symbol node exists. This edge is what lets a DTO
+    /// that appears only in signatures answer "who uses this type": incoming
+    /// References from the properties and fields typed by it.
+    /// </summary>
+    private void AddMemberTypeReferences(SymbolInfo sym)
+    {
+        foreach (var member in sym.MemberNodes)
+        {
+            foreach (var typeName in member.ReferencedTypeFullNames)
+            {
+                if (!_typeIdByFullName.TryGetValue(typeName, out var typeId)) continue;
+
+                _graph.AddEdge(new GraphEdge
+                {
+                    FromId = member.Id,
+                    ToId = typeId,
+                    Type = EdgeType.References
+                });
+            }
+        }
+    }
+
+    private void AddMemberAccessEdges()
+    {
+        // One Reads and/or one Writes edge per accessor→member pair, matching
+        // the one-edge-per-pair rule for calls: the graph is navigation, not
+        // a profile.
+        foreach (var group in _roslyn.ExtractMemberAccesses().GroupBy(a => (a.FromId, a.ToId)))
+        {
+            var (fromId, toId) = group.Key;
+
+            // Accesses from or to nodes the classifier skipped have nothing to anchor to.
+            if (!_graph.HasNode(fromId) || !_graph.HasNode(toId)) continue;
+
+            if (group.Any(a => a.IsRead))
+                _graph.AddEdge(new GraphEdge { FromId = fromId, ToId = toId, Type = EdgeType.Reads });
+            if (group.Any(a => a.IsWrite))
+                _graph.AddEdge(new GraphEdge { FromId = fromId, ToId = toId, Type = EdgeType.Writes });
+        }
     }
 
     private void AddMethodNodes(SymbolInfo sym)

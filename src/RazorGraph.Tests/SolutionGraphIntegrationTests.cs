@@ -418,6 +418,122 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         Assert.DoesNotContain(declaration.Id, uncovered);
     }
 
+    // ---- Members: properties, fields, statics --------------------------------
+
+    private static bool HasEdge(CodeGraph graph, string fromId, EdgeType type, string toId) =>
+        graph.Edges.Any(e => e.Type == type && e.FromId == fromId && e.ToId == toId);
+
+    [Fact]
+    public void MemberNodes_ExistAndAreContainedByTheirType()
+    {
+        var basePrice = _solutionGraph!.GetNode("prop:SampleLib.PriceBook.BasePrice");
+        Assert.NotNull(basePrice);
+        Assert.Equal(NodeType.Property, basePrice!.Type);
+        Assert.Equal("SampleLib.PriceBook", basePrice.GetProperty<string>("declaringType"));
+        Assert.Equal("decimal", basePrice.GetProperty<string>("memberType"));
+        Assert.True(HasEdge(_solutionGraph, "type:SampleLib.PriceBook", EdgeType.Contains, basePrice.Id));
+
+        // A private field is a node too — the read/write story of a type runs
+        // through its fields, whatever their accessibility.
+        var store = _solutionGraph.GetNode("field:SampleLib.PriceBook._store");
+        Assert.NotNull(store);
+        Assert.Equal(NodeType.Field, store!.Type);
+        Assert.False(store.GetProperty<bool>("isPublic"));
+    }
+
+    [Fact]
+    public void StaticAndConstMembers_AreNodes_AndMarked()
+    {
+        var lookups = _solutionGraph!.GetNode("field:SampleLib.PriceBook.Lookups");
+        Assert.True(lookups!.GetProperty<bool>("isStatic"));
+        Assert.False(lookups.GetProperty<bool>("isConst"));
+
+        var region = _solutionGraph.GetNode("prop:SampleLib.PriceBook.Region");
+        Assert.True(region!.GetProperty<bool>("isStatic"));
+
+        var defaultRegion = _solutionGraph.GetNode("field:SampleLib.PriceBook.DefaultRegion");
+        Assert.True(defaultRegion!.GetProperty<bool>("isConst"));
+        Assert.True(defaultRegion.GetProperty<bool>("isStatic"));
+    }
+
+    [Fact]
+    public void RecordPositionalProperties_AreNodes_CompilerPlumbingIsNot()
+    {
+        Assert.NotNull(_solutionGraph!.GetNode("prop:SampleLib.PriceTag.Label"));
+        Assert.NotNull(_solutionGraph.GetNode("prop:SampleLib.PriceTag.Amount"));
+
+        Assert.Null(_solutionGraph.GetNode("prop:SampleLib.PriceTag.EqualityContract"));
+        // No auto-property backing field may leak through as a Field node.
+        Assert.DoesNotContain(_solutionGraph.NodesOfType(NodeType.Field), f => f.Name.Contains("k__BackingField"));
+    }
+
+    [Fact]
+    public void ReadsAndWrites_AreAttributedToTheAccessingMethod()
+    {
+        // The DI idiom: the ctor writes the field, the method reads it.
+        var ctorId = Method(_solutionGraph!, "SampleLib.PriceBook", ".ctor").Id;
+        Assert.True(HasEdge(_solutionGraph!, ctorId, EdgeType.Writes, "field:SampleLib.PriceBook._store"));
+
+        var totalId = Method(_solutionGraph!, "SampleLib.PriceBook", "Total").Id;
+        Assert.True(HasEdge(_solutionGraph!, totalId, EdgeType.Reads, "field:SampleLib.PriceBook._store"));
+        Assert.True(HasEdge(_solutionGraph!, totalId, EdgeType.Reads, "prop:SampleLib.PriceBook.BasePrice"));
+        Assert.True(HasEdge(_solutionGraph!, totalId, EdgeType.Writes, "prop:SampleLib.PriceBook.Current"));
+    }
+
+    [Fact]
+    public void CompoundAssignment_YieldsBothReadAndWrite()
+    {
+        // Lookups++ reads the old value and writes the new one.
+        var totalId = Method(_solutionGraph!, "SampleLib.PriceBook", "Total").Id;
+        Assert.True(HasEdge(_solutionGraph!, totalId, EdgeType.Reads, "field:SampleLib.PriceBook.Lookups"));
+        Assert.True(HasEdge(_solutionGraph!, totalId, EdgeType.Writes, "field:SampleLib.PriceBook.Lookups"));
+    }
+
+    [Fact]
+    public void ComputedProperty_ReadsItsInputs()
+    {
+        // Markup => BasePrice * 2: accessor bodies attribute to the property
+        // node, because accessors are not Method nodes.
+        Assert.True(HasEdge(_solutionGraph!,
+            "prop:SampleLib.PriceBook.Markup", EdgeType.Reads, "prop:SampleLib.PriceBook.BasePrice"));
+    }
+
+    [Fact]
+    public void StaticInitializerAccess_IsNotAttributedAnywhere()
+    {
+        // Region's initializer reads DefaultRegion, but it runs in the static
+        // ctor, which is not a node. No edge may claim that access.
+        Assert.DoesNotContain(_solutionGraph!.Edges, e =>
+            e.ToId == "field:SampleLib.PriceBook.DefaultRegion" && e.Type is EdgeType.Reads or EdgeType.Writes);
+    }
+
+    [Fact]
+    public void MemberDeclaredTypes_BecomeReferencesEdges()
+    {
+        // "Who uses PriceTag" was unanswerable while types only participated
+        // in signatures: now the property typed by it references it…
+        Assert.True(HasEdge(_solutionGraph!,
+            "prop:SampleLib.PriceBook.Current", EdgeType.References, "type:SampleLib.PriceTag"));
+
+        // …including through a List<> wrapper.
+        Assert.True(HasEdge(_solutionGraph!,
+            "prop:SampleLib.PriceBook.History", EdgeType.References, "type:SampleLib.PriceTag"));
+    }
+
+    [Fact]
+    public void MemberRead_CrossesProjectBoundary_InSolutionGraph()
+    {
+        // The member twin of Builds_CallEdge_FromWebProjectIntoClassLibrary:
+        // OnGet reads SampleLib's static field across the project boundary.
+        var onGetId = Method(_solutionGraph!, "SampleWeb.Pages.IndexModel", "OnGet").Id;
+        Assert.True(HasEdge(_solutionGraph!, onGetId, EdgeType.Reads, "field:SampleLib.PriceBook.Lookups"));
+
+        // And the control: the single-project build has no node to anchor it.
+        var webOnlyOnGet = Method(_webOnlyGraph!, "SampleWeb.Pages.IndexModel", "OnGet").Id;
+        Assert.DoesNotContain(_webOnlyGraph!.Edges, e =>
+            e.FromId == webOnlyOnGet && e.Type == EdgeType.Reads && e.ToId.StartsWith("field:SampleLib."));
+    }
+
     // ---- Id scoping ----------------------------------------------------------
 
     [Fact]

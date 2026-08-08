@@ -127,6 +127,22 @@ in-solution, so "the working surface of `Money`" is the type's incoming
 `Extends` edges plus its own members. (C# 14 `extension` container members are
 not yet modeled.)
 
+**Properties and fields are nodes, statics included.** Every declared property and
+field — any accessibility, instance or static — is its own node (`prop:` / `field:`
+ids) contained by its type, carrying the declared type and `isStatic` / `isConst` /
+`isReadOnly` / `isPublic`. Reads and writes are edges from the code that performs
+them: methods and constructors; accessor and expression bodies attribute to the
+*property* node (a computed property reading its inputs is real data flow, and
+accessors are not Method nodes); member initializers attribute to the instance
+constructors, static initializers to nothing — static ctors are not nodes. Compound
+assignment and `++` yield both a Reads and a Writes edge; an `out` argument writes,
+a `ref` argument does both. A member's declared type becomes a `References` edge to
+every in-solution type it mentions — through `List<>` and array wrappers — so "who
+uses this DTO" is the type's incoming References from the members typed by it, even
+when the type appears in no call. Compiler plumbing stays out: backing fields,
+record `EqualityContract`, and Razor codegen's `__` members are not nodes, and
+`nameof` is a name, not an access.
+
 **Methods include constructors, and disposal is a call.** Explicit instance
 constructors are Method nodes — constructors run real code, and xUnit's primary setup
 idiom is the test-class ctor. An implicit default ctor appears only when field
