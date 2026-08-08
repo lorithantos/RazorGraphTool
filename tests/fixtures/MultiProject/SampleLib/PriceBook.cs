@@ -5,7 +5,7 @@ namespace SampleLib;
 /// reads and writes attributed to the code that performs them, and declared
 /// types as References edges. Each member exists for one assertion.
 /// </summary>
-public class PriceBook
+public partial class PriceBook
 {
     /// <summary>Written by the ctor, read by Total — the DI-field idiom.</summary>
     private readonly ICatalogStore _store;
@@ -31,9 +31,6 @@ public class PriceBook
 
     public decimal BasePrice { get; set; }
 
-    /// <summary>List-wrapped declared type must still reference the element type.</summary>
-    public List<PriceTag> History { get; } = new();
-
     public PriceBook(ICatalogStore store)
     {
         _store = store;
@@ -46,6 +43,17 @@ public class PriceBook
         History.Add(Current);
         return BasePrice + _store.List().Count;
     }
+}
+
+/// <summary>
+/// The second half of the partial: mimics an MVVM-toolkit-style generator
+/// split. Each declaration yields its own SymbolInfo carrying the FULL member
+/// list, so member nodes and References edges must not double.
+/// </summary>
+public partial class PriceBook
+{
+    /// <summary>List-wrapped declared type must still reference the element type.</summary>
+    public List<PriceTag> History { get; } = new();
 }
 
 /// <summary>

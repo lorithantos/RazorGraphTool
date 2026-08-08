@@ -596,9 +596,14 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         Assert.True(HasEdge(_solutionGraph!,
             "prop:SampleLib.PriceBook.Current", EdgeType.References, "type:SampleLib.PriceTag"));
 
-        // …including through a List<> wrapper.
-        Assert.True(HasEdge(_solutionGraph!,
-            "prop:SampleLib.PriceBook.History", EdgeType.References, "type:SampleLib.PriceTag"));
+        // …including through a List<> wrapper. History lives in the second
+        // half of a partial class: exactly ONE edge, not one per declaration —
+        // each declaration's SymbolInfo carries the full member list, and the
+        // MVVM-toolkit generator makes partials the norm in WPF view models.
+        Assert.Single(_solutionGraph!.Edges, e =>
+            e.Type == EdgeType.References
+            && e.FromId == "prop:SampleLib.PriceBook.History"
+            && e.ToId == "type:SampleLib.PriceTag");
     }
 
     [Fact]

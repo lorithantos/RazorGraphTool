@@ -34,6 +34,9 @@ public sealed class GraphBuilder : IAsyncDisposable
     /// <summary>Type full name → its node id; see AddSymbolNode.</summary>
     private readonly Dictionary<string, string> _typeIdByFullName = new(StringComparer.Ordinal);
 
+    /// <summary>Symbol ids whose member References edges are already emitted; see AddMemberTypeReferences.</summary>
+    private readonly HashSet<string> _memberRefsEmitted = new(StringComparer.Ordinal);
+
     /// <summary>
     /// Graph vendor and minified client assets instead of dropping them. Vendor
     /// detection always runs; this switches the policy from drop to keep, for
@@ -485,6 +488,13 @@ public sealed class GraphBuilder : IAsyncDisposable
     /// </summary>
     private void AddMemberTypeReferences(SymbolInfo sym)
     {
+        // A partial class yields one SymbolInfo per declaration, each carrying
+        // the FULL member list (symbol members, not declaration members) — the
+        // same first-declaration-wins rule the node adders apply, or every
+        // member References edge doubles. Found on RetirementCore, where the
+        // MVVM toolkit's generator makes half the view models partial.
+        if (!_memberRefsEmitted.Add(sym.Id)) return;
+
         foreach (var member in sym.MemberNodes)
         {
             foreach (var typeName in member.ReferencedTypeFullNames)
