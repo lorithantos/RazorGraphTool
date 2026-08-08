@@ -427,6 +427,41 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         Assert.DoesNotContain(declaration.Id, uncovered);
     }
 
+    // ---- Generated code ------------------------------------------------------
+
+    [Fact]
+    public void GeneratedRazorClasses_AreMarked_AndLinkedToTheirPage()
+    {
+        var page = _solutionGraph!.Nodes.Single(n => n.Type == NodeType.RazorPage);
+
+        // The Razor-layer page node and the Roslyn-layer generated class are
+        // two views of the same artifact; the compiledInto edge is the join.
+        var links = _solutionGraph.Outgoing(page.Id)
+            .Where(e => e.Type == EdgeType.References && e.GetProperty<bool>("compiledInto"))
+            .Select(e => _solutionGraph.GetNode(e.ToId)!)
+            .ToList();
+
+        var generatedClass = Assert.Single(links);
+        Assert.True(generatedClass.GetProperty<bool>("generated"));
+        Assert.EndsWith(".g.cs", generatedClass.FilePath!, StringComparison.OrdinalIgnoreCase);
+        Assert.EndsWith("Index.cshtml",
+            generatedClass.GetProperty<string>("generatedFrom")!.Replace('\\', '/'),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void HandWrittenCode_IsNeverMarkedGenerated()
+    {
+        // The marker must not leak onto ordinary code: the PageModel lives in
+        // Index.cshtml.cs, which is authored, not generated.
+        var pageModel = _solutionGraph!.Nodes.Single(n => n.Type == NodeType.PageModel && n.Name == "IndexModel");
+        Assert.False(pageModel.GetProperty<bool>("generated"));
+
+        var onGet = Method(_solutionGraph!, "SampleWeb.Pages.IndexModel", "OnGet");
+        Assert.False(onGet.GetProperty<bool>("generated"));
+        Assert.EndsWith("Index.cshtml.cs", onGet.FilePath!.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase);
+    }
+
     // ---- Excluding tests -----------------------------------------------------
 
     [Fact]

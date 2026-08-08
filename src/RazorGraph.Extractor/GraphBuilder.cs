@@ -99,6 +99,7 @@ public sealed class GraphBuilder : IAsyncDisposable
     {
         BuildRoslynLayer();
         BuildRazorLayer(projectDir, idScope: null, _roslyn.Compilation);
+        AddGeneratedClassLinks();
         return _graph;
     }
 
@@ -115,6 +116,7 @@ public sealed class GraphBuilder : IAsyncDisposable
             BuildRazorLayer(projectDir, loaded.Name, loaded.Compilation);
         }
 
+        AddGeneratedClassLinks();
         AddProjectNodes();
         AddCoverageEdges();
         return _graph;
@@ -422,6 +424,8 @@ public sealed class GraphBuilder : IAsyncDisposable
         node.SetProperty("fullName", sym.FullName);
         if (sym.Project != null) node.SetProperty("project", sym.Project);
         if (sym.BaseType != null) node.SetProperty("baseType", sym.BaseType);
+        if (sym.GeneratedFrom != null) node.SetProperty("generatedFrom", sym.GeneratedFrom);
+        StampGenerated(node);
         if (sym.Properties.Count > 0) node.SetProperty("properties", sym.Properties.Select(p => p.Name).ToList());
         if (sym.Methods.Count > 0) node.SetProperty("methods", sym.Methods.Select(m => m.Name).ToList());
         if (sym.InjectedServices.Count > 0) node.SetProperty("injectedServices", sym.InjectedServices);
@@ -459,6 +463,7 @@ public sealed class GraphBuilder : IAsyncDisposable
             if (member.IsReadOnly) node.SetProperty("isReadOnly", true);
             if (member.HasBindProperty) node.SetProperty("bindProperty", true);
             node.SetProperty("isPublic", member.IsPublic);
+            StampGenerated(node);
 
             _graph.AddNode(node);
 
@@ -495,6 +500,57 @@ public sealed class GraphBuilder : IAsyncDisposable
             }
         }
     }
+
+    /// <summary>
+    /// A node whose final, #line-mapped position still lands in a .g.cs is
+    /// generated scaffolding: nothing a reader can navigate to as authored
+    /// code. Marked, not dropped — its semantics (calls, throws) are real.
+    /// The rule is position-based on purpose: a @functions method authored in
+    /// a .cshtml maps back to the .cshtml and is NOT marked, even though the
+    /// compiler met it inside a generated file.
+    /// </summary>
+    private static void StampGenerated(GraphNode node)
+    {
+        if (node.FilePath?.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase) == true)
+            node.SetProperty("generated", true);
+    }
+
+    /// <summary>
+    /// Wire each Razor node to the class its file was compiled into, joining
+    /// the Razor layer and the Roslyn layer views of the same artifact. The
+    /// edge reuses References with compiledInto=true rather than a new
+    /// EdgeType: the serializer writes enum names as strings, so a new member
+    /// would make every new graph unreadable by older deserializers.
+    /// </summary>
+    private void AddGeneratedClassLinks()
+    {
+        var razorByPath = _graph.Nodes
+            .Where(n => n.Type is NodeType.RazorPage or NodeType.PartialView or NodeType.Layout)
+            .Where(n => n.FilePath != null)
+            .GroupBy(n => NormalizeFullPath(n.FilePath!))
+            .ToDictionary(g => g.Key, g => g.ToList());
+        if (razorByPath.Count == 0) return;
+
+        foreach (var sym in _symbols)
+        {
+            if (sym.GeneratedFrom == null) continue;
+            if (!razorByPath.TryGetValue(NormalizeFullPath(sym.GeneratedFrom), out var razorNodes)) continue;
+
+            foreach (var razorNode in razorNodes)
+            {
+                _graph.AddEdge(new GraphEdge
+                {
+                    FromId = razorNode.Id,
+                    ToId = sym.Id,
+                    Type = EdgeType.References,
+                    Properties = { ["compiledInto"] = true }
+                });
+            }
+        }
+    }
+
+    private static string NormalizeFullPath(string path) =>
+        Path.GetFullPath(path).Replace('\\', '/').ToLowerInvariant();
 
     private void AddMemberAccessEdges()
     {
@@ -559,6 +615,7 @@ public sealed class GraphBuilder : IAsyncDisposable
             if (method.BoundaryCatchesFiltered.Count > 0)
                 node.SetProperty("boundaryCatchesFiltered", method.BoundaryCatchesFiltered);
             node.SetProperty("isPublic", method.IsPublic);
+            StampGenerated(node);
 
             _graph.AddNode(node);
 

@@ -155,6 +155,8 @@ public sealed class RoslynExtractor : IAsyncDisposable
             .Select(l => l.Compilation.Assembly.Name)
             .ToHashSet(StringComparer.Ordinal);
 
+        var compiledItemsByLoaded = new Dictionary<LoadedProject, Dictionary<INamedTypeSymbol, string>>();
+
         foreach (var (loaded, tree) in _loaded.SelectMany(l => l.Compilation.SyntaxTrees.Select(t => (l, t))))
         {
             var model = loaded.Compilation.GetSemanticModel(tree);
@@ -166,9 +168,56 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 if (symbol == null) continue;
 
                 var info = ClassifySymbol(symbol, loaded.Name, loaded.Compilation, inScope);
-                if (info != null) yield return info;
+                if (info == null) continue;
+
+                // A type still living in a .g.cs after mapping is generated
+                // scaffolding; remember which source file it was compiled
+                // from, so the builder can wire the page to its class.
+                if (info.FilePath?.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    if (!compiledItemsByLoaded.TryGetValue(loaded, out var items))
+                        compiledItemsByLoaded[loaded] = items = RazorCompiledItems(loaded.Compilation);
+                    info.GeneratedFrom = GeneratedSourcePath(symbol, items, loaded.FilePath, tree);
+                }
+
+                yield return info;
             }
         }
+    }
+
+    /// <summary>
+    /// The authoritative answer comes from the assembly-level
+    /// [RazorCompiledItem(type, kind, "/Pages/….cshtml")] the generator emits
+    /// per compiled file — an exact type→source map, resolved against the
+    /// project directory. The #line majority vote is only the fallback for
+    /// generated trees without one.
+    /// </summary>
+    private static string? GeneratedSourcePath(
+        INamedTypeSymbol symbol,
+        Dictionary<INamedTypeSymbol, string> compiledItems,
+        string? projectFilePath,
+        SyntaxTree tree)
+    {
+        if (compiledItems.TryGetValue(symbol, out var identifier)
+            && Path.GetDirectoryName(projectFilePath) is { } projectDir)
+        {
+            return Path.GetFullPath(Path.Combine(projectDir, identifier.TrimStart('/', '\\')));
+        }
+        return MappedSourcePath(tree);
+    }
+
+    private static Dictionary<INamedTypeSymbol, string> RazorCompiledItems(Compilation compilation)
+    {
+        var map = new Dictionary<INamedTypeSymbol, string>(SymbolEqualityComparer.Default);
+        foreach (var attr in compilation.Assembly.GetAttributes())
+        {
+            if (attr.AttributeClass?.Name != "RazorCompiledItemAttribute") continue;
+            if (attr.ConstructorArguments.Length < 3) continue;
+            if (attr.ConstructorArguments[0].Value is not INamedTypeSymbol type) continue;
+            if (attr.ConstructorArguments[2].Value is not string identifier) continue;
+            map[type] = identifier;
+        }
+        return map;
     }
 
     private SymbolInfo? ClassifySymbol(
@@ -176,7 +225,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
     {
         var baseType = symbol.BaseType?.ToDisplayString() ?? "";
         var interfaces = symbol.AllInterfaces.Select(i => i.ToDisplayString()).ToList();
-        var (lineStart, lineEnd) = GetLines(symbol);
+        var (filePath, lineStart, lineEnd) = GetLines(symbol);
 
         // PageModel detection
         if (baseType.Contains("PageModel") || baseType.Contains("Microsoft.AspNetCore.Mvc.RazorPages.PageModel"))
@@ -188,7 +237,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 Type = NodeType.PageModel,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
-                FilePath = symbol.Locations.FirstOrDefault()?.SourceTree?.FilePath,
+                FilePath = filePath,
                 LineStart = lineStart,
                 LineEnd = lineEnd,
                 BaseType = baseType,
@@ -210,7 +259,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 Type = NodeType.ApiController,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
-                FilePath = symbol.Locations.FirstOrDefault()?.SourceTree?.FilePath,
+                FilePath = filePath,
                 LineStart = lineStart,
                 LineEnd = lineEnd,
                 BaseType = baseType,
@@ -231,7 +280,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 Type = symbol.TypeKind == TypeKind.Interface ? NodeType.ServiceInterface : NodeType.ServiceImplementation,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
-                FilePath = symbol.Locations.FirstOrDefault()?.SourceTree?.FilePath,
+                FilePath = filePath,
                 LineStart = lineStart,
                 LineEnd = lineEnd,
                 ImplementedInterfaces = interfaces.Where(i => i.EndsWith("Service")).ToList(),
@@ -251,7 +300,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 Type = NodeType.ViewModel,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
-                FilePath = symbol.Locations.FirstOrDefault()?.SourceTree?.FilePath,
+                FilePath = filePath,
                 LineStart = lineStart,
                 LineEnd = lineEnd,
                 Properties = ExtractProperties(symbol),
@@ -273,7 +322,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
             Type = NodeType.Class,
             Name = symbol.Name,
             FullName = symbol.ToDisplayString(),
-            FilePath = symbol.Locations.FirstOrDefault()?.SourceTree?.FilePath,
+            FilePath = filePath,
             LineStart = lineStart,
             LineEnd = lineEnd,
             BaseType = baseType,
@@ -291,13 +340,41 @@ public sealed class RoslynExtractor : IAsyncDisposable
     private static bool IsCompilerGenerated(INamedTypeSymbol symbol) =>
         symbol.IsImplicitlyDeclared || symbol.Name.StartsWith('<') || symbol.Name.Length == 0;
 
-    private static (int? Start, int? End) GetLines(INamedTypeSymbol symbol)
+    /// <summary>
+    /// Mapped location: #line directives are honored, so a symbol authored in
+    /// a .cshtml reports the .cshtml, not the generated .g.cs the compiler
+    /// actually saw. Generated scaffolding (the class declaration itself, the
+    /// synthesized ExecuteAsync) sits outside any #line region and keeps its
+    /// .g.cs path honestly — the generated marker downstream tells a reader
+    /// which kind they are looking at.
+    /// </summary>
+    private static (string? FilePath, int? Start, int? End) GetLines(INamedTypeSymbol symbol)
     {
         var syntaxRef = symbol.DeclaringSyntaxReferences.FirstOrDefault();
-        if (syntaxRef == null) return (null, null);
-        var span = syntaxRef.SyntaxTree.GetLineSpan(syntaxRef.Span);
-        return (span.StartLinePosition.Line + 1, span.EndLinePosition.Line + 1);
+        if (syntaxRef == null) return (symbol.Locations.FirstOrDefault()?.SourceTree?.FilePath, null, null);
+        var span = syntaxRef.SyntaxTree.GetMappedLineSpan(syntaxRef.Span);
+        return (span.Path, span.StartLinePosition.Line + 1, span.EndLinePosition.Line + 1);
     }
+
+    /// <summary>
+    /// Fallback source attribution: the file named by the MAJORITY of a
+    /// generated tree's #line directives, not the first. The Razor generator
+    /// inlines _ViewImports content at the top of every generated file, each
+    /// import under its own #line naming _ViewImports.cshtml — so "first
+    /// directive" attributes every page to the imports file (found on
+    /// ImageSelectorV2, 2026-08-08), and near-empty files can even lose the
+    /// majority. That is why the RazorCompiledItem attribute is consulted
+    /// first; this survives only for generated trees without one.
+    /// </summary>
+    private static string? MappedSourcePath(SyntaxTree tree) =>
+        tree.GetRoot().DescendantNodes(descendIntoTrivia: true)
+            .OfType<LineOrSpanDirectiveTriviaSyntax>()
+            .Select(d => d.File.ValueText)
+            .Where(f => !string.IsNullOrWhiteSpace(f))
+            .GroupBy(f => f, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(g => g.Count())
+            .Select(g => g.Key)
+            .FirstOrDefault();
 
     private List<PropertyInfo> ExtractProperties(INamedTypeSymbol symbol) =>
         symbol.GetMembers().OfType<IPropertySymbol>()
@@ -367,10 +444,11 @@ public sealed class RoslynExtractor : IAsyncDisposable
             var syntaxRef = member.DeclaringSyntaxReferences.FirstOrDefault();
             if (syntaxRef != null)
             {
+                var span = syntaxRef.SyntaxTree.GetMappedLineSpan(syntaxRef.Span);
                 detail = detail with
                 {
-                    FilePath = syntaxRef.SyntaxTree.FilePath,
-                    LineStart = syntaxRef.SyntaxTree.GetLineSpan(syntaxRef.Span).StartLinePosition.Line + 1
+                    FilePath = span.Path,
+                    LineStart = span.StartLinePosition.Line + 1
                 };
             }
             members.Add(detail);
@@ -475,9 +553,11 @@ public sealed class RoslynExtractor : IAsyncDisposable
             .Select(m =>
             {
                 var syntaxRef = m.DeclaringSyntaxReferences.FirstOrDefault();
-                int? line = syntaxRef == null
+                // Mapped: a method authored in a .cshtml block reports the
+                // .cshtml; generated scaffolding keeps its .g.cs path.
+                FileLinePositionSpan? mapped = syntaxRef == null
                     ? null
-                    : syntaxRef.SyntaxTree.GetLineSpan(syntaxRef.Span).StartLinePosition.Line + 1;
+                    : syntaxRef.SyntaxTree.GetMappedLineSpan(syntaxRef.Span);
                 var declSyntax = syntaxRef?.GetSyntax() as BaseMethodDeclarationSyntax;
 
                 // The semantic model must match the method's own tree — a
@@ -518,8 +598,8 @@ public sealed class RoslynExtractor : IAsyncDisposable
                     ImplementsIds = InSolutionImplementedMembers(m, inScope),
                     BoundaryCatches = boundaryCatches,
                     BoundaryCatchesFiltered = boundaryFiltered,
-                    FilePath = m.Locations.FirstOrDefault()?.SourceTree?.FilePath,
-                    LineStart = line
+                    FilePath = mapped?.Path ?? m.Locations.FirstOrDefault()?.SourceTree?.FilePath,
+                    LineStart = mapped?.StartLinePosition.Line + 1
                 };
             })
             .ToList();
@@ -1577,6 +1657,10 @@ public sealed class SymbolInfo
     public string? FilePath { get; init; }
     public int? LineStart { get; init; }
     public int? LineEnd { get; init; }
+
+    /// <summary>Source file a generated type was compiled from (first #line directive); null for hand-written types.</summary>
+    public string? GeneratedFrom { get; set; }
+
     public string? BaseType { get; init; }
     public List<string> ImplementedInterfaces { get; init; } = new();
     public List<string> InjectedServices { get; init; } = new();
