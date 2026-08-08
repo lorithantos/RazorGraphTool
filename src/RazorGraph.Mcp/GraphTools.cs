@@ -75,6 +75,7 @@ public sealed class GraphTools(GraphStore store)
         [Description("Absolute path to a .sln or .slnx file")] string path,
         [Description("Id to file the result under. Defaults to the solution file name.")] string? graphId = null,
         [Description("Also graph vendor/minified client assets (dropped by default). Their nodes carry vendor=true and a vendorReason; useful when the bug lives inside a shipped bundle.")] bool includeVendor = false,
+        [Description("Skip test projects: no test Method nodes, no Covers edges — a leaner navigation graph. Coverage tools refuse to answer against it rather than reporting everything uncovered. Default false, so the default graph answers every question.")] bool excludeTests = false,
         CancellationToken ct = default)
     {
         var full = Path.GetFullPath(path);
@@ -82,10 +83,14 @@ public sealed class GraphTools(GraphStore store)
         if (!IsSolution(full))
             throw new McpException($"Not a solution file: {full}. Use build_graph for a .csproj.");
 
-        await using var builder = new GraphBuilder { IncludeVendorAssets = includeVendor };
+        await using var builder = new GraphBuilder
+        {
+            IncludeVendorAssets = includeVendor,
+            ExcludeTestProjects = excludeTests
+        };
         var graph = await builder.BuildFromSolutionAllAsync(full, ct);
 
-        return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries);
+        return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries, builder.SkippedTestProjects);
     }
 
     [McpServerTool(Name = "load_graph")]
@@ -300,9 +305,9 @@ public sealed class GraphTools(GraphStore store)
         var graph = store.Require(graphId).Graph;
         RequireNode(graph, methodId);
 
-        var items = new GraphQuery(graph).GetCoveringTests(methodId)
+        var items = RequireCoverage(() => new GraphQuery(graph).GetCoveringTests(methodId)
             .Select(t => new { depth = t.Depth, node = NodeSummary(t.Test) })
-            .ToList();
+            .ToList());
         return ToJson(new { methodId, returned = items.Count, tests = items });
     }
 
@@ -315,9 +320,9 @@ public sealed class GraphTools(GraphStore store)
         var graph = store.Require(graphId).Graph;
         RequireNode(graph, testId);
 
-        var items = new GraphQuery(graph).GetCoveredMethods(testId)
+        var items = RequireCoverage(() => new GraphQuery(graph).GetCoveredMethods(testId)
             .Select(t => new { depth = t.Depth, node = NodeSummary(t.Method) })
-            .ToList();
+            .ToList());
         return ToJson(new { testId, returned = items.Count, methods = items });
     }
 
@@ -329,9 +334,20 @@ public sealed class GraphTools(GraphStore store)
         [Description(GraphIdDescription)] string? graphId = null)
     {
         var graph = store.Require(graphId).Graph;
-        var all = new GraphQuery(graph).FindUncoveredMethods(project).ToList();
+        var all = RequireCoverage(() => new GraphQuery(graph).FindUncoveredMethods(project).ToList());
         var page = all.Take(Math.Max(1, limit)).Select(NodeSummary).ToList();
         return ToJson(new { returned = page.Count, totalMatches = all.Count, truncated = all.Count > page.Count, methods = page });
+    }
+
+    /// <summary>
+    /// The query layer refuses coverage questions a test-less graph cannot
+    /// answer (built single-project, or with excludeTests). Re-shaped as an
+    /// McpException so the caller sees the refusal, same as the escapes guard.
+    /// </summary>
+    private static T RequireCoverage<T>(Func<T> query)
+    {
+        try { return query(); }
+        catch (InvalidOperationException ex) { throw new McpException(ex.Message); }
     }
 
     [McpServerTool(Name = "deep_methods")]
@@ -453,7 +469,7 @@ public sealed class GraphTools(GraphStore store)
         if (IsSolution(full))
         {
             if (string.IsNullOrWhiteSpace(projectName))
-                await roslyn.LoadAllProjectsAsync(full, ct);
+                await roslyn.LoadAllProjectsAsync(full, ct: ct);
             else
                 await roslyn.LoadSolutionAsync(full, projectName, ct);
         }
@@ -490,7 +506,7 @@ public sealed class GraphTools(GraphStore store)
         if (IsSolution(full))
         {
             if (string.IsNullOrWhiteSpace(projectName))
-                await roslyn.LoadAllProjectsAsync(full, ct);
+                await roslyn.LoadAllProjectsAsync(full, ct: ct);
             else
                 await roslyn.LoadSolutionAsync(full, projectName, ct);
         }
@@ -573,7 +589,10 @@ public sealed class GraphTools(GraphStore store)
 
     private static string ToJson(object value) => JsonSerializer.Serialize(value, Json);
 
-    private static string Summarize(GraphStore.GraphEntry entry, IReadOnlyList<string>? vendorSkips = null)
+    private static string Summarize(
+        GraphStore.GraphEntry entry,
+        IReadOnlyList<string>? vendorSkips = null,
+        IReadOnlyList<string>? testProjectSkips = null)
     {
         var graph = entry.Graph;
         var nodeCounts = graph.Nodes.GroupBy(n => n.Type)
@@ -596,7 +615,10 @@ public sealed class GraphTools(GraphStore store)
             edgeCounts,
             // Present only on build responses that dropped vendor assets: a
             // silent skip would read as "everything was graphed".
-            skippedVendorAssets = vendorSkips is { Count: > 0 } ? vendorSkips : null
+            skippedVendorAssets = vendorSkips is { Count: > 0 } ? vendorSkips : null,
+            // Same contract for excluded test projects: this graph cannot
+            // answer coverage questions, and its summary must say why.
+            skippedTestProjects = testProjectSkips is { Count: > 0 } ? testProjectSkips : null
         });
     }
 

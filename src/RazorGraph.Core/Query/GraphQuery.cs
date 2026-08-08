@@ -91,24 +91,30 @@ public sealed class GraphQuery
     /// Test methods that exercise the given production method, nearest first.
     /// Covers edges point test -> code, so this is an incoming lookup.
     /// </summary>
-    public IEnumerable<(GraphNode Test, int Depth)> GetCoveringTests(string methodId) =>
-        _graph.Incoming(methodId)
+    public IEnumerable<(GraphNode Test, int Depth)> GetCoveringTests(string methodId)
+    {
+        RequireTestMethods("covering-tests");
+        return _graph.Incoming(methodId)
             .Where(e => e.Type == EdgeType.Covers)
             .Select(e => (Test: _graph.GetNode(e.FromId), Depth: e.GetProperty<int>("depth")))
             .Where(t => t.Test != null)
             .Select(t => (t.Test!, t.Depth))
             .OrderBy(t => t.Depth);
+    }
 
     /// <summary>
     /// Production methods a given test exercises, nearest first.
     /// </summary>
-    public IEnumerable<(GraphNode Method, int Depth)> GetCoveredMethods(string testId) =>
-        _graph.Outgoing(testId)
+    public IEnumerable<(GraphNode Method, int Depth)> GetCoveredMethods(string testId)
+    {
+        RequireTestMethods("covered-methods");
+        return _graph.Outgoing(testId)
             .Where(e => e.Type == EdgeType.Covers)
             .Select(e => (Method: _graph.GetNode(e.ToId), Depth: e.GetProperty<int>("depth")))
             .Where(t => t.Method != null)
             .Select(t => (t.Method!, t.Depth))
             .OrderBy(t => t.Depth);
+    }
 
     /// <summary>
     /// Methods with no test reaching them. Restricted to a project when given,
@@ -120,13 +126,32 @@ public sealed class GraphQuery
     /// declaration — so including them would report every interface in the
     /// solution as untested and make the whole report untrustworthy.
     /// </summary>
-    public IEnumerable<GraphNode> FindUncoveredMethods(string? project = null) =>
-        _graph.NodesOfType(NodeType.Method)
+    public IEnumerable<GraphNode> FindUncoveredMethods(string? project = null)
+    {
+        RequireTestMethods("uncovered-methods");
+        return _graph.NodesOfType(NodeType.Method)
             .Where(m => !m.GetProperty<bool>("isTest"))
             .Where(m => !m.GetProperty<bool>("isAbstract"))
             .Where(m => project == null ||
                         string.Equals(m.GetProperty<string>("project"), project, StringComparison.OrdinalIgnoreCase))
             .Where(m => !_graph.Incoming(m.Id).Any(e => e.Type == EdgeType.Covers));
+    }
+
+    /// <summary>
+    /// A coverage question against a graph containing no test methods has no
+    /// answer, not an empty one: every method would read as uncovered, which
+    /// is the absence-of-data-as-finding trap. Refusing loudly is the same
+    /// contract as the escapes guard in the MCP layer. Fires for graphs built
+    /// single-project or with tests excluded (--no-tests / excludeTests).
+    /// </summary>
+    private void RequireTestMethods(string operation)
+    {
+        if (!_graph.NodesOfType(NodeType.Method).Any(m => m.GetProperty<bool>("isTest")))
+            throw new InvalidOperationException(
+                $"{operation} needs a graph containing test methods, and this graph has none — "
+                + "built from a single project, or with tests excluded? Every method would read "
+                + "as uncovered, so refusing to answer. Rebuild with build-solution, without --no-tests.");
+    }
 
     /// <summary>
     /// Methods whose body nests control flow at least minDepth levels deep —

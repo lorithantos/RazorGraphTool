@@ -295,4 +295,23 @@ public class GraphQueryTests
         // The test method itself is never "uncovered production code".
         Assert.DoesNotContain("ListWorks", query.FindUncoveredMethods().Select(m => m.Name));
     }
+
+    [Fact]
+    public void CoverageQueries_RefuseAGraphWithNoTestMethods()
+    {
+        // A graph with no test methods cannot answer coverage questions — an
+        // empty answer would read as "everything is uncovered". The refusal
+        // must be loud, and it must be eager: the throw happens at the call,
+        // not when the result is finally enumerated.
+        var graph = new CodeGraph();
+        var node = new GraphNode { Id = "m:Lib.Load()", Type = NodeType.Method, Name = "Load" };
+        node.SetProperty("project", "Lib");
+        graph.AddNode(node);
+
+        var query = new GraphQuery(graph);
+
+        Assert.Throws<InvalidOperationException>(() => query.GetCoveringTests("m:Lib.Load()"));
+        Assert.Throws<InvalidOperationException>(() => query.GetCoveredMethods("m:Lib.Load()"));
+        Assert.Throws<InvalidOperationException>(() => query.FindUncoveredMethods("Lib"));
+    }
 }

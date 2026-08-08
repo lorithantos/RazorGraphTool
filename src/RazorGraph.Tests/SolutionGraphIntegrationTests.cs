@@ -21,6 +21,8 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     private static readonly SemaphoreSlim BuildGate = new(1, 1);
     private static CodeGraph? _solutionGraph;
     private static CodeGraph? _webOnlyGraph;
+    private static CodeGraph? _noTestsGraph;
+    private static IReadOnlyList<string>? _noTestsSkipped;
 
     private static string RepoRoot()
     {
@@ -57,6 +59,13 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
             {
                 _webOnlyGraph = await builder.BuildFromProjectAsync(
                     Path.Combine(fixtureDir, "SampleWeb", "SampleWeb.csproj"));
+            }
+
+            // The same solution without its tests — the lean navigation build.
+            await using (var builder = new GraphBuilder { ExcludeTestProjects = true })
+            {
+                _noTestsGraph = await builder.BuildFromSolutionAllAsync(solutionPath);
+                _noTestsSkipped = builder.SkippedTestProjects;
             }
         }
         finally
@@ -416,6 +425,43 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
             .ToList();
 
         Assert.DoesNotContain(declaration.Id, uncovered);
+    }
+
+    // ---- Excluding tests -----------------------------------------------------
+
+    [Fact]
+    public void NoTestsBuild_SkipsTestProjects_AndSaysSo()
+    {
+        var projects = _noTestsGraph!.NodesOfType(NodeType.Project).Select(p => p.Name).OrderBy(n => n).ToList();
+
+        // The test project was never compiled, and the skip is on record —
+        // a graph missing its tests must say so.
+        Assert.Equal(new[] { "SampleLib", "SampleWeb" }, projects);
+        Assert.Equal(new[] { "SampleWeb.Tests" }, _noTestsSkipped);
+    }
+
+    [Fact]
+    public void NoTestsBuild_HasNoTestMethodsAndNoCoversEdges()
+    {
+        Assert.DoesNotContain(_noTestsGraph!.NodesOfType(NodeType.Method), m => m.GetProperty<bool>("isTest"));
+        Assert.DoesNotContain(_noTestsGraph!.Edges, e => e.Type == EdgeType.Covers);
+
+        // Production topology is intact: the cross-project call is still there.
+        var onGet = Method(_noTestsGraph!, "SampleWeb.Pages.IndexModel", "OnGet");
+        Assert.Contains(_noTestsGraph!.Outgoing(onGet.Id),
+            e => e.Type == EdgeType.Calls && _noTestsGraph.GetNode(e.ToId)!.Name == "List");
+    }
+
+    [Fact]
+    public void CoverageQueries_RefuseTheNoTestsGraph()
+    {
+        // The guard that keeps "tests excluded" from ever reading as
+        // "everything is uncovered".
+        var query = new GraphQuery(_noTestsGraph!);
+        var load = Method(_noTestsGraph!, "SampleLib.CatalogStore", "List");
+
+        Assert.Throws<InvalidOperationException>(() => query.FindUncoveredMethods("SampleLib"));
+        Assert.Throws<InvalidOperationException>(() => query.GetCoveringTests(load.Id));
     }
 
     // ---- Members: properties, fields, statics --------------------------------

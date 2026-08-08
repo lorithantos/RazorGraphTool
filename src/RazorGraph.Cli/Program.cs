@@ -100,24 +100,30 @@ internal static class CliCommands
         {
             Description = "Also graph vendor/minified client assets (dropped by default); their nodes carry vendor=true"
         };
+        var noTestsOpt = new Option<bool>("--no-tests")
+        {
+            Description = "Skip test projects: no test Method nodes, no Covers edges. Coverage queries against the resulting graph refuse to answer rather than reporting everything uncovered."
+        };
 
         var cmd = new Command("build-solution",
             "Build ONE graph spanning every project in a solution, with edges that cross project boundaries");
         cmd.Add(pathArg);
         cmd.Add(outputOpt);
         cmd.Add(includeVendorOpt);
+        cmd.Add(noTestsOpt);
 
         cmd.SetAction((parseResult, ct) => RunBuildSolutionAsync(
             parseResult.GetValue(pathArg)!,
             parseResult.GetValue(outputOpt)!,
             parseResult.GetValue(includeVendorOpt),
+            parseResult.GetValue(noTestsOpt),
             ct));
 
         return cmd;
     }
 
     private static async Task<int> RunBuildSolutionAsync(
-        FileInfo path, string outputPath, bool includeVendor, CancellationToken ct)
+        FileInfo path, string outputPath, bool includeVendor, bool noTests, CancellationToken ct)
     {
         if (!path.Exists)
         {
@@ -134,7 +140,11 @@ internal static class CliCommands
         RoslynExtractor.EnsureMsBuildRegistered();
         Console.WriteLine($"Building solution graph from {path.FullName}...");
 
-        await using var builder = new GraphBuilder { IncludeVendorAssets = includeVendor };
+        await using var builder = new GraphBuilder
+        {
+            IncludeVendorAssets = includeVendor,
+            ExcludeTestProjects = noTests
+        };
         var graph = await builder.BuildFromSolutionAllAsync(path.FullName, ct);
 
         await WriteGraphAsync(graph, outputPath, ct);
@@ -142,6 +152,8 @@ internal static class CliCommands
         var projects = graph.NodesOfType(NodeType.Project).Select(p => p.Name).OrderBy(n => n).ToList();
         if (projects.Count > 0)
             Console.WriteLine($"Projects: {string.Join(", ", projects)}");
+        if (builder.SkippedTestProjects.Count > 0)
+            Console.WriteLine($"Test projects skipped: {string.Join(", ", builder.SkippedTestProjects)}");
 
         PrintSummary(graph);
         PrintEdgeSummary(graph);
@@ -252,16 +264,26 @@ internal static class CliCommands
         if (graph == null) return 1;
         var query = new GraphQuery(graph);
 
-        // Mode precedence, most specific first. This ordering is the command's
-        // contract; it used to be implicit in the order of if-blocks inside one
-        // long lambda.
-        if (options.Mismatches) return RunMismatches(query);
-        if (options.Escapes) return RunEscapes(query, options.EntryKind, options.ExceptionFilter, options.Project);
-        if (options.Uncovered) return RunUncovered(query, options.Project);
-        if (options.Deep > 0) return RunDeepListing(query, options.Deep, options.Project);
-        if (options.Id != null) return RunNodeReport(query, options.Id, options);
-        if (options.Type != null && Enum.TryParse<NodeType>(options.Type, true, out var type))
-            return RunTypeListing(query, type, options.Name, options.Project);
+        try
+        {
+            // Mode precedence, most specific first. This ordering is the command's
+            // contract; it used to be implicit in the order of if-blocks inside one
+            // long lambda.
+            if (options.Mismatches) return RunMismatches(query);
+            if (options.Escapes) return RunEscapes(query, options.EntryKind, options.ExceptionFilter, options.Project);
+            if (options.Uncovered) return RunUncovered(query, options.Project);
+            if (options.Deep > 0) return RunDeepListing(query, options.Deep, options.Project);
+            if (options.Id != null) return RunNodeReport(query, options.Id, options);
+            if (options.Type != null && Enum.TryParse<NodeType>(options.Type, true, out var type))
+                return RunTypeListing(query, type, options.Name, options.Project);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // The query layer refuses questions the graph cannot answer (e.g.
+            // coverage against a test-less graph). The refusal is the report.
+            Console.Error.WriteLine(ex.Message);
+            return 1;
+        }
 
         Console.WriteLine("Graph loaded. Use --id, --type, or --mismatches to query.");
         Console.WriteLine($"Total: {graph.Nodes.Count} nodes, {graph.Edges.Count} edges");
@@ -474,7 +496,7 @@ internal static class CliCommands
         if (IsSolutionFile(path))
         {
             if (string.IsNullOrWhiteSpace(projectName))
-                await roslyn.LoadAllProjectsAsync(path.FullName, ct);
+                await roslyn.LoadAllProjectsAsync(path.FullName, ct: ct);
             else
                 await roslyn.LoadSolutionAsync(path.FullName, projectName, ct);
         }
@@ -561,7 +583,7 @@ internal static class CliCommands
         if (IsSolutionFile(path))
         {
             if (string.IsNullOrWhiteSpace(projectName))
-                await roslyn.LoadAllProjectsAsync(path.FullName, ct);
+                await roslyn.LoadAllProjectsAsync(path.FullName, ct: ct);
             else
                 await roslyn.LoadSolutionAsync(path.FullName, projectName, ct);
         }

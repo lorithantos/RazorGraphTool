@@ -19,6 +19,10 @@ dotnet run --project src/RazorGraph.Cli -- build path/to/App.csproj -o graph.jso
 # A whole solution: the only way to get edges that cross a project boundary
 dotnet run --project src/RazorGraph.Cli -- build-solution path/to/App.sln -o solution-graph.json
 
+# Lean navigation graph: skip test projects (no Covers edges — often ~80% of the total).
+# Coverage queries refuse a test-less graph rather than reporting everything uncovered.
+dotnet run --project src/RazorGraph.Cli -- build-solution path/to/App.sln --no-tests -o nav-graph.json
+
 # Ask it things
 dotnet run --project src/RazorGraph.Cli -- query graph.json --type RazorPage
 dotnet run --project src/RazorGraph.Cli -- query graph.json --id "page:Pages/Index.cshtml" --context
@@ -116,7 +120,12 @@ test, so work done there is exercised even though no test calls it. A "covered" 
 is one some test *can* reach — not one a test asserted on. Edges are only emitted across
 a project boundary, so `build_solution` is required; `uncovered_methods` excludes
 bodiless interface and abstract declarations, which never bind a call and would
-otherwise swamp the report.
+otherwise swamp the report. Coverage queries **refuse a graph containing no test
+methods** — single-project builds and `--no-tests` / `excludeTests` builds — because an
+empty answer would read as "everything is uncovered". `--no-tests` skips test projects
+before compiling them, which on a well-tested solution drops most of the edge volume;
+the skipped projects are always reported, on stderr and in the build summary's
+`skippedTestProjects`.
 
 **Extension methods are part of the type they extend.** A reduced extension call
 (`money.Add(b)`) binds to the same node as the static declaration — the `this`

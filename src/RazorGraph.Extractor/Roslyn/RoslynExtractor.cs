@@ -82,15 +82,28 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// were compiled, so a graph built one project at a time can never contain
     /// an edge from a test to the code it tests.
     /// </summary>
-    public async Task<IReadOnlyList<LoadedProject>> LoadAllProjectsAsync(string solutionPath, CancellationToken ct = default)
+    public async Task<IReadOnlyList<LoadedProject>> LoadAllProjectsAsync(
+        string solutionPath, bool excludeTestProjects = false, CancellationToken ct = default)
     {
         _workspace = MSBuildWorkspace.Create();
         Solution = await _workspace.OpenSolutionAsync(solutionPath, cancellationToken: ct);
 
         _loaded.Clear();
+        _skippedTestProjects.Clear();
         foreach (var project in Solution.Projects)
         {
             ct.ThrowIfCancellationRequested();
+
+            // The test decision is made from metadata references, before the
+            // compile — skipping the compile is the point of excluding. Skips
+            // are recorded and reported, never silent: a graph missing its
+            // tests must say so, or every coverage query against it lies.
+            if (excludeTestProjects && IsTestProject(project))
+            {
+                _skippedTestProjects.Add(project.Name);
+                Console.Error.WriteLine($"Info: skipped test project '{project.Name}' (tests excluded).");
+                continue;
+            }
 
             // A project that will not compile is reported and skipped rather than
             // failing the whole solution: a partial graph beats no graph, and the
@@ -110,6 +123,26 @@ public sealed class RoslynExtractor : IAsyncDisposable
 
         return _loaded;
     }
+
+    /// <summary>Test projects skipped by the most recent load, empty unless exclusion was asked for.</summary>
+    public IReadOnlyList<string> SkippedTestProjects => _skippedTestProjects;
+    private readonly List<string> _skippedTestProjects = new();
+
+    /// <summary>
+    /// A test project is one referencing a test framework. Decided from
+    /// metadata reference file names so no compilation is needed — the same
+    /// name-based membership reasoning InScopeMethodId documents. Production
+    /// code does not reference xunit/NUnit/MSTest, so a false positive here
+    /// would be a project already lying about what it is.
+    /// </summary>
+    private static bool IsTestProject(Project project) =>
+        project.MetadataReferences
+            .OfType<PortableExecutableReference>()
+            .Select(r => Path.GetFileNameWithoutExtension(r.FilePath ?? ""))
+            .Any(name =>
+                name.StartsWith("xunit", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("nunit.framework", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("Microsoft.VisualStudio.TestPlatform", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Extract all relevant symbols: PageModels, Controllers, Services, ViewModels.

@@ -47,6 +47,18 @@ public sealed class GraphBuilder : IAsyncDisposable
     public IReadOnlyList<string> AssetSkipSummaries => _assetSkipSummaries;
     private readonly List<string> _assetSkipSummaries = new();
 
+    /// <summary>
+    /// Skip test projects when building from a solution — no test Method
+    /// nodes, no Covers edges, roughly a fifth of the edges on a well-tested
+    /// solution. Off by default: the default graph must be able to answer
+    /// every question, and a coverage query against a test-less graph would
+    /// report everything uncovered. Skipped projects are always reported.
+    /// </summary>
+    public bool ExcludeTestProjects { get; set; }
+
+    /// <summary>Test projects the solution load skipped; empty unless ExcludeTestProjects.</summary>
+    public IReadOnlyList<string> SkippedTestProjects => _roslyn.SkippedTestProjects;
+
     public async Task<CodeGraph> BuildFromProjectAsync(string projectPath, CancellationToken ct = default)
     {
         var projectDir = Path.GetDirectoryName(Path.GetFullPath(projectPath))
@@ -79,7 +91,7 @@ public sealed class GraphBuilder : IAsyncDisposable
     /// </summary>
     public async Task<CodeGraph> BuildFromSolutionAllAsync(string solutionPath, CancellationToken ct = default)
     {
-        await _roslyn.LoadAllProjectsAsync(solutionPath, ct);
+        await _roslyn.LoadAllProjectsAsync(solutionPath, ExcludeTestProjects, ct);
         return BuildSolutionGraph();
     }
 
