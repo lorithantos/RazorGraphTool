@@ -7,17 +7,18 @@ using RazorGraph.Mcp;
 using Xunit;
 
 /// <summary>
-/// First tests at the MCP tool layer: GraphTools over a hand-built graph in a
-/// plain GraphStore, results parsed back out of the JSON the model would see.
-/// Currently covers exception_escapes; the rest of the surface is a known gap.
+/// First tests at the MCP tool layer: ExceptionEscapeTools over a hand-built
+/// graph in a plain GraphStore, results parsed back out of the JSON the model
+/// would see. Covers exception_escapes; the rest of the tool surface (the
+/// other tool-family classes) is a known gap.
 /// </summary>
 public class GraphToolsTests
 {
-    private static GraphTools ToolsOver(CodeGraph graph)
+    private static ExceptionEscapeTools ToolsOver(CodeGraph graph)
     {
         var store = new GraphStore();
         store.Add(graph, source: "test://hand-built", requestedId: "g");
-        return new GraphTools(store);
+        return new ExceptionEscapeTools(store);
     }
 
     private static CodeGraph EscapeGraph()
