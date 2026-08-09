@@ -550,21 +550,14 @@ public sealed class GraphTools(GraphStore store)
         var graph = store.Require(graphId).Graph;
         if (focusIds.Length == 0) throw new McpException("At least one focus node id is required.");
 
-        var missing = focusIds.Where(id => !graph.HasNode(id)).ToList();
+        // Scoring lives in Core (GraphQuery.ComputeRelevance) — shared with
+        // the CLI twin. Only the missing-focus policy is this front end's:
+        // hard error, because a model that typo'd an id should be told, not
+        // handed a quietly smaller subgraph.
+        var (relevance, missing) = new GraphQuery(graph)
+            .ComputeRelevance(focusIds, depth, ParseDirection(direction));
         if (missing.Count > 0)
             throw new McpException($"Focus node(s) not in graph: {string.Join(", ", missing)}. Use find_nodes to discover ids.");
-
-        var dir = ParseDirection(direction);
-        var relevance = focusIds.Distinct().ToDictionary(id => id, _ => 1.0);
-        foreach (var id in relevance.Keys.ToList())
-        {
-            foreach (var (node, _, d) in graph.Traverse(id, edgeFilter: null, maxDepth: depth, direction: dir))
-            {
-                var score = 1.0 / (1 + d);
-                if (!relevance.TryGetValue(node.Id, out var existing) || score > existing)
-                    relevance[node.Id] = score;
-            }
-        }
 
         return GraphSerializer.ToResearchDocument(graph, relevance, query, threshold);
     }

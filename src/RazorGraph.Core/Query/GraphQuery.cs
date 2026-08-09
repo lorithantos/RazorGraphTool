@@ -138,6 +138,42 @@ public sealed class GraphQuery
     }
 
     /// <summary>
+    /// The relevance map behind a research selection: focus nodes score 1.0,
+    /// every node reachable within maxDepth scores 1/(1+depth), and when
+    /// multiple focus nodes reach the same node the best (nearest) score
+    /// wins. Unknown focus ids come back in MissingFocusIds rather than
+    /// throwing: whether a missing focus is a warning (CLI) or a hard error
+    /// (MCP) is front-end policy. The scoring rule itself must not fork per
+    /// front end — it lived as two copies once, and they had already diverged
+    /// on direction support when this method un-forked them.
+    /// </summary>
+    public (Dictionary<string, double> Relevance, List<string> MissingFocusIds) ComputeRelevance(
+        IEnumerable<string> focusIds,
+        int maxDepth,
+        TraversalDirection direction = TraversalDirection.Outgoing)
+    {
+        var relevance = new Dictionary<string, double>();
+        var missing = new List<string>();
+        foreach (var id in focusIds.Distinct())
+        {
+            if (!_graph.HasNode(id)) { missing.Add(id); continue; }
+            relevance[id] = 1.0;
+        }
+
+        foreach (var id in relevance.Keys.ToList())
+        {
+            foreach (var (node, _, depth) in _graph.Traverse(id, edgeFilter: null, maxDepth: maxDepth, direction: direction))
+            {
+                var score = 1.0 / (1 + depth);
+                if (!relevance.TryGetValue(node.Id, out var existing) || score > existing)
+                    relevance[node.Id] = score;
+            }
+        }
+
+        return (relevance, missing);
+    }
+
+    /// <summary>
     /// A coverage question against a graph containing no test methods has no
     /// answer, not an empty one: every method would read as uncovered, which
     /// is the absence-of-data-as-finding trap. Refusing loudly is the same

@@ -683,14 +683,17 @@ internal static class CliCommands
         var graph = await LoadGraphAsync(graphFile, ct);
         if (graph == null) return 1;
 
-        var relevance = SeedRelevance(graph, focusIds);
+        // Scoring lives in Core (GraphQuery.ComputeRelevance) — shared with
+        // the MCP twin. Only the missing-focus policy is this front end's:
+        // warn and continue with what resolved, fail only if nothing did.
+        var (relevance, missing) = new GraphQuery(graph).ComputeRelevance(focusIds, depth);
+        if (missing.Count > 0)
+            Console.Error.WriteLine($"Warning: focus node(s) not in graph: {string.Join(", ", missing)}");
         if (relevance.Count == 0)
         {
             Console.Error.WriteLine("No focus nodes found in the graph; nothing to export.");
             return 1;
         }
-
-        SpreadRelevance(graph, relevance, depth);
 
         var json = GraphSerializer.ToResearchDocument(graph, relevance, queryText, threshold);
         var outputDir = Path.GetDirectoryName(Path.GetFullPath(outputPath));
@@ -701,34 +704,6 @@ internal static class CliCommands
         Console.WriteLine($"Research document: {included} of {relevance.Count} reached nodes at threshold {threshold}");
         Console.WriteLine($"Output written to {outputPath}");
         return 0;
-    }
-
-    private static Dictionary<string, double> SeedRelevance(CodeGraph graph, string[] focusIds)
-    {
-        var relevance = new Dictionary<string, double>();
-        var missing = new List<string>();
-        foreach (var id in focusIds)
-        {
-            if (!graph.HasNode(id)) { missing.Add(id); continue; }
-            relevance[id] = 1.0;
-        }
-
-        if (missing.Count > 0)
-            Console.Error.WriteLine($"Warning: focus node(s) not in graph: {string.Join(", ", missing)}");
-        return relevance;
-    }
-
-    private static void SpreadRelevance(CodeGraph graph, Dictionary<string, double> relevance, int depth)
-    {
-        foreach (var id in relevance.Keys.ToList())
-        {
-            foreach (var (node, _, d) in graph.Traverse(id, edgeFilter: null, maxDepth: depth))
-            {
-                var score = 1.0 / (1 + d);
-                if (!relevance.TryGetValue(node.Id, out var existing) || score > existing)
-                    relevance[node.Id] = score;
-            }
-        }
     }
 
     private static bool IsSolutionFile(FileInfo path) =>

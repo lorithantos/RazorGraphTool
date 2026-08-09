@@ -297,6 +297,29 @@ public class GraphQueryTests
     }
 
     [Fact]
+    public void ComputeRelevance_ScoresFocusFullAndDecaysByDepth_BestWins()
+    {
+        // A -> B -> C, and D -> C. Focusing A and D: C is depth 2 from A
+        // (score 1/3) but depth 1 from D (score 1/2) — the nearest wins.
+        var graph = new CodeGraph();
+        foreach (var id in new[] { "m:A()", "m:B()", "m:C()", "m:D()" })
+            graph.AddNode(new GraphNode { Id = id, Type = NodeType.Method, Name = id });
+        graph.AddEdge(new GraphEdge { FromId = "m:A()", ToId = "m:B()", Type = EdgeType.Calls });
+        graph.AddEdge(new GraphEdge { FromId = "m:B()", ToId = "m:C()", Type = EdgeType.Calls });
+        graph.AddEdge(new GraphEdge { FromId = "m:D()", ToId = "m:C()", Type = EdgeType.Calls });
+
+        var (relevance, missing) = new GraphQuery(graph)
+            .ComputeRelevance(new[] { "m:A()", "m:D()", "m:Nope()" }, maxDepth: 3);
+
+        // Missing ids are data for the caller's policy, never an exception here.
+        Assert.Equal(new[] { "m:Nope()" }, missing);
+        Assert.Equal(1.0, relevance["m:A()"]);
+        Assert.Equal(1.0, relevance["m:D()"]);
+        Assert.Equal(0.5, relevance["m:B()"]);
+        Assert.Equal(0.5, relevance["m:C()"]);
+    }
+
+    [Fact]
     public void CoverageQueries_RefuseAGraphWithNoTestMethods()
     {
         // A graph with no test methods cannot answer coverage questions — an
