@@ -8,6 +8,7 @@
     "INCOMPLETE BY CONSTRUCTION: only catalogedVersions were read, and Adobe has shipped beyond them. A module missing here may simply be newer, so an unrecognised import must be reported as unknown-to-this-catalogue, never as nonexistent.",
     "UNDOCUMENTED MODULES: undocumentedModules holds namespaces imported by Adobe's own sample plug-ins that appear on no API Reference page. They are real and usable, but no published documentation describes them, so anything built on them is built on observation. Read from the sample sources, not from the SDK guide PDFs, whose extracted text runs words together and would poison this list with fragments.",
     "seenIn on an undocumented module is the earliest CATALOGUED version whose samples import it, not the release that introduced it. With gaps between catalogued versions the two can be far apart: LrController and LrTableUtils have no trace at all in 3.0 or 8.0 and appear in 15.3, so all that can be said is that they arrived somewhere in between -- possibly documented at the time and undocumented since.",
+    "MANIFEST KEYS: manifestKeys lists what an Info.lua may declare. source=samples means observed in Adobe's example plug-ins and therefore exact but only as complete as their usage; source=guide means read from the SDK guide's manifest table, which also supplies type and whether the key is required. Guide-derived entries depend on pre-extracted text being supplied, so their absence means nobody supplied it, not that the guide lists nothing.",
     "PROVENANCE: sourced only from SDK packages downloaded from Adobe's Developer Console (https://developer.adobe.com/console/73617/servicesandapis), which requires an Adobe ID. Each entry in provenance is the version line the package states about ITSELF, checked against the folder it was read from. Third-party mirrors and legacy download hosts are not acceptable sources: a catalogue claiming to be authoritative about Adobe's API surface is worth nothing if its contents came from somewhere unverifiable."
   ],
   "name": "lightroom-classic",
@@ -242,6 +243,126 @@
       "evidence": [
         "15.3: .\\Sample Plugins\\remote_control_socket.lrdevplugin\\start.lua"
       ]
+    }
+  },
+  "manifestKeys": {
+    "LrAlsoUseBuiltInTranslations": {
+      "source": "guide",
+      "required": false,
+      "type": "Boolean"
+    },
+    "LrDisablePlugin": {
+      "source": "samples+guide",
+      "usedBySamples": 2,
+      "required": false,
+      "type": "string"
+    },
+    "LrEnablePlugin": {
+      "source": "guide",
+      "required": false,
+      "type": "string"
+    },
+    "LrExportFilterProvider": {
+      "source": "samples+guide",
+      "usedBySamples": 3,
+      "required": false,
+      "type": "table"
+    },
+    "LrExportMenuItems": {
+      "source": "samples",
+      "usedBySamples": 6
+    },
+    "LrExportServiceProvider": {
+      "source": "samples+guide",
+      "usedBySamples": 2,
+      "required": false,
+      "type": "table"
+    },
+    "LrForceInitPlugin": {
+      "source": "samples+guide",
+      "usedBySamples": 2,
+      "required": false,
+      "type": "Boolean"
+    },
+    "LrHelpMenuItems": {
+      "source": "guide",
+      "required": false,
+      "type": "table"
+    },
+    "LrHttpHandler": {
+      "source": "samples",
+      "usedBySamples": 1
+    },
+    "LrInitPlugin": {
+      "source": "samples+guide",
+      "usedBySamples": 1,
+      "required": false,
+      "type": "string"
+    },
+    "LrLibraryMenuItems": {
+      "source": "samples+guide",
+      "usedBySamples": 2,
+      "required": false,
+      "type": "table"
+    },
+    "LrLimitNumberOfTempRenditions": {
+      "source": "guide",
+      "required": false,
+      "type": "Boolean"
+    },
+    "LrMetadataProvider": {
+      "source": "samples+guide",
+      "usedBySamples": 2,
+      "required": false,
+      "type": "table"
+    },
+    "LrMetadataTagsetFactory": {
+      "source": "samples+guide",
+      "usedBySamples": 2,
+      "required": false,
+      "type": "table"
+    },
+    "LrPluginInfoProvider": {
+      "source": "samples+guide",
+      "usedBySamples": 1,
+      "required": false,
+      "type": "string"
+    },
+    "LrPluginInfoUrl": {
+      "source": "samples",
+      "usedBySamples": 1
+    },
+    "LrPluginName": {
+      "source": "samples",
+      "usedBySamples": 13
+    },
+    "LrSdkMinimumVersion": {
+      "source": "samples",
+      "usedBySamples": 8
+    },
+    "LrSdkVersion": {
+      "source": "samples+guide",
+      "usedBySamples": 13,
+      "required": true,
+      "type": "number"
+    },
+    "LrShutdownApp": {
+      "source": "samples+guide",
+      "usedBySamples": 1,
+      "required": false,
+      "type": "string"
+    },
+    "LrShutdownPlugin": {
+      "source": "samples+guide",
+      "usedBySamples": 2,
+      "required": false,
+      "type": "string"
+    },
+    "LrToolkitIdentifier": {
+      "source": "samples+guide",
+      "usedBySamples": 13,
+      "required": true,
+      "type": "string"
     }
   }
 }

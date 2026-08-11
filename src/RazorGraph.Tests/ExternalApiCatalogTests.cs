@@ -112,6 +112,59 @@ public class ExternalApiCatalogTests
         });
     }
 
+    // ---- Info.lua manifest keys -------------------------------------------
+
+    [Fact]
+    public void ManifestKeys_CarryTheRequiredOnesFromTheSpecification()
+    {
+        // Only the guide can say what is mandatory; the samples show usage, not
+        // obligation. These two are the whole of what a manifest must declare.
+        var required = Catalog.ManifestKeys.Where(k => k.Value.Required == true).Select(k => k.Key).OrderBy(k => k);
+
+        Assert.Equal(["LrSdkVersion", "LrToolkitIdentifier"], required);
+    }
+
+    [Fact]
+    public void ManifestKeys_RecoverNamesBrokenAcrossALineInTheGuide()
+    {
+        // Both were truncated at a hyphenated line break -- LrAlsoUseBuiltInTransla
+        // and LrLimitNumberOfTempRend. Rejoining recovers them exactly, and getting
+        // this wrong means shipping half a key name as if it were whole.
+        Assert.True(Catalog.ManifestKeys.ContainsKey("LrAlsoUseBuiltInTranslations"));
+        Assert.True(Catalog.ManifestKeys.ContainsKey("LrLimitNumberOfTempRenditions"));
+    }
+
+    [Fact]
+    public void ManifestKeys_SplitRowsThatDocumentTwoKeysTogether()
+    {
+        // The guide documents LrLibraryMenuItems and LrHelpMenuItems in one table
+        // row, which arrives concatenated. Left joined, neither key is findable.
+        Assert.True(Catalog.ManifestKeys.ContainsKey("LrLibraryMenuItems"));
+        Assert.True(Catalog.ManifestKeys.ContainsKey("LrHelpMenuItems"));
+        Assert.DoesNotContain(Catalog.ManifestKeys.Keys, k => k.Contains("ItemsLr"));
+    }
+
+    [Fact]
+    public void ManifestKeys_NameTheirSource()
+    {
+        // Confidence is not uniform: samples are exact but partial, the guide is
+        // the specification. A reader must be able to tell which produced a key.
+        Assert.All(Catalog.ManifestKeys.Values, k =>
+            Assert.Contains(k.Source, new[] { "samples", "guide", "samples+guide" }));
+
+        // Keys the examples never use are exactly why the guide is worth reading.
+        Assert.Contains(Catalog.ManifestKeys, k => k.Value.Source == "guide");
+    }
+
+    [Fact]
+    public void ManifestKeys_AreNotConfusedWithModules()
+    {
+        // Both vocabularies are Lr-prefixed and both come out of the same SDK, but
+        // LrExportServiceProvider is a manifest key and LrDialogs is a module.
+        // Cataloguing one as the other would make import resolution nonsense.
+        Assert.DoesNotContain(Catalog.ManifestKeys.Keys, Catalog.Modules.ContainsKey);
+    }
+
     [Fact]
     public void Classify_MentionsBeingOutOfDateOnlyWhenItIs()
     {

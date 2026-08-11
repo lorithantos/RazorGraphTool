@@ -48,6 +48,18 @@ public sealed record ExternalApiProvenance(
 /// <param name="Evidence">Where it was observed, so the claim can be re-checked.</param>
 public sealed record UndocumentedApiModule(List<string> SeenIn, List<string> Evidence);
 
+/// <summary>
+/// A key a plug-in manifest may declare.
+/// </summary>
+/// <param name="Source">
+/// "samples" (observed in the vendor's examples -- exact, but only as complete as
+/// their usage), "guide" (read from the specification), or "samples+guide".
+/// </param>
+/// <param name="Required">Null unless the specification said; the samples cannot tell.</param>
+/// <param name="Type">Declared value type, where the specification gave one.</param>
+/// <param name="UsedBySamples">How many example manifests declare it.</param>
+public sealed record ManifestKey(string Source, bool? Required = null, string? Type = null, int UsedBySamples = 0);
+
 /// <summary>What a catalogue concluded about one referenced module name.</summary>
 public abstract record ExternalApiVerdict
 {
@@ -129,6 +141,12 @@ public sealed class ExternalApiCatalog
     /// reference page. Real, usable, and undescribed.
     /// </summary>
     [JsonPropertyName("undocumentedModules")] public Dictionary<string, UndocumentedApiModule> UndocumentedModules { get; init; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Keys an Info.lua-style manifest may declare, with the type and
+    /// required/optional flag where the specification supplied them.
+    /// </summary>
+    [JsonPropertyName("manifestKeys")] public Dictionary<string, ManifestKey> ManifestKeys { get; init; } = new(StringComparer.Ordinal);
 
     /// <summary>True when this catalogue stops short of the newest known release.</summary>
     public bool IsBehindLatest =>
