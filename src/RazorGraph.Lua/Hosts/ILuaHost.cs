@@ -1,6 +1,7 @@
 namespace RazorGraph.Lua.Hosts;
 
 using RazorGraph.Core.Graph;
+using RazorGraph.Lua.Checks;
 
 /// <summary>
 /// Which Lua dialect a host runs. Our own enum rather than the parser's, so the
@@ -162,6 +163,21 @@ public interface ILuaHost
     /// with everything its functions call.
     /// </summary>
     void AnnotateExternalCalls(GraphNode node, IReadOnlyList<ExternalCall> calls) { }
+
+    /// <summary>
+    /// Checks this environment can make that no other can.
+    ///
+    /// The extension point for the second half of the job. Understanding what the
+    /// code IS belongs to the extractor; knowing what it SHOULD be is host
+    /// knowledge — which SDK functions exist, which version they need, which
+    /// manifest keys are required — and it arrives with the host rather than
+    /// through a switch in the checker.
+    ///
+    /// Optional, like the rest of this interface's second half: a host with no
+    /// opinion stays a three-method implementation and still gets the language
+    /// rules, which run for everyone.
+    /// </summary>
+    IEnumerable<ILuaRule> Rules => [];
 }
 
 /// <summary>

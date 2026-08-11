@@ -37,13 +37,25 @@ public sealed record LuaCall(
     string Form,
     int Line);
 
+/// <summary>
+/// A construct this host's Lua rejects that a later Lua accepts.
+///
+/// Kept apart from an ordinary parse failure because they call for opposite
+/// responses: a malformed file is broken everywhere, while this one is
+/// well-formed Lua aimed at the wrong version — the single most likely mistake
+/// in generated code, since the public corpus skews 5.3/5.4 and Lightroom runs
+/// 5.1. Reporting it as "failed to parse" hides exactly the thing worth saying.
+/// </summary>
+public sealed record LuaSyntaxRejection(int Line, string Message);
+
 /// <summary>What one parsed file yielded.</summary>
 public sealed record LuaFileDeclarations(
     LuaSourceFile File,
     IReadOnlyList<LuaFunction> Functions,
     IReadOnlyList<LuaReference> References,
     IReadOnlyList<string> ParseErrors,
-    IReadOnlyList<LuaCall> Calls);
+    IReadOnlyList<LuaCall> Calls,
+    IReadOnlyList<LuaSyntaxRejection> DialectRejections);
 
 /// <summary>
 /// Parses Lua and yields declarations. The ONLY file in the codebase that knows
@@ -61,11 +73,16 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
         // Diagnostics are collected, not thrown. One unparseable file in a
         // 1,309-file corpus must not abort the run: the graph is worth having
         // minus that file, and the failure is worth reporting rather than hiding.
-        var errors = tree.GetDiagnostics()
+        var diagnostics = tree.GetDiagnostics()
             .Where(d => d.Severity == DiagnosticSeverity.Error)
+            .ToList();
+
+        var errors = diagnostics
             .Select(d => $"{d.Location.GetLineSpan().StartLinePosition.Line + 1}: {d.GetMessage()}")
             .Take(5)
             .ToList();
+
+        var dialectRejections = DialectRejections(source, file, diagnostics);
 
         var functions = new List<LuaFunction>();
         var references = new List<LuaReference>();
@@ -140,7 +157,42 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
             }
         }
 
-        return new LuaFileDeclarations(file, functions, references, errors, calls);
+        return new LuaFileDeclarations(file, functions, references, errors, calls, dialectRejections);
+    }
+
+    /// <summary>
+    /// Which of this file's parse errors are the HOST's Lua refusing valid
+    /// later-Lua, rather than the file being broken.
+    ///
+    /// Decided by re-parsing permissively: if every dialect accepts it and this
+    /// host's does not, the construct exists and is simply out of reach here —
+    /// <c>goto</c>, integer division, bitwise operators, all fine from 5.2 or 5.3
+    /// onward and all dead in Lightroom's 5.1. That is a different sentence from
+    /// "failed to parse", and it is the one a reader can act on.
+    ///
+    /// Only runs when the first parse already failed, so a clean file costs
+    /// nothing.
+    /// </summary>
+    private IReadOnlyList<LuaSyntaxRejection> DialectRejections(
+        string source, LuaSourceFile file, IReadOnlyList<Diagnostic> diagnostics)
+    {
+        if (diagnostics.Count == 0) return [];
+
+        // Nothing to compare against: this IS the permissive setting.
+        if (SyntaxOptionsFor(host.Dialect) == LuaSyntaxOptions.All) return [];
+
+        var permissive = LuaSyntaxTree.ParseText(
+            source, new LuaParseOptions(LuaSyntaxOptions.All), file.FullPath);
+
+        // Still broken when every dialect is allowed: the file is malformed, and
+        // saying "wrong Lua version" would send someone looking for a setting.
+        if (permissive.GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error)) return [];
+
+        return diagnostics
+            .Select(d => new LuaSyntaxRejection(
+                d.Location.GetLineSpan().StartLinePosition.Line + 1, d.GetMessage()))
+            .Take(10)
+            .ToList();
     }
 
     /// <summary>
@@ -209,6 +261,18 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
         {
             switch (ancestor)
             {
+                // local logger = import 'LrLogger'( 'name' )
+                //
+                // The import is being CALLED, so the variable holds what it
+                // returned -- a logger object -- not the module. Binding it as
+                // the module attributes logger:trace() to LrLogger.trace, a
+                // module function that does not exist: three of Adobe's own
+                // samples reported exactly that before this case existed. The
+                // import itself is still recorded; only the binding is refused.
+                case FunctionCallExpressionSyntax invoked when ReferenceEquals(invoked.Expression, child):
+                case MethodCallExpressionSyntax method when ReferenceEquals(method.Expression, child):
+                    return null;
+
                 case EqualsValuesClauseSyntax equals when equals.Parent is LocalVariableDeclarationStatementSyntax local:
                 {
                     var index = IndexOf(equals.Values, child);

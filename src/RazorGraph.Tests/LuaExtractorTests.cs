@@ -463,6 +463,96 @@ public class LuaExtractorTests
         Assert.Contains("LrDialogs.message", module.GetProperty<List<string>>("sdkCalls")!);
     }
 
+    // ---- Checks ------------------------------------------------------------
+    // The other half of the job: the graph says what is there, a rule says
+    // whether it is right. For a language a model writes fluently and knows
+    // shallowly, the second question is the one that bites.
+
+    [Fact]
+    public void Dialect_LaterLuaInAnOlderHost_IsAnError()
+    {
+        // The likeliest mistake in generated Lua: the public corpus skews
+        // 5.3/5.4 and Lightroom embeds 5.1, so goto reads perfectly and does not
+        // exist. Decidable -- the parser either takes it at 5.1 or it does not.
+        using var tree = new TempTree();
+        tree.Write("p.lrdevplugin/Info.lua", "return {}");
+        tree.Write("p.lrdevplugin/Jump.lua", """
+            local function f()
+              for i = 1, 10 do
+                if i > 5 then goto continue end
+                ::continue::
+              end
+            end
+            return f
+            """);
+
+        var (_, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        var finding = Assert.Single(report.Findings, f => f.RuleId == "lua.dialect");
+        Assert.Equal(Lua.Checks.LuaSeverity.Error, finding.Severity);
+        Assert.Contains("Lua 5.1", finding.Message);
+        Assert.Contains("lightroom", finding.Message);
+    }
+
+    [Fact]
+    public void Dialect_TheSameSourceUnderAHostThatAllowsIt_IsSilent()
+    {
+        // The rule is about the HOST's version, not about the construct. LuaJIT
+        // takes goto, so there is nothing to say.
+        using var tree = new TempTree();
+        tree.Write("a.lua", "local function f() for i = 1, 3 do goto continue end ::continue:: end\nreturn f");
+
+        var (_, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        Assert.DoesNotContain(report.Findings, f => f.RuleId == "lua.dialect");
+    }
+
+    [Fact]
+    public void Dialect_AMalformedFile_IsNotBlamedOnTheVersion()
+    {
+        // Broken under every dialect, so "wrong Lua version" would send someone
+        // hunting a setting. It stays a parse failure.
+        using var tree = new TempTree();
+        tree.Write("p.lrdevplugin/Info.lua", "return {}");
+        tree.Write("p.lrdevplugin/Broken.lua", "local function ( end end end");
+
+        var (_, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        Assert.DoesNotContain(report.Findings, f => f.RuleId == "lua.dialect");
+        Assert.NotEmpty(report.ParseFailures);
+    }
+
+    [Fact]
+    public void Rules_ArriveWithTheHost()
+    {
+        // The extension seam: SDK knowledge belongs to the environment that has
+        // an SDK, not to a switch inside the checker. A host with no opinion
+        // still gets the language rules.
+        // Through the interface: Rules is a default member, so a host that adds
+        // nothing does not even mention it -- which is the point of the seam.
+        ILuaHost lightroom = new LightroomHost(Path.GetTempPath());
+        ILuaHost luaRocks = new LuaRocksHost(Path.GetTempPath());
+
+        Assert.Contains(lightroom.Rules, r => r.Id == "lightroom.sdk-surface");
+        Assert.Empty(luaRocks.Rules);
+    }
+
+    [Fact]
+    public void References_CallingTheImportResult_DoesNotBindTheModule()
+    {
+        // local logger = import 'LrLogger'( 'name' ) binds the logger OBJECT, so
+        // logger:trace() is a method on that object, not LrLogger.trace. Binding
+        // the module reported a function that does not exist, in three of
+        // Adobe's own sample plug-ins.
+        var decl = Extract(
+            "local logger = import 'LrLogger'( 'MyPlugin' )\nreturn {}",
+            new LightroomHost(Path.GetTempPath()));
+
+        var reference = Assert.Single(decl.References);
+        Assert.Equal("LrLogger", reference.Target);
+        Assert.Null(reference.BoundTo);
+    }
+
     /// <summary>A throwaway directory tree, removed on dispose.</summary>
     private sealed class TempTree : IDisposable
     {

@@ -1,6 +1,7 @@
 namespace RazorGraph.Lua;
 
 using RazorGraph.Core.Graph;
+using RazorGraph.Lua.Checks;
 using RazorGraph.Lua.Hosts;
 
 /// <summary>
@@ -19,7 +20,8 @@ public sealed record LuaBuildReport(
     IReadOnlyList<string> ParseFailures,
     string? StructuralCaveat,
     IReadOnlyList<string> SkippedVendorFiles,
-    LuaCallReport Calls);
+    LuaCallReport Calls,
+    IReadOnlyList<LuaFinding> Findings);
 
 /// <summary>
 /// What became of the call sites. Counted rather than listed, because the
@@ -266,13 +268,58 @@ public sealed class LuaGraphBuilder
                 "the host's module naming is not unique across this tree.");
         }
 
+        var findings = RunRules(declarations, host);
+
         var report = new LuaBuildReport(
             host.Name, evidence ?? "host supplied by caller",
             moduleCount, functions, resolved, external,
-            unresolved, parseFailures, caveat, vendorSkips, callReport);
+            unresolved, parseFailures, caveat, vendorSkips, callReport, findings);
 
         return (_graph, report);
     }
+
+    /// <summary>
+    /// Run the language rules and whatever the host adds.
+    ///
+    /// Run during the BUILD rather than behind a separate command, so findings
+    /// reach every surface the build already has — the same reason unbound
+    /// shapes are reported here. A check nobody runs is not a check.
+    ///
+    /// A rule that throws is reported and skipped: one broken rule, especially a
+    /// third-party one, must not cost the whole graph.
+    /// </summary>
+    private IReadOnlyList<LuaFinding> RunRules(List<LuaFileDeclarations> declarations, ILuaHost host)
+    {
+        var context = new LuaCheckContext(_graph, declarations, host);
+        var findings = new List<LuaFinding>();
+
+        foreach (var rule in LanguageRules.Concat(host.Rules))
+        {
+            try
+            {
+                findings.AddRange(rule.Check(context));
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Warning: rule '{rule.Id}' failed and was skipped: {ex.Message}");
+            }
+        }
+
+        // Ordered so two runs of the same tree produce the same report: severity
+        // first because that is the reading order, then by location.
+        return findings
+            .OrderBy(f => f.Severity)
+            .ThenBy(f => f.File, StringComparer.Ordinal)
+            .ThenBy(f => f.Line)
+            .ThenBy(f => f.RuleId, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Rules that belong to Lua rather than to any host, so they run everywhere.
+    /// A host chooses its dialect; it does not choose whether the dialect holds.
+    /// </summary>
+    private static readonly IReadOnlyList<ILuaRule> LanguageRules = [new DialectRule()];
 
     /// <summary>What a module reference was bound to: a module in this graph, or a name outside it.</summary>
     private sealed record ModuleBinding(string? InGraphModuleId, string? ExternalName);

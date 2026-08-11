@@ -78,6 +78,11 @@ internal static class LuaCommands
 
         if (report.StructuralCaveat is { } caveat) Console.Error.WriteLine($"note: {caveat}");
 
+        // Findings go to stderr beside the vendor and caveat reporting, so a
+        // build that produced a graph AND found something says both without the
+        // graph output having to be parsed for it.
+        foreach (var finding in report.Findings) Console.Error.WriteLine(finding.ToString());
+
         // Never silent: dropping most of the tree without saying so would read as
         // "that is all the code there is".
         if (report.SkippedVendorFiles.Count > 0)
