@@ -12,10 +12,22 @@ using RazorGraph.Core.Graph;
 /// </summary>
 internal static class ToolArguments
 {
+    /// <summary>
+    /// Every selectable node type, for the tool descriptions and the refusal
+    /// message.
+    ///
+    /// Hand-written because an attribute argument must be a constant, and
+    /// therefore able to drift from the enum — which it did: NamedBinding shipped
+    /// and was never listed here, so a caller reading the description had no way
+    /// to know it could be asked for. NodeTypeListCoversEveryNodeType fails the
+    /// build if a member is ever added without being named here, because a rule
+    /// that has to be remembered every time is not a rule.
+    /// </summary>
     internal const string NodeTypeList =
         "Project, RazorPage, PageModel, ApiController, ControllerAction, PartialView, ViewComponent, Layout, " +
         "Service, ServiceInterface, ServiceImplementation, ViewModel, Class, Method, Property, Field, " +
-        "ViewDataKey, Middleware, Route, HtmlElement, TagHelperInvocation, JavaScriptFile, CssFile";
+        "ViewDataKey, NamedBinding, ConfigurationFile, Middleware, Route, HtmlElement, TagHelperInvocation, " +
+        "JavaScriptFile, CssFile";
 
     internal const string GraphIdDescription =
         "Graph to query. Omit to use the most recently built or loaded graph.";

@@ -14,6 +14,31 @@ using Xunit;
 /// </summary>
 public class GraphToolsTests
 {
+    [Fact]
+    public void TheAdvertisedNodeTypes_AreExactlyTheRealOnes()
+    {
+        // The list in the tool description and the refusal message is a const,
+        // because an attribute argument has to be — so it can drift from the enum,
+        // and it did: NamedBinding shipped unlisted, leaving a caller no way to
+        // learn the type existed. Asserted through the public surface, which is
+        // the text a caller actually gets.
+        var store = new GraphStore();
+        store.Add(new CodeGraph(), source: "test://hand-built", requestedId: "g");
+        var tools = new GraphNavigationTools(store);
+
+        var message = Assert.Throws<McpException>(() => tools.FindNodes("NotANodeType")).Message;
+
+        var start = message.IndexOf("Valid types: ", StringComparison.Ordinal) + "Valid types: ".Length;
+        var end = message.IndexOf(". This graph", StringComparison.Ordinal);
+        var advertised = message[start..end].Split(", ").ToHashSet(StringComparer.Ordinal);
+
+        // Unknown is the parser's failure value, not something to ask for.
+        var real = Enum.GetNames<NodeType>().Where(n => n != nameof(NodeType.Unknown)).ToHashSet(StringComparer.Ordinal);
+
+        Assert.Empty(real.Except(advertised));
+        Assert.Empty(advertised.Except(real));
+    }
+
     private static ExceptionEscapeTools ToolsOver(CodeGraph graph)
     {
         var store = new GraphStore();
