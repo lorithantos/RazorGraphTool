@@ -54,6 +54,16 @@ public enum EdgeType
     // only handling en route was a filtered catch (conditional).
     Escapes,
 
+    // Named binding points. Produces runs from the code that names a binding to
+    // the name itself; BoundBy from the name to each template or handler that
+    // could serve it, carrying rank and the kind of binding. Kept as two edges
+    // rather than one code->template edge because resolution is one-to-many and
+    // precedence-ordered: with themes and tenants in play, which candidate wins
+    // is not statically decidable, so the graph shows all of them and declines
+    // to pick.
+    Produces,
+    BoundBy,
+
     // Extension surface. Emitted from an extension method to the in-solution
     // type it extends: the method is part of that type's working surface even
     // though containment says it lives on a static class elsewhere.
