@@ -5,6 +5,13 @@ using System.Text.Json.Serialization;
 using RazorGraph.Core.Graph;
 
 /// <summary>
+/// A loaded graph together with what its <c>formatVersion</c> stamp said.
+/// <see cref="GraphFormatAssessment.Caveat"/> is null on a clean same-version
+/// read and otherwise carries text meant to reach the user.
+/// </summary>
+public sealed record GraphReadResult(CodeGraph Graph, GraphFormatAssessment Format);
+
+/// <summary>
 /// Serializes and deserializes CodeGraph to/from JSON.
 /// Produces a format suitable for research.json ingestion and LLM tool queries.
 /// </summary>
@@ -22,6 +29,7 @@ public static class GraphSerializer
     {
         var dto = new GraphDto
         {
+            FormatVersion = GraphFormat.Current.ToString(),
             Nodes = graph.Nodes.Select(n => new NodeDto
             {
                 Id = n.Id,
@@ -44,11 +52,33 @@ public static class GraphSerializer
         return JsonSerializer.Serialize(dto, Options);
     }
 
-    public static CodeGraph FromJson(string json)
+    /// <summary>
+    /// Load a graph and report the format version it carried. Prefer this over
+    /// <see cref="FromJson"/> anywhere the result is shown to a user: the whole
+    /// point of the stamp is that a version mismatch gets said out loud, and a
+    /// caller that only takes the graph has thrown that report away.
+    /// </summary>
+    public static GraphReadResult Read(string json)
     {
         var dto = JsonSerializer.Deserialize<GraphDto>(json, Options)
             ?? throw new InvalidOperationException("Failed to deserialize graph JSON.");
 
+        var assessment = GraphFormat.Assess(
+            dto.FormatVersion is null ? null : GraphFormat.Parse(dto.FormatVersion));
+
+        if (!assessment.Supported) throw new InvalidOperationException(assessment.Caveat);
+
+        return new GraphReadResult(ToGraph(dto), assessment);
+    }
+
+    /// <summary>
+    /// Load a graph, discarding the format report. For round-trips and callers
+    /// with nowhere to show a caveat; an unsupported version still throws.
+    /// </summary>
+    public static CodeGraph FromJson(string json) => Read(json).Graph;
+
+    private static CodeGraph ToGraph(GraphDto dto)
+    {
         var graph = new CodeGraph();
         foreach (var n in dto.Nodes)
         {
@@ -159,6 +189,9 @@ public static class GraphSerializer
 
     private sealed class GraphDto
     {
+        // First so it lands at the top of the file: a reader deciding whether it
+        // can read this document should not have to scan past 20k nodes to find out.
+        public string? FormatVersion { get; set; }
         public List<NodeDto> Nodes { get; set; } = new();
         public List<EdgeDto> Edges { get; set; } = new();
     }

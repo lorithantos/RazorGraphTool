@@ -106,6 +106,91 @@ public class GraphSerializerTests
         Assert.Single(restored.Incoming("pm:App.IndexModel"));
     }
 
+    // ---- Format version ----------------------------------------------------
+    // The stamp exists for readers that did not write the file. Every assertion
+    // below is about a mismatch being SAID, not merely survived.
+
+    private static string GraphJson(string? formatVersion) =>
+        formatVersion is null
+            ? """{"nodes":[],"edges":[]}"""
+            : $$"""{"formatVersion":"{{formatVersion}}","nodes":[],"edges":[]}""";
+
+    [Fact]
+    public void ToJson_StampsCurrentFormatVersion()
+    {
+        using var doc = JsonDocument.Parse(GraphSerializer.ToJson(BuildGraph()));
+
+        Assert.Equal(GraphFormat.Current.ToString(), doc.RootElement.GetProperty("formatVersion").GetString());
+    }
+
+    [Fact]
+    public void Read_CurrentVersion_HasNoCaveat()
+    {
+        var result = GraphSerializer.Read(GraphSerializer.ToJson(BuildGraph()));
+
+        Assert.Equal(GraphFormat.Current, result.Format.Version);
+        Assert.Null(result.Format.Caveat);
+    }
+
+    [Fact]
+    public void Read_UnstampedGraph_LoadsAndSaysSo()
+    {
+        // Every graph saved before this change is unstamped. Refusing them would
+        // be a regression; loading them silently is the drift the stamp prevents.
+        var result = GraphSerializer.Read(GraphJson(null));
+
+        Assert.Null(result.Format.Version);
+        Assert.Equal("unstamped", result.Format.Display);
+        Assert.Contains("no formatVersion", result.Format.Caveat);
+    }
+
+    [Fact]
+    public void Read_NewerMajor_Refuses()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => GraphSerializer.Read(GraphJson($"{GraphFormat.Current.Major + 1}.0")));
+
+        Assert.Contains("newer than this build reads", ex.Message);
+    }
+
+    [Fact]
+    public void Read_NewerMinor_LoadsWithCaveat()
+    {
+        // Minor is additive by contract: unknown vocabulary must not be fatal,
+        // or a third-party extractor can never ship a new node kind.
+        var result = GraphSerializer.Read(GraphJson($"{GraphFormat.Current.Major}.{GraphFormat.Current.Minor + 1}"));
+
+        Assert.Contains("newer minor", result.Format.Caveat);
+    }
+
+    [Fact]
+    public void Read_OlderMajor_LoadsWithCaveat()
+    {
+        var result = GraphSerializer.Read(GraphJson("0.9"));
+
+        Assert.Equal(new GraphFormatVersion(0, 9), result.Format.Version);
+        Assert.Contains("predates", result.Format.Caveat);
+    }
+
+    [Fact]
+    public void Read_UnparseableVersion_Refuses()
+    {
+        // Disagreeing about the format of the format is worse evidence of drift
+        // than no stamp, so this is louder than the unstamped case, not quieter.
+        var ex = Assert.Throws<InvalidOperationException>(() => GraphSerializer.Read(GraphJson("v1")));
+
+        Assert.Contains("Unreadable formatVersion", ex.Message);
+    }
+
+    [Fact]
+    public void Read_PreservesGraphContentAlongsideVersion()
+    {
+        var result = GraphSerializer.Read(GraphSerializer.ToJson(BuildGraph()));
+
+        Assert.Equal(3, result.Graph.Nodes.Count);
+        Assert.Equal(2, result.Graph.Edges.Count);
+    }
+
     [Fact]
     public void ResearchDocument_FiltersByRelevanceThreshold()
     {

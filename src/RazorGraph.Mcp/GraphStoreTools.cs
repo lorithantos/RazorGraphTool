@@ -74,8 +74,8 @@ public sealed class GraphStoreTools(GraphStore store)
         var full = Path.GetFullPath(path);
         if (!File.Exists(full)) throw new McpException($"File not found: {full}");
 
-        var graph = GraphSerializer.FromJson(await File.ReadAllTextAsync(full, ct));
-        return Summarize(store.Add(graph, full, graphId));
+        var read = GraphSerializer.Read(await File.ReadAllTextAsync(full, ct));
+        return Summarize(store.Add(read.Graph, full, graphId), format: read.Format);
     }
 
     [McpServerTool(Name = "save_graph")]
@@ -123,7 +123,8 @@ public sealed class GraphStoreTools(GraphStore store)
     private static string Summarize(
         GraphStore.GraphEntry entry,
         IReadOnlyList<string>? vendorSkips = null,
-        IReadOnlyList<string>? testProjectSkips = null)
+        IReadOnlyList<string>? testProjectSkips = null,
+        GraphFormatAssessment? format = null)
     {
         var graph = entry.Graph;
         var nodeCounts = graph.Nodes.GroupBy(n => n.Type)
@@ -139,6 +140,11 @@ public sealed class GraphStoreTools(GraphStore store)
         {
             graphId = entry.Id,
             source = entry.Source,
+            // Present on load responses: which format the file on disk carried.
+            // A freshly built graph is this build's format by construction, so
+            // only a load has something to report.
+            formatVersion = format?.Display,
+            formatCaveat = format?.Caveat,
             nodes = graph.Nodes.Count,
             edges = graph.Edges.Count,
             projects = projects.Count > 0 ? projects : null,

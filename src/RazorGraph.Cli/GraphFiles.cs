@@ -34,6 +34,27 @@ internal static class GraphFiles
         }
 
         var json = await File.ReadAllTextAsync(graphFile.FullName, ct);
-        return GraphSerializer.FromJson(json);
+
+        GraphReadResult read;
+        try
+        {
+            read = GraphSerializer.Read(json);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // A format the reader will not accept is a contract refusal, and the
+            // refusal IS the report -- same shape as the missing-file case above.
+            // Letting it escape as an unhandled exception buries the explanation
+            // in a stack trace and reads as a crash.
+            Console.Error.WriteLine($"error: {ex.Message}");
+            return null;
+        }
+
+        // stderr, not stdout: query output is parsed by callers, and a caveat is
+        // not a result. Unconditional when present -- a warning behind a flag is
+        // not a warning.
+        if (read.Format.Caveat is { } caveat) Console.Error.WriteLine($"warning: {caveat}");
+
+        return read.Graph;
     }
 }
