@@ -40,16 +40,27 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// about the graph the caller asked for. Found by the test suite, which
     /// reproduced it once in three runs before growing enough parallel classes
     /// to hit it every time.
+    ///
+    /// Lazy rather than a lock, because run-exactly-once is what Lazy IS: the
+    /// guarantee lives in the type instead of in a comment, and every call after
+    /// the first is a volatile read rather than a lock acquisition. It also
+    /// caches a failure and rethrows the same exception, which is right here --
+    /// no MSBuild on the machine will not become MSBuild on the machine, and a
+    /// second attempt would only produce a differently-worded failure.
+    ///
+    /// The one thing it gives up: this memoises OUR completion, where the lock
+    /// re-read MSBuildLocator's state every call. Only an external
+    /// MSBuildLocator.Unregister() could tell them apart, and nothing in this
+    /// solution calls it -- the sole reference to the type is the line below.
     /// </summary>
-    public static void EnsureMsBuildRegistered()
-    {
-        lock (LocatorGate)
-        {
-            if (!MSBuildLocator.IsRegistered) MSBuildLocator.RegisterDefaults();
-        }
-    }
+    public static void EnsureMsBuildRegistered() => _ = Registration.Value;
 
-    private static readonly object LocatorGate = new();
+    private static readonly Lazy<bool> Registration = new(() =>
+    {
+        // Still checked: the host application may have registered before us.
+        if (!MSBuildLocator.IsRegistered) MSBuildLocator.RegisterDefaults();
+        return true;
+    });
 
     /// <summary>One compiled project and the Roslyn project it came from.</summary>
     public sealed record LoadedProject(Project Project, Compilation Compilation)
