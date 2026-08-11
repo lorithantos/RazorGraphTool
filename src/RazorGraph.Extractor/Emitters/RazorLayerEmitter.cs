@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Razor.Language;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Razor;
 using RazorGraph.Core.Graph;
+using RazorGraph.Extractor.Binding;
 using RazorGraph.Extractor.Razor;
 using RazorGraph.Extractor.Roslyn;
 using SymbolInfo = RazorGraph.Extractor.Roslyn.SymbolInfo;
@@ -271,7 +272,7 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
         foreach (var partial in info.Partials)
         {
             // Try to find the partial file
-            var partialFile = ResolvePartial(partial, allPages);
+            var partialFile = ResolvePartial(partial, allPages, info.RelativePath);
 
             if (partialFile != null)
             {
@@ -311,7 +312,35 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
     /// client-asset emitter, whose composed-DOM scope walks the same render
     /// relation.
     /// </summary>
+    /// <summary>
+    /// The template a partial name refers to, or null when nothing can serve it.
+    ///
+    /// Delegates to <see cref="ViewNameResolver"/>, which searches ASP.NET's
+    /// folders by path SEGMENT. The previous rule here was a substring match over
+    /// the whole relative path taking the first hit, which on OrchardCore's 1,576
+    /// templates matched "Menu" against 71 paths and chose a _ViewImports.cshtml.
+    /// </summary>
     internal static RazorPageInfo? ResolvePartial(PartialRenderInfo partial, List<RazorPageInfo> allPages) =>
-        allPages.FirstOrDefault(p =>
-            p.RelativePath.Contains(partial.Name, StringComparison.OrdinalIgnoreCase));
+        ResolvePartial(partial, allPages, fromRelativePath: null);
+
+    /// <inheritdoc cref="ResolvePartial(PartialRenderInfo, List{RazorPageInfo})"/>
+    /// <param name="fromRelativePath">
+    /// The referencing file, so a partial sitting beside its caller wins over a
+    /// same-named file elsewhere in the solution.
+    /// </param>
+    internal static RazorPageInfo? ResolvePartial(
+        PartialRenderInfo partial, List<RazorPageInfo> allPages, string? fromRelativePath)
+    {
+        var byPath = new Dictionary<string, RazorPageInfo>(StringComparer.OrdinalIgnoreCase);
+        foreach (var page in allPages)
+        {
+            var key = page.RelativePath.Replace('\\', '/').TrimStart('/');
+            // First writer wins: duplicate relative paths across projects are the
+            // ambiguity the resolver reports, not something to overwrite silently.
+            if (!byPath.ContainsKey(key)) byPath[key] = page;
+        }
+
+        var best = ViewNameResolver.ResolveOne(partial.Name, fromRelativePath, byPath.Keys);
+        return best is not null && byPath.TryGetValue(best, out var resolved) ? resolved : null;
+    }
 }
