@@ -293,7 +293,9 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
     /// all, because idScope is null. Everything in the graph is then the one
     /// project, so scoping is skipped rather than narrowed to nothing.
     /// </summary>
-    internal void AddBindingEdges(IReadOnlyList<ViewCall>? viewCalls = null)
+    internal void AddBindingEdges(
+        IReadOnlyList<ViewCall>? viewCalls = null,
+        IReadOnlyList<ShapeReference>? shapeNames = null)
     {
         var visibleProjects = BuildProjectVisibility();
 
@@ -311,6 +313,89 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
         {
             AddViewCallEdge(call, visibleProjects);
         }
+
+        foreach (var shape in shapeNames ?? [])
+        {
+            AddShapeBinding(shape, visibleProjects);
+        }
+    }
+
+    /// <summary>
+    /// Record one shape name as a node, link the code that names it, and hang
+    /// every template that could serve it off the name.
+    ///
+    /// The name is the node rather than an edge from code to template, because a
+    /// shape is served by whichever binding wins at runtime, and that depends on
+    /// the active theme and tenant. Naming a single winner would assert something
+    /// static that is not. Showing the candidates in order says exactly what is
+    /// known, which is the same reason resolution returns a list.
+    ///
+    /// A name with NO candidate is the finding this pass exists for: OrchardCore
+    /// throws an InvalidOperationException when nothing binds, so an unbound shape
+    /// is a 500 waiting for the code path to run.
+    /// </summary>
+    private void AddShapeBinding(ShapeReference shape, Dictionary<string, HashSet<string>> visibleProjects)
+    {
+        var producer = graph.GetNode(shape.MethodId);
+        var project = producer?.GetProperty<string>("project");
+
+        var id = $"shape:{shape.Name}";
+        if (!graph.HasNode(id))
+        {
+            var node = new GraphNode
+            {
+                Id = id,
+                Type = NodeType.NamedBinding,
+                Name = shape.Name
+            };
+            node.SetProperty("kind", "orchardCoreShape");
+            graph.AddNode(node);
+        }
+
+        if (producer is not null)
+        {
+            var produces = new GraphEdge
+            {
+                FromId = producer.Id,
+                ToId = id,
+                Type = EdgeType.Produces
+            };
+            produces.Properties["line"] = shape.Line;
+            if (shape.IsAlternate) produces.Properties["isAlternate"] = true;
+            graph.AddEdge(produces);
+        }
+
+        var name = graph.GetNode(id)!;
+        if (name.GetProperty<bool>("bound")) return;
+
+        var byStem = new Dictionary<string, RazorPageInfo>(StringComparer.OrdinalIgnoreCase);
+        foreach (var page in _pendingBindings.Where(c => IsVisible(project, c.Project, visibleProjects)).Select(c => c.Info))
+        {
+            var stem = Path.GetFileNameWithoutExtension(page.RelativePath);
+            if (!byStem.ContainsKey(stem)) byStem[stem] = page;
+        }
+
+        var rank = 0;
+        foreach (var candidate in ShapeNameGrammar.CandidateTemplateNames(shape.Name))
+        {
+            if (!byStem.TryGetValue(candidate, out var template)) continue;
+
+            var bound = new GraphEdge
+            {
+                FromId = id,
+                ToId = template.Id,
+                Type = EdgeType.BoundBy
+            };
+            bound.Properties["rank"] = rank++;
+            bound.Properties["bindingKind"] = Path.GetExtension(template.RelativePath).Equals(".liquid", StringComparison.OrdinalIgnoreCase) ? "liquid" : "razor";
+            bound.Properties["matchedAs"] = candidate;
+            graph.AddEdge(bound);
+        }
+
+        // Marked so a shape named in twenty drivers resolves once, and so the
+        // unbound case is answerable by looking for the absent flag.
+        name.SetProperty("bound", rank > 0);
+        if (rank == 0) name.SetProperty("unbound", true);
     }
 
     /// <summary>

@@ -254,6 +254,27 @@ public sealed class RoslynExtractor : IAsyncDisposable
     }
 
     /// <summary>
+    /// Shape names produced by display drivers and shape factories; see
+    /// ViewCallScanner. Empty on a solution with no such types, which is every
+    /// solution that is not OrchardCore-shaped.
+    /// </summary>
+    public IEnumerable<ShapeReference> ExtractShapeNames()
+    {
+        if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
+
+        foreach (var (root, model) in _loaded.SelectMany(
+                     l => l.Compilation.SyntaxTrees.Select(t => (t.GetRoot(), l.Compilation.GetSemanticModel(t)))))
+        {
+            foreach (var shape in root.DescendantNodes()
+                .OfType<BaseMethodDeclarationSyntax>()
+                .SelectMany(decl => ViewCallScanner.ShapeNames(decl, model)))
+            {
+                yield return shape;
+            }
+        }
+    }
+
+    /// <summary>
     /// Every read and write of an in-solution property or field, attributed to
     /// the code that performs it; see MemberAccessScanner.
     /// </summary>

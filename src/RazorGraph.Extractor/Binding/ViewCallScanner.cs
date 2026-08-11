@@ -24,6 +24,16 @@ public sealed record ViewCall(
     int Line,
     string? Reason = null);
 
+/// <summary>
+/// One place code names an OrchardCore shape.
+/// </summary>
+/// <param name="IsAlternate">
+/// True when the name was added to Metadata.Alternates rather than naming the
+/// shape itself. Alternates are the override mechanism, so they are the most
+/// specific bindings rather than an afterthought.
+/// </param>
+public sealed record ShapeReference(string MethodId, string Name, bool IsAlternate, int Line);
+
 /// <summary>Where a view name came from.</summary>
 public enum ViewNameSource
 {
@@ -55,6 +65,79 @@ public static class ViewCallScanner
 {
     private static readonly HashSet<string> RenderMethods =
         new(StringComparer.Ordinal) { "View", "PartialView" };
+
+    /// <summary>
+    /// Calls that name an OrchardCore shape. Unlike an MVC view name there is no
+    /// implicit form: a shape is always named, so a non-constant argument is the
+    /// only unknown case.
+    /// </summary>
+    private static readonly HashSet<string> ShapeMethods =
+        new(StringComparer.Ordinal) { "Initialize", "View", "Shape", "CreateAsync", "New" };
+
+    /// <summary>
+    /// Shape names produced anywhere in a type — display drivers, shape factory
+    /// calls, alternates added to metadata.
+    ///
+    /// Separate from <see cref="ViewCalls"/> because a display driver is not a
+    /// controller: it has no action name to fall back on, and its View("X") means
+    /// "the shape called X", not "the view file X" in a controller's folder.
+    /// </summary>
+    public static IEnumerable<ShapeReference> ShapeNames(BaseMethodDeclarationSyntax decl, SemanticModel model)
+    {
+        if (model.GetDeclaredSymbol(decl) is not IMethodSymbol producer) yield break;
+        if (!IsShapeProducer(producer.ContainingType)) yield break;
+
+        var methodId = SymbolIds.MethodId(producer);
+
+        foreach (var invocation in decl.DescendantNodes().OfType<InvocationExpressionSyntax>())
+        {
+            if (MethodNameOf(invocation.Expression) is not { } called) continue;
+
+            var isAlternate = called is "Add" && invocation.ToString().Contains("Alternates", StringComparison.Ordinal);
+            if (!isAlternate && !ShapeMethods.Contains(called)) continue;
+
+            var argument = invocation.ArgumentList.Arguments.FirstOrDefault()?.Expression;
+            if (argument is null) continue;
+
+            var constant = model.GetConstantValue(argument);
+            if (constant is not { HasValue: true, Value: string name } || name.Length == 0) continue;
+
+            // Shape names are identifiers with underscores; a sentence or a path
+            // is some other string argument that happens to sit in first position.
+            if (!IsShapeName(name)) continue;
+
+            yield return new ShapeReference(
+                methodId, name, isAlternate,
+                invocation.GetLocation().GetLineSpan().StartLinePosition.Line + 1);
+        }
+    }
+
+    /// <summary>
+    /// A type that produces shapes: a display driver, or anything holding a shape
+    /// factory. Checked so an ordinary Initialize or View call elsewhere in a
+    /// solution is not read as naming a shape.
+    /// </summary>
+    private static bool IsShapeProducer(INamedTypeSymbol? type)
+    {
+        if (type is null) return false;
+        if (type.Name.Contains("DisplayDriver", StringComparison.Ordinal)) return true;
+
+        for (var b = type.BaseType; b is not null; b = b.BaseType)
+        {
+            if (b.Name.Contains("DisplayDriver", StringComparison.Ordinal)
+                || b.Name.Contains("ShapeTableProvider", StringComparison.Ordinal)) return true;
+        }
+
+        return type.AllInterfaces.Any(i =>
+            i.Name.Contains("DisplayDriver", StringComparison.Ordinal)
+            || i.Name.Contains("ShapeTableProvider", StringComparison.Ordinal));
+    }
+
+    /// <summary>Shape names look like identifiers, with underscores as separators.</summary>
+    private static bool IsShapeName(string name) =>
+        name.Length > 0
+        && char.IsLetter(name[0])
+        && name.All(c => char.IsLetterOrDigit(c) || c == '_');
 
     /// <summary>
     /// Views rendered by one method declaration. Empty for a method that renders
