@@ -178,4 +178,20 @@ public class LorettaCharacterizationTests
     //
     // Recorded rather than faked, because a test that cannot see the failure it
     // claims to guard is worse than an honest gap.
+    //
+    // The same applies to the wider hazard behind it. Reflection over the
+    // assembly shows process-wide mutable statics -- LexerCache.s_keywordKindPool
+    // among them -- and identical source under identical options has been
+    // observed parsing differently depending on what parsed before. A probe that
+    // asserted the divergence was written and then deleted: its own result
+    // depended on test ordering, so it was flaky in exactly the way it claimed
+    // to document, and a flaky test documenting flakiness teaches nobody.
+    //
+    // What guards this instead lives in the product, where it can act:
+    // LuaDeclarationExtractor.DialectDiscriminationWorks parses a canonical
+    // snippet under both dialects before the dialect rule reads anything, and
+    // the rule reports that it could not run rather than reporting nothing.
+    // Silence and "no problems found" have to be different sentences, because
+    // this failure is permissive: a 5.1 parse taught to accept goto finds
+    // nothing wrong.
 }

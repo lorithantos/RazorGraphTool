@@ -28,6 +28,21 @@ public sealed class DialectRule : ILuaRule
     {
         var dialect = DialectName(context.Host.Dialect);
 
+        // Measure the instrument before reading it. The parser carries
+        // process-wide mutable state, and when dialect discrimination is broken
+        // it fails SILENTLY and in the permissive direction: nothing is
+        // reported, which is indistinguishable from clean code. Saying "this
+        // check could not run" is the difference between an absent finding and
+        // an absent capability.
+        if (!LuaDeclarationExtractor.DialectDiscriminationWorks(context.Host.Dialect))
+        {
+            yield return new LuaFinding(
+                Id, LuaSeverity.Note, context.Declarations.Count > 0 ? context.Declarations[0].File.RelativePath : "(build)", 0,
+                $"dialect checking did not run: the parser could not distinguish {dialect} from a later Lua in this process",
+                "Loretta keeps process-global parser state; results here would be unsound rather than merely absent");
+            yield break;
+        }
+
         foreach (var declaration in context.Declarations)
         {
             if (declaration.DialectRejections.Count == 0) continue;

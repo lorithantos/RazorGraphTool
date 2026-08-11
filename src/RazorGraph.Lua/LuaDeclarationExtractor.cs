@@ -115,6 +115,45 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
         return true;
     });
 
+    /// <summary>
+    /// Whether the parser can currently tell this dialect from a later one —
+    /// checked, not assumed.
+    ///
+    /// Loretta keeps process-wide mutable state (a static keyword-kind pool
+    /// among others), and identical source under identical options has been
+    /// observed to parse differently depending on what parsed before it. The
+    /// warm-up above defuses the case we isolated; it cannot promise there is
+    /// only one such case, and the failure is SILENT and directional — a 5.1
+    /// parse that has been taught to accept goto reports no error, which reads
+    /// as clean code rather than as a broken check.
+    ///
+    /// So the dialect rule measures its instrument before trusting it. Two
+    /// parses of a canonical snippet: the host's dialect must reject goto and a
+    /// later one must accept it. If that fails, discrimination is not working in
+    /// this process and the rule says so rather than reporting nothing and
+    /// letting silence read as a pass.
+    ///
+    /// Cheap — two parses of six tokens, once per build.
+    /// </summary>
+    public static bool DialectDiscriminationWorks(LuaDialect hostDialect)
+    {
+        _ = ParserWarmup.Value;
+
+        const string probe = "do goto skip ::skip:: end";
+
+        static bool Rejects(string source, LuaSyntaxOptions options) =>
+            LuaSyntaxTree.ParseText(source, new LuaParseOptions(options), "dialect-probe.lua")
+                .GetDiagnostics()
+                .Any(d => d.Severity == DiagnosticSeverity.Error);
+
+        // Only meaningful for a dialect that predates goto; anything later has
+        // nothing to discriminate against here and is left alone.
+        if (hostDialect != LuaDialect.Lua51) return true;
+
+        return Rejects(probe, SyntaxOptionsFor(hostDialect))
+            && !Rejects(probe, LuaSyntaxOptions.Lua52);
+    }
+
     public LuaFileDeclarations Extract(LuaSourceFile file, string source)
     {
         _ = ParserWarmup.Value;
