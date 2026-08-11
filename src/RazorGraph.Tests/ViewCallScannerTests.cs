@@ -23,6 +23,10 @@ public class ViewCallScannerTests
         namespace Microsoft.AspNetCore.Mvc
         {
             public class ViewResult { }
+            public sealed class ActionNameAttribute : System.Attribute
+            {
+                public ActionNameAttribute(string name) { }
+            }
             public class Controller
             {
                 public ViewResult View() => new ViewResult();
@@ -127,6 +131,38 @@ public class ViewCallScannerTests
         Assert.Null(call.Name);
         Assert.Equal(ViewNameSource.Dynamic, call.Source);
         Assert.Contains("not a compile-time constant", call.Reason);
+    }
+
+    [Fact]
+    public void ActionNameAttribute_OverridesTheMethodName()
+    {
+        // The POST half of a form is a separate method put back under the
+        // original action name. It renders Login.cshtml; taking the method name
+        // invents LoginPOST.cshtml, which exists nowhere. Eleven of
+        // OrchardCore.Users' view calls were mis-reported this way.
+        var call = Assert.Single(Scan(Controller("""
+            public ViewResult Login() => View();
+            [ActionName(nameof(Login))]
+            public ViewResult LoginPOST() => View();
+            """), "LoginPOST"));
+
+        Assert.Equal("Login", call.Name);
+        Assert.Equal(ViewNameSource.ActionName, call.Source);
+    }
+
+    [Fact]
+    public void PrivateHelper_DoesNotClaimItsOwnNameAsTheView()
+    {
+        // OrchardCore renders through private helpers -- CreateInternalAsync,
+        // ProcessSaveAsync -- called by several actions. At runtime the view name
+        // comes from route data, so it is the INVOKING action's. Claiming the
+        // helper''s own name reported two templates missing that never existed.
+        var call = Assert.Single(Scan(
+            Controller("private ViewResult CreateInternalAsync() => View();"), "CreateInternalAsync"));
+
+        Assert.Null(call.Name);
+        Assert.Equal(ViewNameSource.Dynamic, call.Source);
+        Assert.Contains("route data", call.Reason);
     }
 
     [Fact]

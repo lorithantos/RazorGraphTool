@@ -89,7 +89,20 @@ public static class ViewCallScanner
             if (nameArgument is null)
             {
                 // No name parameter bound: ASP.NET falls back to the action name.
-                yield return new ViewCall(methodId, action.Name, controller, ViewNameSource.ActionName, line);
+                // Which action, though, comes from route data at runtime — the
+                // action that was INVOKED, not the method doing the rendering. A
+                // private helper called by two actions renders two different
+                // views, so its own name is not the answer and claiming it would
+                // report a missing template that never existed.
+                if (!IsAction(action))
+                {
+                    yield return new ViewCall(methodId, null, controller, ViewNameSource.Dynamic, line,
+                        $"rendered from non-action '{action.Name}'; the view name is the invoking action's, taken from route data");
+                    continue;
+                }
+
+                // The action name is NOT always the method name.
+                yield return new ViewCall(methodId, ActionNameOf(action), controller, ViewNameSource.ActionName, line);
                 continue;
             }
 
@@ -105,6 +118,43 @@ public static class ViewCallScanner
             yield return new ViewCall(methodId, null, controller, ViewNameSource.Dynamic, line,
                 $"view name is not a compile-time constant: {nameArgument}");
         }
+    }
+
+    /// <summary>
+    /// Whether this method is reachable as an action. Only public instance
+    /// methods are; a private helper returning a view result is rendering on
+    /// behalf of whichever action called it.
+    /// </summary>
+    private static bool IsAction(IMethodSymbol method) =>
+        method.DeclaredAccessibility == Accessibility.Public
+        && !method.IsStatic
+        && method.MethodKind == MethodKind.Ordinary
+        && !method.GetAttributes().Any(a => a.AttributeClass?.Name is "NonActionAttribute" or "NonAction");
+
+    /// <summary>
+    /// The action's name for routing and view lookup, which is the method name
+    /// only until <c>[ActionName]</c> says otherwise.
+    ///
+    /// The POST half of a form is conventionally a separate method with a
+    /// distinct C# name and an attribute putting it back under the original
+    /// action — <c>[ActionName(nameof(Login))] LoginPOST(...)</c> — and it renders
+    /// Login.cshtml. Taking the method name there invents LoginPOST.cshtml, a
+    /// template that exists nowhere: 11 of OrchardCore.Users' 53 view calls were
+    /// reported as missing templates for exactly this reason before the attribute
+    /// was honoured.
+    /// </summary>
+    private static string ActionNameOf(IMethodSymbol action)
+    {
+        foreach (var attribute in action.GetAttributes())
+        {
+            if (attribute.AttributeClass?.Name is not ("ActionNameAttribute" or "ActionName")) continue;
+            if (attribute.ConstructorArguments.Length == 0) continue;
+
+            // nameof(Login) folds to a constant the same as a literal would.
+            if (attribute.ConstructorArguments[0].Value is string name && name.Length > 0) return name;
+        }
+
+        return action.Name;
     }
 
     /// <summary>
