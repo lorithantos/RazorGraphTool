@@ -267,6 +267,74 @@ public class LuaExtractorTests
         Assert.Contains("string", graph.GetNode("mod:a")!.GetProperty<List<string>>("externalReferences")!);
     }
 
+    // ---- Vendor code -------------------------------------------------------
+    // Unzipping SDKs beside a plug-in project buried 9 authored files under 115
+    // Adobe sample modules, so every aggregate answer was 93% someone else's.
+
+    private static TempTree LightroomTreeWithSamples()
+    {
+        var tree = new TempTree();
+        tree.Write("mine.lrdevplugin/Info.lua", "return {}");
+        tree.Write("mine.lrdevplugin/Mine.lua", "local d = import 'LrDialogs'\nreturn {}");
+        tree.Write("Lightroom SDK 15.3/Sample Plugins/demo.lrdevplugin/Demo.lua", "return {}");
+        return tree;
+    }
+
+    [Fact]
+    public void Vendor_SamplePluginsAreDroppedByDefaultAndReported()
+    {
+        using var tree = LightroomTreeWithSamples();
+
+        var (graph, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        Assert.Equal(2, report.Modules);
+        Assert.DoesNotContain(graph.Nodes, n => n.Name.Contains("Demo"));
+
+        // Reported, never silent: dropping most of a tree without saying so reads
+        // as "that is all the code there is".
+        var skipped = Assert.Single(report.SkippedVendorFiles);
+        Assert.Contains("Lightroom SDK 15.3", skipped);
+    }
+
+    [Fact]
+    public void Vendor_IncludedOnRequestAndMarkedWhenIncluded()
+    {
+        using var tree = LightroomTreeWithSamples();
+
+        var (graph, report) = new LuaGraphBuilder { IncludeVendor = true }.Build(tree.Root);
+
+        Assert.Equal(3, report.Modules);
+        Assert.Empty(report.SkippedVendorFiles);
+
+        var sample = Assert.Single(graph.Nodes, n => n.GetProperty<bool>("vendor"));
+        Assert.Contains("Adobe sample plugin", sample.GetProperty<string>("vendorReason"));
+    }
+
+    [Fact]
+    public void Vendor_AuthorsOwnFilesAreNeverMarked()
+    {
+        using var tree = LightroomTreeWithSamples();
+
+        var (graph, _) = new LuaGraphBuilder { IncludeVendor = true }.Build(tree.Root);
+
+        var mine = graph.Nodes.Single(n => n.Name.EndsWith("Mine"));
+        Assert.False(mine.GetProperty<bool>("vendor"));
+        Assert.Null(mine.GetProperty<string>("vendorReason"));
+    }
+
+    [Fact]
+    public void Vendor_IsHostSpecific_LuaRocksMarksNothing()
+    {
+        // A rockspec tree has no vendor rule, so the default interface method
+        // applies and nothing is dropped.
+        using var tree = new TempTree();
+        tree.Write("a.lua", "return {}");
+
+        var (_, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        Assert.Empty(report.SkippedVendorFiles);
+    }
+
     /// <summary>A throwaway directory tree, removed on dispose.</summary>
     private sealed class TempTree : IDisposable
     {

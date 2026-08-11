@@ -17,7 +17,8 @@ public sealed record LuaBuildReport(
     int ExternalReferences,
     IReadOnlyList<string> UnresolvedReferences,
     IReadOnlyList<string> ParseFailures,
-    string? StructuralCaveat);
+    string? StructuralCaveat,
+    IReadOnlyList<string> SkippedVendorFiles);
 
 /// <summary>
 /// Builds a CodeGraph from a tree of Lua source. Sibling of
@@ -37,6 +38,14 @@ public sealed class LuaGraphBuilder
 
     private readonly CodeGraph _graph = new();
 
+    /// <summary>
+    /// Graph vendor code — an SDK's own sample plugins, a bundled dependency —
+    /// instead of dropping it. Off by default so the graph is the author's own
+    /// work; included files carry vendor=true and a vendorReason so queries can
+    /// still tell the tiers apart. Dropped files are always reported.
+    /// </summary>
+    public bool IncludeVendor { get; set; }
+
     public (CodeGraph Graph, LuaBuildReport Report) Build(string rootPath, ILuaHost? host = null, string? evidence = null)
     {
         var root = Path.GetFullPath(rootPath);
@@ -55,8 +64,17 @@ public sealed class LuaGraphBuilder
         var declarations = new List<LuaFileDeclarations>();
         var parseFailures = new List<string>();
 
+        var vendorSkips = new List<string>();
+
         foreach (var file in files)
         {
+            var vendorReason = host.VendorReason(file);
+            if (vendorReason is not null && !IncludeVendor)
+            {
+                vendorSkips.Add($"{file.RelativePath} ({vendorReason})");
+                continue;
+            }
+
             string source;
             try
             {
@@ -88,6 +106,11 @@ public sealed class LuaGraphBuilder
             };
             node.SetProperty("host", host.Name);
             node.SetProperty("relativePath", file.RelativePath);
+            if (vendorReason is not null)
+            {
+                node.SetProperty("vendor", true);
+                node.SetProperty("vendorReason", vendorReason);
+            }
             if (file.LoadOrder is { } order) node.SetProperty("loadOrder", order);
             _graph.AddNode(node);
         }
@@ -200,7 +223,7 @@ public sealed class LuaGraphBuilder
         var report = new LuaBuildReport(
             host.Name, evidence ?? "host supplied by caller",
             moduleCount, functions, resolved, external,
-            unresolved, parseFailures, caveat);
+            unresolved, parseFailures, caveat, vendorSkips);
 
         return (_graph, report);
     }

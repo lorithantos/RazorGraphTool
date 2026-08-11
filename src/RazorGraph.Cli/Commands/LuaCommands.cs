@@ -26,22 +26,29 @@ internal static class LuaCommands
             Description = "How many unresolved references to list individually (count is always reported)",
             DefaultValueFactory = _ => 10
         };
+        var includeVendorOpt = new Option<bool>("--include-vendor")
+        {
+            Description = "Also graph vendor code such as an SDK's own sample plugins (dropped by default); their nodes carry vendor=true and a vendorReason"
+        };
 
         var cmd = new Command("build-lua", "Build a graph from Lua source and output JSON");
         cmd.Add(pathArg);
         cmd.Add(outputOpt);
         cmd.Add(showUnresolvedOpt);
+        cmd.Add(includeVendorOpt);
 
         cmd.SetAction((parseResult, ct) => RunAsync(
             parseResult.GetValue(pathArg)!,
             parseResult.GetValue(outputOpt)!,
             parseResult.GetValue(showUnresolvedOpt),
+            parseResult.GetValue(includeVendorOpt),
             ct));
 
         return cmd;
     }
 
-    private static async Task<int> RunAsync(DirectoryInfo path, string outputPath, int showUnresolved, CancellationToken ct)
+    private static async Task<int> RunAsync(
+        DirectoryInfo path, string outputPath, int showUnresolved, bool includeVendor, CancellationToken ct)
     {
         if (!path.Exists)
         {
@@ -51,7 +58,7 @@ internal static class LuaCommands
 
         Console.WriteLine($"Building Lua graph from {path.FullName}...");
 
-        var (graph, report) = new LuaGraphBuilder().Build(path.FullName);
+        var (graph, report) = new LuaGraphBuilder { IncludeVendor = includeVendor }.Build(path.FullName);
 
         // The host is always reported: a misdetected host uses the wrong reference
         // function and yields a confidently empty graph.
@@ -62,6 +69,20 @@ internal static class LuaCommands
             $"{report.UnresolvedReferences.Count} unresolved");
 
         if (report.StructuralCaveat is { } caveat) Console.Error.WriteLine($"note: {caveat}");
+
+        // Never silent: dropping most of the tree without saying so would read as
+        // "that is all the code there is".
+        if (report.SkippedVendorFiles.Count > 0)
+        {
+            Console.WriteLine($"Vendor files skipped: {report.SkippedVendorFiles.Count} (--include-vendor to graph them)");
+            foreach (var group in report.SkippedVendorFiles
+                         .Select(s => s[(s.IndexOf('(') + 1)..].TrimEnd(')'))
+                         .GroupBy(reason => reason)
+                         .OrderByDescending(g => g.Count()))
+            {
+                Console.WriteLine($"  {group.Count(),4}  {group.Key}");
+            }
+        }
 
         if (report.UnresolvedReferences.Count > 0)
         {

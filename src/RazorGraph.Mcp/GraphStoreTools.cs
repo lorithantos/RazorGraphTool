@@ -71,12 +71,13 @@ public sealed class GraphStoreTools(GraphStore store)
         [Description("Absolute path to a directory containing Lua source")] string path,
         [Description("Id to file the result under. Defaults to the directory name.")] string? graphId = null,
         [Description("How many unresolved references to list individually; the count is always reported. Default 20.")] int unresolvedLimit = 20,
+        [Description("Also graph vendor code such as an SDK's own sample plugins (dropped by default). Their nodes carry vendor=true and a vendorReason; useful when reading the vendor's examples rather than your own code.")] bool includeVendor = false,
         CancellationToken ct = default)
     {
         var full = Path.GetFullPath(path);
         if (!Directory.Exists(full)) throw new McpException($"Directory not found: {full}");
 
-        var (graph, report) = new LuaGraphBuilder().Build(full);
+        var (graph, report) = new LuaGraphBuilder { IncludeVendor = includeVendor }.Build(full);
         var entry = store.Add(graph, full, graphId ?? new DirectoryInfo(full).Name);
 
         var listed = report.UnresolvedReferences.Take(Math.Max(0, unresolvedLimit)).ToList();
@@ -107,7 +108,10 @@ public sealed class GraphStoreTools(GraphStore store)
             // Set when the host has no module-reference mechanism at all, so that
             // an empty module graph reads as a property of the host rather than a
             // gap in extraction.
-            structuralCaveat = report.StructuralCaveat
+            structuralCaveat = report.StructuralCaveat,
+            // Same contract as build_solution's skippedVendorAssets: a silent skip
+            // would read as "that is all the code there is".
+            skippedVendorFiles = report.SkippedVendorFiles.Count > 0 ? report.SkippedVendorFiles.Count : (int?)null
         });
     }
 

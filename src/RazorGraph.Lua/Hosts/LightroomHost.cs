@@ -62,6 +62,31 @@ public sealed class LightroomHost : ILuaHost
     }
 
     /// <summary>
+    /// Adobe's own sample plugins, which ship inside every SDK download under
+    /// "Lightroom SDK &lt;version&gt;/Sample Plugins". Reference code the author did
+    /// not write and will not change, so it is vendor by the same rule as a
+    /// bundled JavaScript library.
+    ///
+    /// It matters here more than usual: unzipping three SDKs beside a plug-in
+    /// project buries nine authored files under 115 Adobe ones, and every finding
+    /// then needs manual attribution before it can be acted on.
+    /// </summary>
+    public string? VendorReason(LuaSourceFile file)
+    {
+        var segments = file.RelativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        var sdkIndex = Array.FindIndex(segments, s => s.StartsWith("Lightroom SDK ", StringComparison.OrdinalIgnoreCase));
+        if (sdkIndex < 0) return null;
+
+        // Only the samples are vendor SOURCE. Anything else an SDK folder holds
+        // (the API reference, the manual) is not Lua and never reaches here.
+        var isSample = segments.Skip(sdkIndex + 1)
+            .Any(s => s.Equals("Sample Plugins", StringComparison.OrdinalIgnoreCase));
+
+        return isSample ? $"Adobe sample plugin shipped in {segments[sdkIndex]}" : null;
+    }
+
+    /// <summary>
     /// Record what the SDK catalogue makes of this module's imports: which are
     /// known Lightroom Classic modules, what minimum SDK version they imply, and
     /// which the catalogue does not recognise.
@@ -92,6 +117,13 @@ public sealed class LightroomHost : ILuaHost
 
         if (Catalog.MinimumVersionFor(sdkNames) is { } minimum)
             module.SetProperty("minimumSdkVersion", minimum);
+
+        // Real but undescribed: Adobe ships and imports these, and documents
+        // nothing about them. Worth flagging separately -- code built on them is
+        // built on observation -- but calling them unknown would send someone
+        // hunting for a typo that is not there.
+        var undocumented = verdicts.OfType<ExternalApiVerdict.KnownUndocumented>().Select(u => u.Name).ToList();
+        if (undocumented.Count > 0) module.SetProperty("sdkModulesUndocumented", undocumented);
 
         var unknown = verdicts.OfType<ExternalApiVerdict.UnknownToCatalogue>().Select(u => u.Name).ToList();
         if (unknown.Count > 0)

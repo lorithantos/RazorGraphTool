@@ -94,6 +94,7 @@ if ($sdkDirs.Count -eq 0) { throw "No 'Lightroom SDK <version>' folders under $S
 $versions = [ordered] @{}
 $rejected = [ordered] @{}
 $provenance = [ordered] @{}
+$observed = [ordered] @{}
 
 foreach ($dir in ($sdkDirs | Sort-Object { [version] ($_.Name -replace '^Lightroom SDK\s+', '') })) {
     $version = $dir.Name -replace '^Lightroom SDK\s+', ''
@@ -136,6 +137,31 @@ foreach ($dir in ($sdkDirs | Sort-Object { [version] ($_.Name -replace '^Lightro
 
     $provenance[$version] = $entry
 
+    # Modules Adobe SHIPS AND USES but never documented. The API Reference is not
+    # the whole surface: LrController and LrTableUtils are imported by Adobe's own
+    # sample plug-ins and appear on no reference page -- LrController is absent
+    # from both SDK guides too, so its only evidence of existing is that Adobe's
+    # code imports it.
+    #
+    # Read from the samples rather than from the PDFs on purpose. The guides are
+    # prose whose extracted text runs words together across layout boundaries
+    # ("LrDialogsAllows", "LrSdkVersionRequirednumberThe"), and feeding those into
+    # a catalogue of real modules would be the same promotion-of-noise this script
+    # already guards against. The samples are Lua, where `import "X"` is exact.
+    $sampleDir = Join-Path $dir.FullName 'Sample Plugins'
+    if (Test-Path -LiteralPath $sampleDir -PathType Container) {
+        foreach ($lua in Get-ChildItem -LiteralPath $sampleDir -Recurse -Filter '*.lua') {
+            $text = Get-Content -LiteralPath $lua.FullName -Raw
+            foreach ($m in [regex]::Matches($text, 'import\s*\(?\s*["''](?<name>Lr[A-Za-z0-9]+)["'']')) {
+                $name = $m.Groups['name'].Value
+                if (-not $observed.Contains($name)) { $observed[$name] = [ordered] @{} }
+                if (-not $observed[$name].Contains($version)) {
+                    $observed[$name][$version] = (Resolve-Path -LiteralPath $lua.FullName -Relative -RelativeBasePath $dir.FullName)
+                }
+            }
+        }
+    }
+
     $moduleDir = Join-Path $dir.FullName 'API Reference\modules'
     if (-not (Test-Path -LiteralPath $moduleDir -PathType Container)) {
         Write-Warning "SDK $version has no 'API Reference\modules' folder; skipped."
@@ -171,6 +197,18 @@ foreach ($name in (($versions.Values | ForEach-Object { $_ }) | Sort-Object -Uni
     $modules[$name] = $entry
 }
 
+# Observed in official sample code but on no reference page. Kept separate from
+# modules: these are real -- Adobe's own plug-ins import them -- but nothing
+# documents their surface, so a caller should know they are working blind.
+$undocumented = [ordered] @{}
+foreach ($name in ($observed.Keys | Sort-Object)) {
+    if ($modules.Contains($name)) { continue }
+    $undocumented[$name] = [ordered] @{
+        seenIn   = @($observed[$name].Keys)
+        evidence = @($observed[$name].GetEnumerator() | ForEach-Object { "$($_.Key): $($_.Value)" })
+    }
+}
+
 $doc = [ordered] @{
     '.comment'              = @(
         'Known module surface of the Adobe Lightroom Classic SDK, per catalogued version.',
@@ -179,6 +217,7 @@ $doc = [ordered] @{
         'firstCataloguedIn is the earliest version IN THIS CATALOGUE containing the module, NOT the release that introduced it. A module marked with the oldest catalogued version may be far older.',
         'absentAfter marks a module present in an earlier catalogued version and gone from the newest -- a removal or rename, and a real compatibility signal.',
         'INCOMPLETE BY CONSTRUCTION: only catalogedVersions were read, and Adobe has shipped beyond them. A module missing here may simply be newer, so an unrecognised import must be reported as unknown-to-this-catalogue, never as nonexistent.',
+        'UNDOCUMENTED MODULES: undocumentedModules holds namespaces imported by Adobe''s own sample plug-ins that appear on no API Reference page. They are real and usable, but no published documentation describes them, so anything built on them is built on observation. Read from the sample sources, not from the SDK guide PDFs, whose extracted text runs words together and would poison this list with fragments.',
         'PROVENANCE: sourced only from SDK packages downloaded from Adobe''s Developer Console (https://developer.adobe.com/console/73617/servicesandapis), which requires an Adobe ID. Each entry in provenance is the version line the package states about ITSELF, checked against the folder it was read from. Third-party mirrors and legacy download hosts are not acceptable sources: a catalogue claiming to be authoritative about Adobe''s API surface is worth nothing if its contents came from somewhere unverifiable.'
     )
     name                    = 'lightroom-classic'
@@ -190,6 +229,7 @@ $doc = [ordered] @{
     provenance              = $provenance
     modulePrefix            = 'Lr'
     modules                 = $modules
+    undocumentedModules     = $undocumented
 }
 
 $doc | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $outputPath -Encoding utf8

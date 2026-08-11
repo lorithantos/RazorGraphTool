@@ -118,6 +118,20 @@ public interface ILuaHost
     ModuleResolution Resolve(string? reference, LuaSourceFile from);
 
     /// <summary>
+    /// Why this file is vendor code rather than the author's own, or null when it
+    /// is first-party. Only the host knows: for Lightroom it is the sample plugins
+    /// shipped inside an SDK folder, for another host it might be a bundled
+    /// dependency directory.
+    ///
+    /// Same contract as the client-asset vendor rule this mirrors — vendor files
+    /// are dropped by default, kept behind a flag, marked when kept, and the skip
+    /// is always reported. Left in, they drown the author's own code: Lori's
+    /// Lightroom tree is 9 of her files against 115 Adobe sample modules, so every
+    /// aggregate answer was 93% someone else's.
+    /// </summary>
+    string? VendorReason(LuaSourceFile file) => null;
+
+    /// <summary>
     /// Add host-specific facts to a module node once its references are known.
     /// Optional: the default does nothing, so a host with nothing to add stays a
     /// three-method implementation.

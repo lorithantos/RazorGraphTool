@@ -79,6 +79,40 @@ public class ExternalApiCatalogTests
     }
 
     [Fact]
+    public void Classify_UndocumentedModule_IsKnownToExistButNotDescribed()
+    {
+        // LrController and LrTableUtils are imported by Adobe's OWN sample
+        // plug-ins and appear on no API Reference page; LrController is absent
+        // from both SDK guides too, so the only evidence it exists is that
+        // Adobe's code uses it. Calling it unknown would send someone hunting a
+        // typo that is not there.
+        var verdict = Assert.IsType<ExternalApiVerdict.KnownUndocumented>(Catalog.Classify("LrController"));
+
+        Assert.Equal("LrController", verdict.Name);
+        Assert.NotEmpty(verdict.Evidence);
+    }
+
+    [Fact]
+    public void UndocumentedModules_AreNotAlsoCataloguedAsDocumented()
+    {
+        // The two lists must stay disjoint, or a module would report as both
+        // documented and undocumented depending on lookup order.
+        Assert.DoesNotContain(Catalog.UndocumentedModules.Keys, Catalog.Modules.ContainsKey);
+    }
+
+    [Fact]
+    public void UndocumentedModules_CarryCheckableEvidence()
+    {
+        // Evidence, not assertion: each entry names the sample file it was
+        // observed in, so the claim can be re-verified against the SDK.
+        Assert.All(Catalog.UndocumentedModules.Values, m =>
+        {
+            Assert.NotEmpty(m.SeenIn);
+            Assert.All(m.Evidence, e => Assert.Contains(".lua", e));
+        });
+    }
+
+    [Fact]
     public void Classify_MentionsBeingOutOfDateOnlyWhenItIs()
     {
         // State-independent: the "may simply be newer" caveat must appear exactly

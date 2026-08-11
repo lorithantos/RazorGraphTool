@@ -25,6 +25,13 @@ public sealed record ExternalApiModule(string FirstCataloguedIn, string? AbsentA
 /// </param>
 public sealed record ExternalApiProvenance(string Declares, string? Build = null);
 
+/// <summary>
+/// A namespace the vendor ships and uses without documenting.
+/// </summary>
+/// <param name="SeenIn">Catalogued versions whose own sample code imports it.</param>
+/// <param name="Evidence">Where it was observed, so the claim can be re-checked.</param>
+public sealed record UndocumentedApiModule(List<string> SeenIn, List<string> Evidence);
+
 /// <summary>What a catalogue concluded about one referenced module name.</summary>
 public abstract record ExternalApiVerdict
 {
@@ -32,6 +39,14 @@ public abstract record ExternalApiVerdict
 
     /// <summary>In the catalogue, with the versions that carry it.</summary>
     public sealed record Known(string Name, string FirstCataloguedIn, string? AbsentAfter) : ExternalApiVerdict;
+
+    /// <summary>
+    /// Real, but on no reference page. The vendor ships and uses it — their own
+    /// sample code imports it — and documents nothing about it. Distinct from
+    /// Known because anything built on it is built on observation, and distinct
+    /// from unknown because it demonstrably exists.
+    /// </summary>
+    public sealed record KnownUndocumented(string Name, IReadOnlyList<string> Evidence) : ExternalApiVerdict;
 
     /// <summary>
     /// Not in any catalogued version. Deliberately NOT called "nonexistent": the
@@ -93,6 +108,12 @@ public sealed class ExternalApiCatalog
     [JsonPropertyName("modulePrefix")] public string ModulePrefix { get; init; } = string.Empty;
     [JsonPropertyName("modules")] public Dictionary<string, ExternalApiModule> Modules { get; init; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Namespaces observed in the vendor's own sample code that appear on no
+    /// reference page. Real, usable, and undescribed.
+    /// </summary>
+    [JsonPropertyName("undocumentedModules")] public Dictionary<string, UndocumentedApiModule> UndocumentedModules { get; init; } = new(StringComparer.Ordinal);
+
     /// <summary>True when this catalogue stops short of the newest known release.</summary>
     public bool IsBehindLatest =>
         !string.IsNullOrEmpty(NewestKnownRelease)
@@ -102,6 +123,11 @@ public sealed class ExternalApiCatalog
     {
         if (Modules.TryGetValue(moduleName, out var module))
             return new ExternalApiVerdict.Known(moduleName, module.FirstCataloguedIn, module.AbsentAfter);
+
+        // Checked before the unknown case: these exist, and calling them unknown
+        // would send a caller hunting for a typo that is not there.
+        if (UndocumentedModules.TryGetValue(moduleName, out var undocumented))
+            return new ExternalApiVerdict.KnownUndocumented(moduleName, undocumented.Evidence);
 
         var behind = IsBehindLatest
             ? $" This catalogue stops at {NewestCataloguedVersion} and {Product} has shipped through {NewestKnownRelease}, so it may simply be newer."
