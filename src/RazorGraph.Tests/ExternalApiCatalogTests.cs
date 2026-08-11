@@ -49,8 +49,10 @@ public class ExternalApiCatalogTests
     [Fact]
     public void Classify_ModuleAddedLater_IsDatedToTheLaterVersion()
     {
-        // LrDevelopController is absent from SDK 3.0 and present in 8.0, so a
-        // plug-in importing it cannot run on the older SDK.
+        // firstCataloguedIn describes OUR COLLECTION: absent from the local 3.0
+        // package, present in the local 8.0 one. It is deliberately not the same
+        // as firstSupportedIn, which Adobe states as 6.0 -- keeping both is what
+        // makes the difference between the two visible.
         var verdict = Assert.IsType<ExternalApiVerdict.Known>(Catalog.Classify("LrDevelopController"));
 
         Assert.Equal("8.0", verdict.FirstCataloguedIn);
@@ -192,11 +194,13 @@ public class ExternalApiCatalogTests
     }
 
     [Fact]
-    public void MinimumVersion_IsTheLatestVersionAnyModuleRequires()
+    public void MinimumVersion_UsesAdobesVersionNotOurCollections()
     {
-        var minimum = Catalog.MinimumVersionFor(["LrDialogs", "LrDevelopController"]);
-
-        Assert.Equal("8.0", minimum);
+        // Adobe documents LrDevelopController as 6.0. The catalogue infers 8.0
+        // only because that is the oldest local SDK containing it -- a fact about
+        // this machine, not the product. Reporting 8.0 overstates what a plug-in
+        // needs, which it did until the LuaDoc versions were read.
+        Assert.Equal("6.0", Catalog.MinimumVersionFor(["LrDialogs", "LrDevelopController"]));
     }
 
     [Fact]
@@ -204,7 +208,58 @@ public class ExternalApiCatalogTests
     {
         // An uncatalogued name must not silently drag the answer to the newest
         // version, nor block one being given for the modules that ARE known.
-        Assert.Equal("3.0", Catalog.MinimumVersionFor(["LrDialogs", "LrNotAThing"]));
+        Assert.Equal("1.3", Catalog.MinimumVersionFor(["LrDialogs", "LrNotAThing"]));
+    }
+
+    [Fact]
+    public void MinimumVersion_ComparesVersionsRatherThanCataloguePositions()
+    {
+        // Vendor-stated versions are mostly releases this catalogue does not
+        // hold, so position in catalogedVersions cannot order them. 1.3 vs 6.0
+        // is a version comparison or it is nothing.
+        Assert.Equal("6.0", Catalog.MinimumVersionFor(["LrApplication", "LrApplicationView"]));
+    }
+
+    // ---- Per-function detail ----------------------------------------------
+
+    [Fact]
+    public void Functions_CarryTheirOwnIntroductionVersion()
+    {
+        var dialogs = Catalog.Modules["LrDialogs"];
+
+        Assert.NotNull(dialogs.Functions);
+        Assert.Equal("1.3", dialogs.Functions!["message"].Since);
+
+        // Same module, much later function -- the reason module-level versions
+        // are not enough.
+        Assert.Equal("5.0", dialogs.Functions["showBezel"].Since);
+    }
+
+    [Fact]
+    public void Functions_CarryParameterNamesAndTypes()
+    {
+        var confirm = Catalog.Modules["LrDialogs"].Functions!["confirm"];
+
+        Assert.NotNull(confirm.Params);
+        Assert.Equal("message:string", confirm.Params![0]);
+        Assert.Contains("optional", confirm.Params[1]);
+    }
+
+    [Fact]
+    public void MinimumVersionForFunctions_IsHigherThanTheModuleWhenAFunctionIsNewer()
+    {
+        // Importing LrDialogs needs 1.3; calling showBezel needs 5.0. Answering
+        // the module question when asked the function question understates it.
+        Assert.Equal("1.3", Catalog.MinimumVersionFor(["LrDialogs"]));
+        Assert.Equal("5.0", Catalog.MinimumVersionForFunctions("LrDialogs", ["message", "showBezel"]));
+    }
+
+    [Fact]
+    public void MinimumVersionForFunctions_FallsBackToTheModuleForUnknownNames()
+    {
+        // An unrecognised function must not read as "no requirement" -- the
+        // module still has to exist.
+        Assert.Equal("1.3", Catalog.MinimumVersionForFunctions("LrDialogs", ["noSuchFunction"]));
     }
 
     [Fact]
@@ -215,7 +270,9 @@ public class ExternalApiCatalogTests
 
         host.Annotate(module, ["LrDialogs", "LrDevelopController", "LrSomethingFromSdk14"]);
 
-        Assert.Equal("8.0", module.GetProperty<string>("minimumSdkVersion"));
+        // 6.0, not 8.0: Adobe documents LrDevelopController as 6.0, and 8.0 was
+        // only ever the oldest local SDK that happened to contain it.
+        Assert.Equal("6.0", module.GetProperty<string>("minimumSdkVersion"));
         Assert.Equal(["LrSomethingFromSdk14"], module.GetProperty<List<string>>("sdkModulesUnknownToCatalogue"));
         Assert.Contains("shipped through", module.GetProperty<string>("sdkCatalogueRange"));
     }

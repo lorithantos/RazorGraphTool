@@ -92,6 +92,87 @@ $ModuleNamePattern = '^Lr[A-Za-z0-9]+$'
 
 <#
 .SYNOPSIS
+    Per-function API detail from the LuaDoc pages of one SDK.
+.DESCRIPTION
+    The API Reference is LuaDoc output, and its structure is completely regular:
+    each function is a <dt><a name="Module.fn"></a><strong>...</strong>(args)</dt>
+    followed by a <dd> holding the description, a param_list, and -- for 96% of
+    them -- "First supported in version X.Y of the Lightroom SDK".
+
+    THAT VERSION LINE IS THE PRIZE. firstCataloguedIn can only say which of the
+    packages we happen to hold first carried a module, which is not when Adobe
+    shipped it: the catalogue infers 8.0 for LrDevelopController where Adobe
+    states 6.0. Reading the annotation gives the real introduction version for
+    every documented function, from a single download, including the releases
+    nobody has locally.
+
+    NOT parsed as XML despite the XHTML Strict doctype: the pages are not
+    well-formed. Description prose contains unclosed <li> elements, so a
+    conforming parser rejects the document. The structural markers are regular
+    and the malformed prose sits inside descriptions we deliberately do not
+    keep, so the markers are read directly and the prose is never parsed.
+
+    Descriptions are omitted on purpose. They are the bulk of the file and they
+    are Adobe's copyrighted documentation; names, versions and types are facts
+    about the API surface, which is what an analyzer needs.
+#>
+function Read-LuaDocModules {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string] $ModulesDir)
+
+    $result = [ordered] @{}
+    if (-not (Test-Path -LiteralPath $ModulesDir -PathType Container)) { return $result }
+
+    foreach ($page in (Get-ChildItem -LiteralPath $ModulesDir -Filter '*.html' | Sort-Object Name)) {
+        $module = [IO.Path]::GetFileNameWithoutExtension($page.Name)
+        if ($module -cnotmatch $ModuleNamePattern) { continue }
+
+        $text = Get-Content -LiteralPath $page.FullName -Raw
+        $functions = [ordered] @{}
+
+        # Split on the function anchor: everything up to the next anchor belongs
+        # to this function, which keeps a version line with the function it
+        # annotates rather than the nearest one in the file.
+        $chunks = [regex]::Split($text, '(?=<dt><a name=")') | Where-Object { $_ -match '^<dt><a name="' }
+        foreach ($chunk in $chunks) {
+            if ($chunk -notmatch '<dt><a name="(?<qualified>[^"]+)"') { continue }
+            $qualified = $Matches.qualified
+
+            # Anchors are Module.fn or Module.obj:method; keep what follows the module.
+            $name = if ($qualified.StartsWith("$module.")) { $qualified.Substring($module.Length + 1) } else { $qualified }
+            if (-not $name) { continue }
+
+            $entry = [ordered] @{}
+            if ($chunk -match 'First supported in version (?<v>[\d.]+)') { $entry['since'] = $Matches.v }
+
+            # <dt>1. name</dt><dd>(type) ...  -- the leading parenthesised token is
+            # the declared type, and "optional" rides in the same parentheses.
+            $params = @()
+            foreach ($p in [regex]::Matches($chunk, '<dt>\d+\.\s*(?<pname>[^<]+?)\s*</dt>\s*<dd>\s*\((?<ptype>[^)]*)\)')) {
+                $ptype = ($p.Groups['ptype'].Value -replace '<[^>]+>', '' -replace '\s+', ' ').Trim()
+                $params += "$($p.Groups['pname'].Value.Trim()):$ptype"
+            }
+            if ($params.Count -gt 0) { $entry['params'] = $params }
+
+            $functions[$name] = $entry
+        }
+
+        if ($functions.Count -eq 0) { continue }
+
+        # The module's own floor is the earliest version any of its functions
+        # carries -- a module is available once something in it is.
+        $since = @($functions.Values | ForEach-Object { if ($_.Contains('since')) { $_.since } }) |
+            Sort-Object { [version] $_ } | Select-Object -First 1
+
+        $result[$module] = [ordered] @{ functions = $functions }
+        if ($since) { $result[$module]['firstSupportedIn'] = $since }
+    }
+
+    return $result
+}
+
+<#
+.SYNOPSIS
     Info.lua manifest keys a plug-in may declare, from the samples and, when
     available, from the SDK guide's manifest table.
 .DESCRIPTION
@@ -334,6 +415,16 @@ foreach ($name in ($observed.Keys | Sort-Object)) {
 # current SDK, not something to union across versions.
 $newestDir = ($sdkDirs | Where-Object { ($_.Name -replace '^Lightroom SDK\s+', '') -eq $newest } | Select-Object -First 1)
 $manifestKeys = Read-ManifestKeys -SampleDir (Join-Path $newestDir.FullName 'Sample Plugins') -GuideTextDir $GuideTextDir
+
+# Adobe's own introduction versions, from the newest package's LuaDoc. Merged
+# ALONGSIDE firstCataloguedIn rather than over it: the two answer different
+# questions, and silently replacing one with the other would hide which is which.
+$luaDoc = Read-LuaDocModules -ModulesDir (Join-Path $newestDir.FullName 'API Reference\modules')
+foreach ($name in $luaDoc.Keys) {
+    if (-not $modules.Contains($name)) { continue }
+    if ($luaDoc[$name].Contains('firstSupportedIn')) { $modules[$name]['firstSupportedIn'] = $luaDoc[$name].firstSupportedIn }
+    $modules[$name]['functions'] = $luaDoc[$name].functions
+}
 
 $doc = [ordered] @{
     '.comment'              = @(

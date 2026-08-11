@@ -55,176 +55,3907 @@
   "modulePrefix": "Lr",
   "modules": {
     "LrApplication": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "activeCatalog": {
+          "since": "1.3"
+        },
+        "addDevelopPresetForPlugin": {
+          "since": "3.0",
+          "params": [
+            "plugin:_PLUGIN",
+            "presetName:string",
+            "presetValue:table"
+          ]
+        },
+        "addHapticObserver": {
+          "since": "15.0",
+          "params": [
+            "functionContext:LrFunctionContext",
+            "observer:object",
+            "callback:function( observer, message"
+          ]
+        },
+        "appStoreReceiptHash": {
+          "since": "4.1"
+        },
+        "backupAtNextShutdown": {
+          "since": "4.0",
+          "params": [
+            "pluginId:string"
+          ]
+        },
+        "developPresetByUuid": {
+          "since": "3.0",
+          "params": [
+            "uuid:string"
+          ]
+        },
+        "developPresetFolders": {
+          "since": "3.0"
+        },
+        "filenamePresets": {
+          "since": "3.0"
+        },
+        "getDevelopPresetsForPlugin": {
+          "since": "3.0",
+          "params": [
+            "plugin:_PLUGIN",
+            "uuid:string"
+          ]
+        },
+        "macAddressHash": {
+          "since": "4.1"
+        },
+        "metadataPresets": {
+          "since": "3.0"
+        },
+        "purchaseSource": {
+          "since": "4.1"
+        },
+        "serialNumberHash": {
+          "since": "3.0"
+        },
+        "shutdown": {
+          "since": "14.3"
+        },
+        "versionString": {
+          "since": "2.0"
+        },
+        "versionTable": {
+          "since": "2.0"
+        },
+        "viewFilterPresets": {
+          "since": "3.0"
+        }
+      }
     },
     "LrApplicationView": {
-      "firstCataloguedIn": "8.0"
+      "firstCataloguedIn": "8.0",
+      "firstSupportedIn": "6.0",
+      "functions": {
+        "cycleLoupeViewInfo": {
+          "since": "7.4"
+        },
+        "fullscreenHidePanels": {
+          "since": "7.4"
+        },
+        "fullscreenPreview": {
+          "since": "7.4"
+        },
+        "getCurrentModuleName": {
+          "since": "6.0"
+        },
+        "getSecondaryViewName": {
+          "since": "6.0"
+        },
+        "gridView": {
+          "since": "7.4"
+        },
+        "gridViewStyle": {
+          "since": "7.4"
+        },
+        "isSecondaryDisplayOn": {
+          "since": "6.0"
+        },
+        "nextScreenMode": {
+          "since": "7.4"
+        },
+        "showSecondaryView": {
+          "since": "6.0",
+          "params": [
+            "viewName:string"
+          ]
+        },
+        "showView": {
+          "since": "6.0",
+          "params": [
+            "viewName:string"
+          ]
+        },
+        "switchToModule": {
+          "since": "6.0",
+          "params": [
+            "moduleName:string"
+          ]
+        },
+        "toggleLoupe": {
+          "since": "7.4"
+        },
+        "toggleSecondaryDisplay": {
+          "since": "6.0"
+        },
+        "toggleSecondaryDisplayFullscreen": {
+          "since": "6.0"
+        },
+        "toggleZoom": {
+          "since": "6.0"
+        },
+        "zoomIn": {
+          "since": "6.0"
+        },
+        "zoomInSome": {
+          "since": "6.0"
+        },
+        "zoomOut": {
+          "since": "6.0"
+        },
+        "zoomOutSome": {
+          "since": "6.0"
+        },
+        "zoomToOneToOne": {
+          "since": "10.0"
+        }
+      }
     },
     "LrBinding": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "andAllKeys": {
+          "since": "1.3",
+          "params": [
+            "optObject:table, optional",
+            "keys:strings or table"
+          ]
+        },
+        "keyEquals": {
+          "since": "1.3",
+          "params": [
+            "key:string",
+            "compareValue:any",
+            "optObject:table, optional"
+          ]
+        },
+        "keyIsNil": {
+          "since": "1.3",
+          "params": [
+            "key:string",
+            "optObject:table, optional"
+          ]
+        },
+        "keyIsNot": {
+          "since": "1.3",
+          "params": [
+            "key:string",
+            "compareValue:any",
+            "optObject:table, optional"
+          ]
+        },
+        "keyIsNotNil": {
+          "since": "1.3",
+          "params": [
+            "key:string",
+            "optObject:table, optional"
+          ]
+        },
+        "makePropertyTable": {
+          "since": "1.3",
+          "params": [
+            "functionContext:LrFunctionContext"
+          ]
+        },
+        "negativeOfKey": {
+          "since": "1.3",
+          "params": [
+            "key:string",
+            "optObject:table, optional"
+          ]
+        },
+        "orAllKeys": {
+          "since": "1.3",
+          "params": [
+            "optObject:table, optional",
+            "keys:strings or table"
+          ]
+        },
+        "kUnsupportedDirection": {
+          "since": "1.3"
+        }
+      }
     },
     "LrCatalog": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "2.0",
+      "functions": {
+        "catalog:addPhoto": {
+          "since": "2.0",
+          "params": [
+            "path:string",
+            "stackWithPhoto:optional, LrPhoto",
+            "position:optional, string",
+            "metadataPresetUUID:optional, string",
+            "developPresetUUID:optional, string"
+          ]
+        },
+        "catalog:applyDevelopPreset": {
+          "params": [
+            "photos:array of LrPhoto",
+            "preset:LrDevelopPreset",
+            "plugin:optional, _PLUGIN",
+            "presetAmount:optional, integer",
+            "updateAISettings:optional, boolean"
+          ]
+        },
+        "catalog:assertHasPrivateWriteAccess": {
+          "since": "2.0",
+          "params": [
+            "funcName:string"
+          ]
+        },
+        "catalog:assertHasWriteAccess": {
+          "since": "2.0",
+          "params": [
+            "funcName:string"
+          ]
+        },
+        "catalog:batchGetFormattedMetadata": {
+          "since": "3.0",
+          "params": [
+            "photos:array of LrPhoto",
+            "keys:array of string"
+          ]
+        },
+        "catalog:batchGetPropertyForPlugin": {
+          "since": "3.0",
+          "params": [
+            "photos:array of LrPhoto",
+            "plugin:string or _PLUGIN",
+            "fieldIds:array of string"
+          ]
+        },
+        "catalog:batchGetRawMetadata": {
+          "since": "3.0",
+          "params": [
+            "photos:array of LrPhoto",
+            "keys:array of strings"
+          ]
+        },
+        "catalog:buildSmartPreviews": {
+          "since": "5.0",
+          "params": [
+            "photos:array of LrPhoto"
+          ]
+        },
+        "catalog:createCollection": {
+          "since": "3.0",
+          "params": [
+            "name:string",
+            "parent:optional, LrCollectionSet",
+            "canReturnPrior:optional, Boolean"
+          ]
+        },
+        "catalog:createCollectionSet": {
+          "since": "3.0",
+          "params": [
+            "name:string",
+            "parent:optional, LrCollectionSet",
+            "canReturnPrior:optional, Boolean"
+          ]
+        },
+        "catalog:createKeyword": {
+          "since": "3.0",
+          "params": [
+            "keywordName:string",
+            "synonyms:table",
+            "includeOnExport:Boolean",
+            "parent:LrKeyword",
+            "returnExisting:Boolean"
+          ]
+        },
+        "catalog:createSmartCollection": {
+          "since": "3.0",
+          "params": [
+            "name:string",
+            "searchDesc:table",
+            "parent:optional, LrCollectionSet",
+            "canReturnPrior:optional, Boolean"
+          ]
+        },
+        "catalog:createVirtualCopies": {
+          "since": "5.0",
+          "params": [
+            "copyName:optional, string"
+          ]
+        },
+        "catalog:deleteAllEmptyMasks": {
+          "since": "14.0",
+          "params": [
+            "photos:array of LrPhoto"
+          ]
+        },
+        "catalog:findPhotoByPath": {
+          "since": "2.0",
+          "params": [
+            "path:string"
+          ]
+        },
+        "catalog:findPhotoByUuid": {
+          "since": "2.0",
+          "params": [
+            "path:string"
+          ]
+        },
+        "catalog:findPhotos": {
+          "since": "2.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "catalog:findPhotosWithProperty": {
+          "since": "2.0",
+          "params": [
+            "pluginId:string",
+            "fieldName:string",
+            "optFieldVersion:optional, number"
+          ]
+        },
+        "catalog:getActiveSources": {
+          "since": "3.0"
+        },
+        "catalog:getAllPhotos": {
+          "since": "3.0"
+        },
+        "catalog:getChildCollectionSets": {
+          "since": "3.0"
+        },
+        "catalog:getChildCollections": {
+          "since": "3.0"
+        },
+        "catalog:getCollectionByLocalIdentifier": {
+          "since": "3.0",
+          "params": [
+            "id:number"
+          ]
+        },
+        "catalog:getCurrentViewFilter": {
+          "since": "3.0"
+        },
+        "catalog:getFolderByPath": {
+          "since": "3.0",
+          "params": [
+            "path:string"
+          ]
+        },
+        "catalog:getFolders": {
+          "since": "3.0"
+        },
+        "catalog:getKeywords": {
+          "since": "3.0"
+        },
+        "catalog:getKeywordsByLocalId": {
+          "since": "4.1",
+          "params": [
+            "ids:table"
+          ]
+        },
+        "catalog:getLabelMapToColorName": {
+          "since": "3.0"
+        },
+        "catalog:getMultipleSelectedOrAllPhotos": {
+          "since": "3.0"
+        },
+        "catalog:getPath": {
+          "since": "3.0"
+        },
+        "catalog:getPhotosAvailableForEditing": {
+          "since": "15.3",
+          "params": [
+            "photos:array of LrPhoto"
+          ]
+        },
+        "catalog:getPropertyForPlugin": {
+          "since": "3.0",
+          "params": [
+            "plugin:string or _PLUGIN",
+            "fieldId:string"
+          ]
+        },
+        "catalog:getPublishServices": {
+          "since": "3.0",
+          "params": [
+            "pluginId:string"
+          ]
+        },
+        "catalog:getPublishedCollectionByLocalIdentifier": {
+          "since": "3.0",
+          "params": [
+            "id:number"
+          ]
+        },
+        "catalog:getTargetPhoto": {
+          "since": "3.0"
+        },
+        "catalog:getTargetPhotos": {
+          "since": "3.0"
+        },
+        "catalog:pasteSettings": {
+          "since": "15.3",
+          "params": [
+            "photos:array of LrPhoto",
+            "updateAISettings:optional, boolean"
+          ]
+        },
+        "catalog:setActiveSources": {
+          "since": "3.0",
+          "params": [
+            "sources:string or array"
+          ]
+        },
+        "catalog:setPropertyForPlugin": {
+          "since": "3.0",
+          "params": [
+            "plugin:_PLUGIN",
+            "fieldId:string",
+            "value:nil, number, string, or Boolean"
+          ]
+        },
+        "catalog:setSelectedPhotos": {
+          "since": "3.0",
+          "params": [
+            "activePhoto:LrPhoto",
+            "otherSelectedPhotos:table of LrPhoto"
+          ]
+        },
+        "catalog:setViewFilter": {
+          "since": "3.0",
+          "params": [
+            "filter:string or table"
+          ]
+        },
+        "catalog:triggerImportFromPathWithPreviousSettings": {
+          "since": "4.0",
+          "params": [
+            "path:string"
+          ]
+        },
+        "catalog:triggerImportUI": {
+          "since": "4.0",
+          "params": [
+            "path:string, optional"
+          ]
+        },
+        "catalog:type": {
+          "since": "4.1"
+        },
+        "catalog:updateAISettings": {
+          "since": "13.3",
+          "params": [
+            "photos:array of LrPhoto"
+          ]
+        },
+        "catalog:withPrivateWriteAccessDo": {
+          "since": "2.0",
+          "params": [
+            "func:function",
+            "timeoutParams:optional, table"
+          ]
+        },
+        "catalog:withProlongedWriteAccessDo": {
+          "since": "2.0",
+          "params": [
+            "params:table",
+            "timeoutParams:optional, table"
+          ]
+        },
+        "catalog:withWriteAccessDo": {
+          "since": "2.0",
+          "params": [
+            "actionName:string",
+            "func:function",
+            "timeoutParams:optional, table"
+          ]
+        },
+        "catalog.hasPrivateWriteAccess": {
+          "since": "2.0"
+        },
+        "catalog.hasWriteAccess": {
+          "since": "2.0"
+        },
+        "catalog.kAllPhotos": {
+          "since": "3.0"
+        },
+        "catalog.kLastCatalogExport": {
+          "since": "3.0"
+        },
+        "catalog.kPreviousImport": {
+          "since": "3.0"
+        },
+        "catalog.kQuickCollectionIdentifier": {
+          "since": "3.0"
+        },
+        "catalog.kTargetCollection": {
+          "since": "3.0"
+        },
+        "catalog.kTemporaryImages": {
+          "since": "3.0"
+        }
+      }
     },
     "LrCollection": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "3.0",
+      "functions": {
+        "collection:addPhotos": {
+          "since": "3.0",
+          "params": [
+            "photos:array of LrPhoto"
+          ]
+        },
+        "collection:delete": {
+          "since": "3.0"
+        },
+        "collection:getName": {
+          "since": "3.0"
+        },
+        "collection:getParent": {
+          "since": "3.0"
+        },
+        "collection:getPhotos": {
+          "since": "3.0"
+        },
+        "collection:getSearchDescription": {
+          "since": "5.0"
+        },
+        "collection:isSmartCollection": {
+          "since": "3.0"
+        },
+        "collection:removeAllPhotos": {
+          "since": "3.0"
+        },
+        "collection:removePhotos": {
+          "since": "3.0",
+          "params": [
+            "photos:array of LrPhoto"
+          ]
+        },
+        "collection:setName": {
+          "since": "3.0",
+          "params": [
+            "name:string"
+          ]
+        },
+        "collection:setParent": {
+          "since": "3.0",
+          "params": [
+            "parent:LrCollectionSet"
+          ]
+        },
+        "collection:setSearchDescription": {
+          "since": "3.0",
+          "params": [
+            "searchDesc:table"
+          ]
+        },
+        "collection:type": {
+          "since": "3.0"
+        },
+        "collection.catalog": {
+          "since": "3.0"
+        },
+        "collection.localIdentifier": {
+          "since": "3.0"
+        }
+      }
     },
     "LrCollectionSet": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "3.0",
+      "functions": {
+        "collectionSet:delete": {
+          "since": "3.0"
+        },
+        "collectionSet:getChildCollectionSets": {
+          "since": "3.0"
+        },
+        "collectionSet:getChildCollections": {
+          "since": "3.0"
+        },
+        "collectionSet:getChildren": {
+          "since": "3.0"
+        },
+        "collectionSet:getName": {
+          "since": "3.0"
+        },
+        "collectionSet:getParent": {
+          "since": "3.0"
+        },
+        "collectionSet:setName": {
+          "since": "3.0",
+          "params": [
+            "name:string"
+          ]
+        },
+        "collectionSet:setParent": {
+          "since": "3.0",
+          "params": [
+            "parent:LrCollectionSet"
+          ]
+        },
+        "collectionSet:type": {
+          "since": "3.0"
+        },
+        "collectionSet.catalog": {
+          "since": "3.0"
+        },
+        "collectionSet.localIdentifier": {
+          "since": "3.0"
+        }
+      }
     },
     "LrColor": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "LrColor": {
+          "since": "1.3"
+        },
+        "color:alpha": {
+          "since": "1.3"
+        },
+        "color:blue": {
+          "since": "1.3"
+        },
+        "color:green": {
+          "since": "1.3"
+        },
+        "color:red": {
+          "since": "1.3"
+        },
+        "color:type": {
+          "since": "4.1"
+        }
+      }
     },
     "LrDate": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "currentTime": {
+          "since": "1.3"
+        },
+        "formatLongDate": {
+          "since": "3.0",
+          "params": [
+            "time:number"
+          ]
+        },
+        "formatMediumDate": {
+          "since": "3.0",
+          "params": [
+            "time:number"
+          ]
+        },
+        "formatMediumTime": {
+          "since": "3.0",
+          "params": [
+            "time:number"
+          ]
+        },
+        "formatShortDate": {
+          "since": "3.0",
+          "params": [
+            "time:number"
+          ]
+        },
+        "formatShortTime": {
+          "since": "3.0",
+          "params": [
+            "time:number"
+          ]
+        },
+        "timeFromComponents": {
+          "since": "1.3",
+          "params": [
+            "year:number",
+            "month:number",
+            "day:number",
+            "hour:number",
+            "minute:number",
+            "second:number",
+            "timeZone:number, string, Boolean"
+          ]
+        },
+        "timeFromPosixDate": {
+          "since": "3.0",
+          "params": [
+            "time:number"
+          ]
+        },
+        "timeToIsoDate": {
+          "since": "1.3",
+          "params": [
+            "time:number"
+          ]
+        },
+        "timeToPosixDate": {
+          "since": "3.0",
+          "params": [
+            "time:number"
+          ]
+        },
+        "timeToUserFormat": {
+          "since": "1.3",
+          "params": [
+            "time:number",
+            "format:string",
+            "isGMT:boolean"
+          ]
+        },
+        "timeToW3CDate": {
+          "since": "1.3",
+          "params": [
+            "time:number"
+          ]
+        },
+        "timeZone": {
+          "since": "2.0"
+        },
+        "timestampToComponents": {
+          "since": "2.0",
+          "params": [
+            "time:number",
+            "optTimeZone:number"
+          ]
+        }
+      }
     },
     "LrDevelopController": {
-      "firstCataloguedIn": "8.0"
+      "firstCataloguedIn": "8.0",
+      "firstSupportedIn": "6.0",
+      "functions": {
+        "addAdjustmentChangeObserver": {
+          "since": "6.0",
+          "params": [
+            "functionContext:LrFunctionContext",
+            "observer:object",
+            "callback:function( observer"
+          ]
+        },
+        "addPointColorSwatch": {
+          "since": "13.2",
+          "params": [
+            "swatchTable:table",
+            "isForMasking:optional, boolean"
+          ]
+        },
+        "addToCurrentMask": {
+          "since": "11.0",
+          "params": [
+            "maskType:string",
+            "maskSubtype:string"
+          ]
+        },
+        "applyRemovalOnDetectedDistractingPeople": {
+          "since": "14.5",
+          "params": [
+            "callback:optional, function",
+            "callbackFuncArgTable:optional, table"
+          ]
+        },
+        "changeDenoiseAmount": {
+          "since": "14.5",
+          "params": [
+            "amount:number"
+          ]
+        },
+        "changeReflectionRemovalAmount": {
+          "since": "14.5",
+          "params": [
+            "amount:number"
+          ]
+        },
+        "changeReflectionRemovalQuality": {
+          "since": "14.5",
+          "params": [
+            "quality:string",
+            "callback:optional, function",
+            "callbackFuncArgTable:optional, table"
+          ]
+        },
+        "countAllSpots": {
+          "since": "14.1",
+          "params": [
+            "whichFeature:optional,string"
+          ]
+        },
+        "createNewMask": {
+          "since": "11.0",
+          "params": [
+            "maskType:string",
+            "maskSubtype:string"
+          ]
+        },
+        "decrement": {
+          "since": "6.0",
+          "params": [
+            "param:string",
+            "withClippingOn:optional, boolean"
+          ]
+        },
+        "deleteMask": {
+          "since": "11.0",
+          "params": [
+            "param:string"
+          ]
+        },
+        "deleteMaskTool": {
+          "since": "11.0",
+          "params": [
+            "param:string"
+          ]
+        },
+        "deletePointColorSwatch": {
+          "since": "13.2",
+          "params": [
+            "deleteAll:boolean",
+            "deleteAtIndex:number",
+            "isForMasking:boolean"
+          ]
+        },
+        "deleteSelectedSpot": {
+          "since": "14.1",
+          "params": [
+            "whichFeature:optional,string"
+          ]
+        },
+        "deleteSelectedVariation": {
+          "since": "14.1",
+          "params": [
+            "whichFeature:optional,string"
+          ]
+        },
+        "detectDistractingPeople": {
+          "since": "14.5"
+        },
+        "duplicateAndInvertMask": {
+          "since": "11.4",
+          "params": [
+            "param:string"
+          ]
+        },
+        "editInPhotoshop": {
+          "since": "7.4"
+        },
+        "getActiveColorGradingView": {
+          "since": "10.0"
+        },
+        "getAllMasks": {
+          "since": "11.0"
+        },
+        "getAllSpots": {
+          "since": "14.1",
+          "params": [
+            "whichFeature:optional,string"
+          ]
+        },
+        "getEnhancePanelState": {
+          "since": "14.5"
+        },
+        "getProcessVersion": {
+          "since": "6.0"
+        },
+        "getRange": {
+          "since": "6.0",
+          "params": [
+            "param:string"
+          ]
+        },
+        "getReflectionRemovalPanelState": {
+          "since": "14.5"
+        },
+        "getRemovePanelPreferences": {
+          "since": "14.1"
+        },
+        "getSelectedLensBlurBokeh": {
+          "since": "13.3"
+        },
+        "getSelectedMask": {
+          "since": "11.0"
+        },
+        "getSelectedMaskTool": {
+          "since": "11.0"
+        },
+        "getSelectedPointColorSwatchIndex": {
+          "since": "13.2",
+          "params": [
+            "isForMasking:boolean"
+          ]
+        },
+        "getSelectedSpotIndex": {
+          "since": "14.1",
+          "params": [
+            "whichFeature:optional,string"
+          ]
+        },
+        "getSelectedSpotParams": {
+          "since": "14.1",
+          "params": [
+            "whichFeature:optional,string"
+          ]
+        },
+        "getSelectedSpotType": {
+          "since": "14.1"
+        },
+        "getSelectedTool": {
+          "since": "6.0"
+        },
+        "getValue": {
+          "since": "6.0",
+          "params": [
+            "param:string"
+          ]
+        },
+        "goToDevelopGraduatedFilter": {
+          "since": "7.4"
+        },
+        "goToDevelopRadialFilter": {
+          "since": "7.4"
+        },
+        "goToEyeCorrection": {
+          "since": "14.1",
+          "params": [
+            "eyeCorrectionType:optional, string"
+          ]
+        },
+        "goToHealing": {
+          "since": "12.0"
+        },
+        "goToMasking": {
+          "since": "11.0"
+        },
+        "goToRemove": {
+          "since": "14.1",
+          "params": [
+            "spotType:optional, string",
+            "whichFeature:optional,string"
+          ]
+        },
+        "goToSpotRemoval": {
+          "since": "7.4"
+        },
+        "gotoNextVariation": {
+          "since": "14.1",
+          "params": [
+            "whichFeature:optional,string"
+          ]
+        },
+        "gotoPreviousVariation": {
+          "since": "14.1",
+          "params": [
+            "whichFeature:optional,string"
+          ]
+        },
+        "hasFilterWithName": {
+          "since": "14.5",
+          "params": [
+            "name:string"
+          ]
+        },
+        "increment": {
+          "since": "6.0",
+          "params": [
+            "param:string",
+            "withClippingOn:optional, boolean"
+          ]
+        },
+        "intersectWithCurrentMask": {
+          "since": "11.0",
+          "params": [
+            "maskType:string",
+            "maskSubtype:string"
+          ]
+        },
+        "invertMask": {
+          "since": "11.4",
+          "params": [
+            "param:string"
+          ]
+        },
+        "moveSelectedSpot": {
+          "since": "14.1",
+          "params": [
+            "leftOrRight:optional,string",
+            "upOrDown:optional,string",
+            "horizontalUnits:optional, number",
+            "verticalUnits:optional, number",
+            "shouldMoveSourceArea:optional, bool"
+          ]
+        },
+        "refreshSelectedSpot": {
+          "since": "14.1",
+          "params": [
+            "whichFeature:optional,string"
+          ]
+        },
+        "resetAllDevelopAdjustments": {
+          "since": "6.0"
+        },
+        "resetBrushing": {
+          "since": "6.0"
+        },
+        "resetCircularGradient": {
+          "since": "6.0"
+        },
+        "resetCrop": {
+          "since": "6.0"
+        },
+        "resetFilterWithName": {
+          "since": "14.5",
+          "params": [
+            "name:string"
+          ]
+        },
+        "resetGradient": {
+          "since": "6.0"
+        },
+        "resetHealing": {
+          "since": "12.0"
+        },
+        "resetMasking": {
+          "since": "11.0"
+        },
+        "resetRedeye": {
+          "since": "6.0"
+        },
+        "resetSpotRemoval": {
+          "since": "6.0"
+        },
+        "resetToDefault": {
+          "since": "6.0",
+          "params": [
+            "param:string"
+          ]
+        },
+        "resetTransforms": {
+          "since": "6.6"
+        },
+        "revealAdjustedControls": {
+          "since": "6.0",
+          "params": [
+            "reveal:bool"
+          ]
+        },
+        "revealPanel": {
+          "since": "6.0",
+          "params": [
+            "paramOrPanelID:string",
+            "subPanelID:optional,string"
+          ]
+        },
+        "revealPanelIfVisible": {
+          "since": "8.1",
+          "params": [
+            "paramOrPanelID:string",
+            "subPanelID:optional,string"
+          ]
+        },
+        "selectMask": {
+          "since": "11.0",
+          "params": [
+            "param:string"
+          ]
+        },
+        "selectMaskTool": {
+          "since": "11.0",
+          "params": [
+            "param:string"
+          ]
+        },
+        "selectPointColorSwatch": {
+          "since": "13.2",
+          "params": [
+            "value:number",
+            "isForMasking:boolean"
+          ]
+        },
+        "selectTool": {
+          "since": "6.0",
+          "params": [
+            "tool:string"
+          ]
+        },
+        "setActiveColorGradingView": {
+          "since": "10.0",
+          "params": [
+            "value:string"
+          ]
+        },
+        "setAutoTone": {
+          "since": "7.4"
+        },
+        "setAutoWhiteBalance": {
+          "since": "7.4"
+        },
+        "setEnhance": {
+          "since": "15.3",
+          "params": [
+            "paramName:string",
+            "value:boolean",
+            "denoiseAmount:optional,number"
+          ]
+        },
+        "setLensBlurBokeh": {
+          "since": "13.3",
+          "params": [
+            "bokeh:string"
+          ]
+        },
+        "setMultipleAdjustmentThreshold": {
+          "since": "6.0",
+          "params": [
+            "seconds:number"
+          ]
+        },
+        "setProcessVersion": {
+          "since": "6.0",
+          "params": [
+            "value:string"
+          ]
+        },
+        "setRemovePanelPreferences": {
+          "since": "14.1",
+          "params": [
+            "preferencesTable:table"
+          ]
+        },
+        "setSelectedSpotIndex": {
+          "since": "14.1",
+          "params": [
+            "spotIndex:number",
+            "whichFeature:optional,string"
+          ]
+        },
+        "setSelectedSpotParams": {
+          "since": "14.1"
+        },
+        "setSelectedSpotType": {
+          "since": "14.1",
+          "params": [
+            "spotType:string",
+            "useGenAI:bool"
+          ]
+        },
+        "setTrackingDelay": {
+          "since": "6.0",
+          "params": [
+            "seconds:number"
+          ]
+        },
+        "setValue": {
+          "since": "6.0",
+          "params": [
+            "param:string",
+            "value:number",
+            "withClippingOn:optional, boolean"
+          ]
+        },
+        "showClipping": {
+          "since": "7.4"
+        },
+        "startTracking": {
+          "since": "6.0",
+          "params": [
+            "param:string"
+          ]
+        },
+        "stopTracking": {
+          "since": "6.0"
+        },
+        "subtractFromCurrentMask": {
+          "since": "11.0",
+          "params": [
+            "maskType:string",
+            "maskSubtype:string"
+          ]
+        },
+        "toggleEnhance": {
+          "since": "14.5",
+          "params": [
+            "paramName:string",
+            "denoiseAmount:optional,number",
+            "callback:optional, function",
+            "callbackFuncArgTable:optional, table"
+          ]
+        },
+        "toggleHideMask": {
+          "since": "11.0",
+          "params": [
+            "param:string"
+          ]
+        },
+        "toggleHideMaskTool": {
+          "since": "11.0",
+          "params": [
+            "param:string"
+          ]
+        },
+        "toggleInvertMaskTool": {
+          "since": "11.0",
+          "params": [
+            "param:string"
+          ]
+        },
+        "toggleLensBlurDepthVisualization": {
+          "since": "13.3"
+        },
+        "toggleOverlay": {
+          "since": "7.4"
+        },
+        "togglePointColorRangeVisualization": {
+          "since": "13.2",
+          "params": [
+            "isForMasking:optional, boolean"
+          ]
+        },
+        "toggleReflectionRemoval": {
+          "since": "14.5",
+          "params": [
+            "amount:optional,number",
+            "quality:optional,string",
+            "callback:optional, function",
+            "callbackFuncArgTable:optional, table"
+          ]
+        },
+        "updateSelectedPointColorSwatch": {
+          "since": "13.2",
+          "params": [
+            "colorSwatchTable:table",
+            "isForMasking:optional, boolean"
+          ]
+        }
+      }
     },
     "LrDevelopPreset": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "3.0",
+      "functions": {
+        "preset:getFile": {
+          "since": "3.0"
+        },
+        "preset:getName": {
+          "since": "3.0"
+        },
+        "preset:getParent": {
+          "since": "3.0"
+        },
+        "preset:getSetting": {
+          "since": "3.0"
+        },
+        "preset:getUuid": {
+          "since": "3.0"
+        },
+        "preset:type": {
+          "since": "4.1"
+        }
+      }
     },
     "LrDevelopPresetFolder": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "3.0",
+      "functions": {
+        "folder:getDevelopPresets": {
+          "since": "3.0"
+        },
+        "folder:getName": {
+          "since": "3.0"
+        },
+        "folder:getPath": {
+          "since": "3.0"
+        },
+        "folder:type": {
+          "since": "4.1"
+        }
+      }
     },
     "LrDialogs": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "attachErrorDialogToFunctionContext": {
+          "since": "1.3",
+          "params": [
+            "context:LrFunctionContext"
+          ]
+        },
+        "confirm": {
+          "since": "1.3",
+          "params": [
+            "message:string",
+            "info:string, optional",
+            "actionVerb:string, optional",
+            "cancelVerb:string, optional",
+            "otherVerb:string, optional"
+          ]
+        },
+        "message": {
+          "since": "1.3",
+          "params": [
+            "message:string",
+            "info:string, optional",
+            "style:string, optional"
+          ]
+        },
+        "messageWithDoNotShow": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "presentFloatingDialog": {
+          "since": "5.0",
+          "params": [
+            "plugin:_PLUGIN",
+            "args:table"
+          ]
+        },
+        "presentModalDialog": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "promptForActionWithDoNotShow": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "resetDoNotShowFlag": {
+          "since": "3.0",
+          "params": [
+            "actionPrefKey:optional, string"
+          ]
+        },
+        "runOpenPanel": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "runSavePanel": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "showBezel": {
+          "since": "5.0",
+          "params": [
+            "message:string",
+            "fadeDelay:number, optional"
+          ]
+        },
+        "showError": {
+          "since": "1.3",
+          "params": [
+            "errorString:string"
+          ]
+        },
+        "showModalProgressDialog": {
+          "since": "2.0",
+          "params": [
+            "params:table"
+          ]
+        },
+        "stopModalWithResult": {
+          "since": "1.3",
+          "params": [
+            "dialog:LrView",
+            "result:string"
+          ]
+        }
+      }
     },
     "LrDigest": {
-      "firstCataloguedIn": "15.3"
+      "firstCataloguedIn": "15.3",
+      "functions": {
+        "Factory.digest": {
+          "params": [
+            "input:string",
+            "digest_name:string",
+            "key:string"
+          ]
+        },
+        "Factory.init": {},
+        "HMAC.init": {
+          "params": [
+            "digest_name:string",
+            "key:string"
+          ]
+        },
+        "digester:digest": {},
+        "digester:reset": {},
+        "digester:update": {
+          "params": [
+            "str:string"
+          ]
+        }
+      }
     },
     "LrErrors": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "isCanceledError": {
+          "since": "1.3",
+          "params": [
+            "errorString:string"
+          ]
+        },
+        "throwCanceled": {
+          "since": "1.3"
+        },
+        "throwUserError": {
+          "since": "1.3",
+          "params": [
+            "text:string"
+          ]
+        }
+      }
     },
     "LrExportContext": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "exportContext:configureProgress": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "exportContext:renditions": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "exportContext:startRendering": {
+          "since": "1.3"
+        },
+        "exportContext.exportSession": {
+          "since": "1.3"
+        },
+        "exportContext.propertyTable": {
+          "since": "1.3"
+        },
+        "exportContext.publishService": {
+          "since": "3.0"
+        },
+        "exportContext.publishedCollection": {
+          "since": "3.0"
+        },
+        "exportContext.publishedCollectionInfo": {
+          "since": "3.0"
+        }
+      }
     },
     "LrExportRendition": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "exportRendition:recordPublishedPhotoId": {
+          "since": "3.0",
+          "params": [
+            "publishedId:string or number"
+          ]
+        },
+        "exportRendition:recordPublishedPhotoUrl": {
+          "since": "3.0",
+          "params": [
+            "publishedUrl:string"
+          ]
+        },
+        "exportRendition:renditionIsDone": {
+          "since": "2.0",
+          "params": [
+            "success:Boolean",
+            "message:string"
+          ]
+        },
+        "exportRendition:skipRender": {
+          "since": "3.0"
+        },
+        "exportRendition:type": {
+          "since": "4.1"
+        },
+        "exportRendition:uploadFailed": {
+          "since": "2.0",
+          "params": [
+            "message:string"
+          ]
+        },
+        "exportRendition:waitForRender": {
+          "since": "1.3"
+        },
+        "exportRendition.destinationPath": {
+          "since": "1.3"
+        },
+        "exportRendition.photo": {
+          "since": "1.3"
+        },
+        "exportRendition.publishedPhotoId": {
+          "since": "3.0"
+        },
+        "exportRendition.wasSkipped": {
+          "since": "3.0"
+        }
+      }
     },
     "LrExportSession": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "LrExportSession": {
+          "since": "1.3",
+          "params": [
+            "params:table"
+          ]
+        },
+        "exportSession:countRenditions": {
+          "since": "1.3"
+        },
+        "exportSession:doExportOnCurrentTask": {
+          "since": "1.3"
+        },
+        "exportSession:doExportOnNewTask": {
+          "since": "1.3"
+        },
+        "exportSession:photosToExport": {
+          "since": "1.3"
+        },
+        "exportSession:recordRemoteCollectionId": {
+          "since": "3.0",
+          "params": [
+            "remoteId:string or number"
+          ]
+        },
+        "exportSession:recordRemoteCollectionUrl": {
+          "since": "3.0",
+          "params": [
+            "remoteUrl:string or number"
+          ]
+        },
+        "exportSession:removePhoto": {
+          "since": "1.3",
+          "params": [
+            "photo:LrPhoto"
+          ]
+        },
+        "exportSession:renditions": {
+          "since": "1.3",
+          "params": [
+            "params:table, optional"
+          ]
+        },
+        "exportSession:renditionsForFilter": {
+          "since": "2.0",
+          "params": [
+            "params:table, optional"
+          ]
+        },
+        "exportSession:type": {
+          "since": "4.1"
+        },
+        "exportSession.catalog": {
+          "since": "1.3"
+        }
+      }
     },
     "LrExportSettings": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "addVideoExportPresets": {
+          "params": [
+            "definition:table",
+            "pluginObject:LrPlugin"
+          ]
+        },
+        "applyVideoExportPreset": {
+          "since": "4.0",
+          "params": [
+            "exportSettings:table",
+            "preset:LrVideoExportPreset"
+          ]
+        },
+        "extensionForFormat": {
+          "since": "1.3",
+          "params": [
+            "format:string or LrVideoExportPreset"
+          ]
+        },
+        "removeVideoExportPreset": {
+          "since": "4.0",
+          "params": [
+            "presetObject:LrVideoExportPreset or string",
+            "pluginObject:LrPlugin"
+          ]
+        },
+        "supportableVideoExportFormats": {
+          "since": "4.0"
+        },
+        "videoExportPresets": {
+          "since": "4.0"
+        },
+        "videoExportPresetsForPlugin": {
+          "since": "4.0",
+          "params": [
+            "pluginObject:LrPlugin"
+          ]
+        }
+      }
     },
     "LrFileUtils": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "chooseUniqueFileName": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "copy": {
+          "since": "1.3",
+          "params": [
+            "srcPath:string",
+            "destPath:string"
+          ]
+        },
+        "createAllDirectories": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "createDirectory": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "delete": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "directoryEntries": {
+          "since": "2.0",
+          "params": [
+            "pathToFolder:string"
+          ]
+        },
+        "exists": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "fileAttributes": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "files": {
+          "since": "2.0",
+          "params": [
+            "pathToFolder:string"
+          ]
+        },
+        "hasNoVisibleFiles": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "isDeletable": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "isEmptyDirectory": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "isReadable": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "isWritable": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "makeFileWritable": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "move": {
+          "since": "1.3",
+          "params": [
+            "srcPath:string",
+            "destPath:string"
+          ]
+        },
+        "moveToTrash": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "pathsAreOnSameVolume": {
+          "since": "1.3",
+          "params": [
+            "path1:string",
+            "path2:string"
+          ]
+        },
+        "readFile": {
+          "since": "2.2",
+          "params": [
+            "path:string"
+          ]
+        },
+        "recursiveDirectoryEntries": {
+          "since": "2.0",
+          "params": [
+            "pathToFolder:string"
+          ]
+        },
+        "recursiveFiles": {
+          "since": "2.0",
+          "params": [
+            "pathToFolder:string"
+          ]
+        },
+        "resolveAlias": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "resolveAllAliases": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "volumeAttributes": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        }
+      }
     },
     "LrFilterContext": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "2.0",
+      "functions": {
+        "filterContext:renditions": {
+          "since": "2.0",
+          "params": [
+            "params:table, optional"
+          ]
+        },
+        "filterContext.propertyTable": {
+          "since": "2.0"
+        },
+        "filterContext.renditionsToSatisfy": {
+          "since": "2.0"
+        },
+        "filterContext.sourceExportSession": {
+          "since": "2.0"
+        }
+      }
     },
     "LrFolder": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "3.0",
+      "functions": {
+        "folder:getChildren": {
+          "since": "3.0"
+        },
+        "folder:getName": {
+          "since": "3.0"
+        },
+        "folder:getParent": {
+          "since": "3.0"
+        },
+        "folder:getPath": {
+          "since": "3.0"
+        },
+        "folder:getPhotos": {
+          "since": "3.0",
+          "params": [
+            "includeChildren:Boolean"
+          ]
+        },
+        "folder:type": {
+          "since": "3.0"
+        },
+        "folder.catalog": {
+          "since": "3.0"
+        }
+      }
     },
     "LrFtp": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "appendFtpPaths": {
+          "since": "1.3",
+          "params": [
+            "root:string",
+            "child:string"
+          ]
+        },
+        "create": {
+          "since": "1.3",
+          "params": [
+            "params:table",
+            "autoNegotiate:Boolean"
+          ]
+        },
+        "ftpPathValidator": {
+          "since": "1.3",
+          "params": [
+            "view:LrView",
+            "inValue:any"
+          ]
+        },
+        "makeFtpPresetPopup": {
+          "since": "1.3",
+          "params": [
+            "params:table"
+          ]
+        },
+        "queryForPasswordIfNeeded": {
+          "since": "2.0"
+        },
+        "ftpConnection:disconnect": {
+          "since": "1.3"
+        },
+        "ftpConnection:exists": {
+          "since": "1.3",
+          "params": [
+            "filename:string"
+          ]
+        },
+        "ftpConnection:getContents": {
+          "since": "1.3",
+          "params": [
+            "remoteFileName:string"
+          ]
+        },
+        "ftpConnection:makeDirectory": {
+          "since": "1.3",
+          "params": [
+            "directoryName:string"
+          ]
+        },
+        "ftpConnection:pRemoveDirectory": {
+          "since": "1.3",
+          "params": [
+            "directoryName:string"
+          ]
+        },
+        "ftpConnection:pRemoveFile": {
+          "since": "1.3",
+          "params": [
+            "filename:string"
+          ]
+        },
+        "ftpConnection:putFile": {
+          "since": "1.3",
+          "params": [
+            "theLocalFilePath:string",
+            "destFileName:string"
+          ]
+        },
+        "ftpConnection:removeDirectory": {
+          "since": "1.3",
+          "params": [
+            "directoryName:string"
+          ]
+        },
+        "ftpConnection:removeFile": {
+          "since": "1.3",
+          "params": [
+            "filename:string"
+          ]
+        },
+        "ftpConnection:toTable": {
+          "since": "1.3"
+        },
+        "ftpConnection.connected": {
+          "since": "1.3"
+        },
+        "ftpConnection.passive": {
+          "since": "1.3"
+        },
+        "ftpConnection.password": {
+          "since": "1.3"
+        },
+        "ftpConnection.path": {
+          "since": "1.3"
+        },
+        "ftpConnection.port": {
+          "since": "1.3"
+        },
+        "ftpConnection.protocol": {
+          "since": "1.3"
+        },
+        "ftpConnection.server": {
+          "since": "1.3"
+        },
+        "ftpConnection.username": {
+          "since": "1.3"
+        }
+      }
     },
     "LrFunctionContext": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "callWithContext": {
+          "since": "1.3",
+          "params": [
+            "name:string",
+            "func:function"
+          ]
+        },
+        "callWithContext_noyield": {
+          "since": "2.0",
+          "params": [
+            "name:string",
+            "func:function"
+          ]
+        },
+        "callWithEmptyEnvironment": {
+          "since": "3.0",
+          "params": [
+            "func:function",
+            "...:any"
+          ]
+        },
+        "callWithEnvironment": {
+          "since": "3.0",
+          "params": [
+            "func:function",
+            "env:table",
+            "...:any"
+          ]
+        },
+        "pcallWithContext": {
+          "since": "1.3",
+          "params": [
+            "name:string",
+            "func:function"
+          ]
+        },
+        "pcallWithContext_noyield": {
+          "since": "2.0",
+          "params": [
+            "name:string",
+            "func:function"
+          ]
+        },
+        "pcallWithEmptyEnvironment": {
+          "since": "3.0",
+          "params": [
+            "func:function",
+            "...:any"
+          ]
+        },
+        "pcallWithEnvironment": {
+          "since": "3.0",
+          "params": [
+            "func:function",
+            "env:table",
+            "...:any"
+          ]
+        },
+        "postAsyncTaskWithContext": {
+          "since": "1.3",
+          "params": [
+            "name:string",
+            "func:function"
+          ]
+        },
+        "functionContext:addCleanupHandler": {
+          "since": "1.3",
+          "params": [
+            "func:function"
+          ]
+        },
+        "functionContext:addFailureHandler": {
+          "since": "1.3",
+          "params": [
+            "func:function"
+          ]
+        },
+        "functionContext:addOperationTitleForError": {
+          "since": "3.0",
+          "params": [
+            "title:string"
+          ]
+        }
+      }
     },
     "LrHttp": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "get": {
+          "since": "1.3",
+          "params": [
+            "url:string",
+            "headers:table, optional",
+            "timeout:number"
+          ]
+        },
+        "openUrlInBrowser": {
+          "since": "1.3",
+          "params": [
+            "url:string"
+          ]
+        },
+        "parseCookie": {
+          "since": "1.3",
+          "params": [
+            "cookie:string",
+            "decodeUrlEncoding:Boolean, optional"
+          ]
+        },
+        "post": {
+          "since": "1.3",
+          "params": [
+            "url:string",
+            "postBody:string (or, as of Lightroom 4.1, a function",
+            "headers:table, optional",
+            "method:string, optional",
+            "timeout:number",
+            "totalSize:number"
+          ]
+        },
+        "postMultipart": {
+          "since": "1.3",
+          "params": [
+            "url:string",
+            "content:table",
+            "headers:table, optional",
+            "timeout:number",
+            "callbackFn:function, optional",
+            "suppressFormData:Boolean, optional"
+          ]
+        }
+      }
     },
     "LrJournalProgressScope": {
       "firstCataloguedIn": "3.0",
       "absentAfter": "3.0"
     },
     "LrKeyword": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "3.0",
+      "functions": {
+        "keyword.type": {
+          "since": "3.0"
+        },
+        "keyword:getAttributes": {
+          "since": "3.0"
+        },
+        "keyword:getChildren": {
+          "since": "3.0"
+        },
+        "keyword:getName": {
+          "since": "3.0"
+        },
+        "keyword:getParent": {
+          "since": "3.0"
+        },
+        "keyword:getPhotos": {
+          "since": "3.0"
+        },
+        "keyword:getSynonyms": {
+          "since": "3.0"
+        },
+        "keyword:setAttributes": {
+          "since": "3.0",
+          "params": [
+            "keywordInfo:table"
+          ]
+        },
+        "keyword:setParent": {
+          "since": "13.0",
+          "params": [
+            "parent:LrKeyword"
+          ]
+        },
+        "keyword.catalog": {
+          "since": "3.0"
+        },
+        "keyword.localIdentifier": {
+          "since": "3.0"
+        }
+      }
     },
     "LrLocalization": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "LOC": {
+          "since": "1.3",
+          "params": [
+            "string:string"
+          ]
+        },
+        "currentLanguage": {
+          "since": "3.0"
+        },
+        "encodeUtf8Character": {
+          "since": "1.3",
+          "params": [
+            "ch:number"
+          ]
+        },
+        "translateForPlugin": {
+          "since": "1.3",
+          "params": [
+            "pluginId:string",
+            "string:string"
+          ]
+        }
+      }
     },
     "LrLogger": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "LrLogger": {
+          "since": "1.3",
+          "params": [
+            "name:optional, string"
+          ]
+        },
+        "logger:debug": {
+          "since": "1.3"
+        },
+        "logger:debugf": {
+          "since": "2.0",
+          "params": [
+            "format:string"
+          ]
+        },
+        "logger:disable": {
+          "since": "1.3"
+        },
+        "logger:enable": {
+          "since": "1.3",
+          "params": [
+            "actions:string, function, or table"
+          ]
+        },
+        "logger:error": {
+          "since": "1.3"
+        },
+        "logger:errorf": {
+          "since": "2.0",
+          "params": [
+            "format:string"
+          ]
+        },
+        "logger:fatal": {
+          "since": "1.3"
+        },
+        "logger:fatalf": {
+          "since": "2.0",
+          "params": [
+            "format:string"
+          ]
+        },
+        "logger:info": {
+          "since": "1.3"
+        },
+        "logger:infof": {
+          "since": "2.0",
+          "params": [
+            "format:string"
+          ]
+        },
+        "logger:quick": {
+          "since": "1.3",
+          "params": [
+            "...:one or more strings"
+          ]
+        },
+        "logger:quickf": {
+          "since": "2.0",
+          "params": [
+            "...:one or more strings"
+          ]
+        },
+        "logger:trace": {
+          "since": "1.3"
+        },
+        "logger:tracef": {
+          "since": "2.0",
+          "params": [
+            "format:string"
+          ]
+        },
+        "logger:type": {
+          "since": "4.1"
+        },
+        "logger:warn": {
+          "since": "1.3"
+        },
+        "logger:warnf": {
+          "since": "2.0",
+          "params": [
+            "format:string"
+          ]
+        }
+      }
     },
     "LrMath": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "3.0",
+      "functions": {
+        "bitAnd": {
+          "since": "3.0",
+          "params": [
+            "a:number",
+            "b:number"
+          ]
+        },
+        "bitOr": {
+          "since": "3.0",
+          "params": [
+            "a:number",
+            "b:number"
+          ]
+        },
+        "bitXor": {
+          "since": "3.0",
+          "params": [
+            "a:number",
+            "b:number"
+          ]
+        }
+      }
     },
     "LrMD5": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "digest": {
+          "since": "1.3",
+          "params": [
+            "data:string"
+          ]
+        }
+      }
     },
     "LrObservableTable": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "observableTable:addObserver": {
+          "since": "1.3",
+          "params": [
+            "condition:string",
+            "table:optional, table",
+            "func:function"
+          ]
+        },
+        "observableTable:pairs": {
+          "since": "1.3"
+        },
+        "observableTable:removeObserver": {
+          "since": "1.3",
+          "params": [
+            "condition:string",
+            "table:table"
+          ]
+        }
+      }
     },
     "LrPasswords": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "3.0",
+      "functions": {
+        "retrieve": {
+          "since": "3.0",
+          "params": [
+            "keystring:string",
+            "salt:string",
+            "pluginId:string"
+          ]
+        },
+        "store": {
+          "since": "3.0",
+          "params": [
+            "keystring:string",
+            "myPassword:string",
+            "salt:string",
+            "pluginId:string"
+          ]
+        }
+      }
     },
     "LrPathUtils": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "addExtension": {
+          "since": "1.3",
+          "params": [
+            "path:string",
+            "extension:string"
+          ]
+        },
+        "child": {
+          "since": "1.3",
+          "params": [
+            "path:string",
+            "child:string"
+          ]
+        },
+        "extension": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "getStandardFilePath": {
+          "since": "1.3",
+          "params": [
+            "which:string"
+          ]
+        },
+        "isAbsolute": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "isRelative": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "leafName": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "makeAbsolute": {
+          "since": "1.3",
+          "params": [
+            "path:string",
+            "base:string"
+          ]
+        },
+        "makeRelative": {
+          "since": "1.3",
+          "params": [
+            "path:string",
+            "base:string"
+          ]
+        },
+        "maxPathLength": {
+          "since": "1.3"
+        },
+        "parent": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "removeExtension": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        },
+        "replaceExtension": {
+          "since": "1.3",
+          "params": [
+            "path:string",
+            "extension:string"
+          ]
+        },
+        "standardizePath": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        }
+      }
     },
     "LrPhoto": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "photo:addKeyword": {
+          "since": "3.0",
+          "params": [
+            "keyword:LrKeyword"
+          ]
+        },
+        "photo:addOrRemoveFromTargetCollection": {
+          "since": "7.4",
+          "params": [
+            "include_selected:optional, boolean"
+          ]
+        },
+        "photo:applyDevelopPreset": {
+          "since": "3.0",
+          "params": [
+            "preset:LrDevelopPreset",
+            "plugin:optional, _PLUGIN",
+            "presetAmount:optional, integer",
+            "updateAISettings:optional, boolean"
+          ]
+        },
+        "photo:applyDevelopSettings": {
+          "since": "6.0",
+          "params": [
+            "settings:table",
+            "optHistoryName:optional, string",
+            "optFlattenAutoNow:optional, boolean"
+          ]
+        },
+        "photo:applyDevelopSnapshot": {
+          "since": "3.2",
+          "params": [
+            "id:string"
+          ]
+        },
+        "photo:applyMetadataPreset": {
+          "since": "3.0",
+          "params": [
+            "presetId:string"
+          ]
+        },
+        "photo:buildSmartPreview": {
+          "since": "5.0"
+        },
+        "photo:checkPhotoAvailability": {
+          "since": "2.0"
+        },
+        "photo:copySettings": {
+          "since": "10.3"
+        },
+        "photo:createDevelopSnapshot": {
+          "since": "3.0",
+          "params": [
+            "snapshotName:string",
+            "updateInPlace:Boolean"
+          ]
+        },
+        "photo:deleteDevelopSnapshot": {
+          "since": "5.0",
+          "params": [
+            "id:string"
+          ]
+        },
+        "photo:deleteSmartPreview": {
+          "since": "5.0"
+        },
+        "photo:getContainedCollections": {
+          "since": "3.0"
+        },
+        "photo:getContainedPublishedCollections": {
+          "since": "3.0"
+        },
+        "photo:getDevelopSettings": {
+          "since": "3.0"
+        },
+        "photo:getDevelopSnapshots": {
+          "since": "3.2"
+        },
+        "photo:getFormattedMetadata": {
+          "since": "1.3",
+          "params": [
+            "key:string"
+          ]
+        },
+        "photo:getNameViaPreset": {
+          "since": "3.0",
+          "params": [
+            "filenamePresetId:string",
+            "customString:string",
+            "sequenceNumber:number"
+          ]
+        },
+        "photo:getPropertyForPlugin": {
+          "since": "2.0",
+          "params": [
+            "plugin:string or _PLUGIN",
+            "fieldId:string",
+            "optVersion:optional, number",
+            "noThrow:optional, Boolean"
+          ]
+        },
+        "photo:getRawMetadata": {
+          "since": "1.3",
+          "params": [
+            "key:string"
+          ]
+        },
+        "photo:isAvailableForEditing": {
+          "since": "15.3"
+        },
+        "photo:needsUpdateAISettings": {
+          "since": "15.3"
+        },
+        "photo:openExportDialog": {
+          "since": "7.4"
+        },
+        "photo:openExportWithPreviousDialog": {
+          "since": "7.4"
+        },
+        "photo:pasteSettings": {
+          "since": "10.3",
+          "params": [
+            "updateAISettings:optional, boolean"
+          ]
+        },
+        "photo:quickDevelopAdjustImage": {
+          "since": "7.4",
+          "params": [
+            "settingName:string",
+            "size:string or number"
+          ]
+        },
+        "photo:quickDevelopAdjustWhiteBalance": {
+          "since": "7.4",
+          "params": [
+            "settingName:string",
+            "amount:number"
+          ]
+        },
+        "photo:quickDevelopCropAspect": {
+          "since": "7.4",
+          "params": [
+            "aspectRatio:string or table"
+          ]
+        },
+        "photo:quickDevelopSetTreatment": {
+          "since": "7.4",
+          "params": [
+            "value:string"
+          ]
+        },
+        "photo:quickDevelopSetWhiteBalacne": {
+          "since": "7.4",
+          "params": [
+            "value:string"
+          ]
+        },
+        "photo:quickDevelopSetWhiteBalance": {
+          "since": "7.4",
+          "params": [
+            "value:string"
+          ]
+        },
+        "photo:removeKeyword": {
+          "since": "3.0",
+          "params": [
+            "keyword:LrKeyword"
+          ]
+        },
+        "photo:requestJpegThumbnail": {
+          "since": "5.0",
+          "params": [
+            "width:optional, number",
+            "height:optional, number",
+            "callback:function"
+          ]
+        },
+        "photo:rotateLeft": {
+          "since": "7.4"
+        },
+        "photo:rotateRight": {
+          "since": "7.4"
+        },
+        "photo:setPropertyForPlugin": {
+          "since": "2.0",
+          "params": [
+            "plugin:_PLUGIN",
+            "fieldId:string",
+            "value:string",
+            "optVersion:optional, number"
+          ]
+        },
+        "photo:setRawMetadata": {
+          "since": "2.0",
+          "params": [
+            "key:string",
+            "value:any"
+          ]
+        },
+        "photo:type": {
+          "since": "4.1"
+        },
+        "photo:updateAISettings": {
+          "since": "13.3"
+        },
+        "photo.catalog": {
+          "since": "1.3"
+        },
+        "photo.localIdentifier": {
+          "since": "4.0"
+        }
+      }
     },
     "LrPhotoInfo": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "2.0",
+      "functions": {
+        "fileAttributes": {
+          "since": "2.0",
+          "params": [
+            "path:string"
+          ]
+        }
+      }
     },
     "LrPlugin": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "plugin:hasResource": {
+          "since": "1.3",
+          "params": [
+            "name:string"
+          ]
+        },
+        "plugin:resourceId": {
+          "since": "1.3",
+          "params": [
+            "name:string"
+          ]
+        },
+        "plugin:type": {
+          "since": "4.1"
+        },
+        "plugin.enabled": {
+          "since": "3.0"
+        },
+        "plugin.id": {
+          "since": "1.3"
+        },
+        "plugin.path": {
+          "since": "1.3"
+        }
+      }
     },
     "LrPrefs": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "prefsForPlugin": {
+          "since": "1.3",
+          "params": [
+            "pluginId:string"
+          ]
+        }
+      }
     },
     "LrProgressScope": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "LrProgressScope": {
+          "since": "1.3",
+          "params": [
+            "params:table"
+          ]
+        },
+        "progressScope:attachToFunctionContext": {
+          "since": "1.3",
+          "params": [
+            "context:LrFunctionContext"
+          ]
+        },
+        "progressScope:cancel": {
+          "since": "1.3"
+        },
+        "progressScope:done": {
+          "since": "1.3"
+        },
+        "progressScope:getParentScope": {
+          "since": "4.0"
+        },
+        "progressScope:getPortionComplete": {
+          "since": "1.3"
+        },
+        "progressScope:isCancelable": {
+          "since": "1.3"
+        },
+        "progressScope:isCanceled": {
+          "since": "1.3"
+        },
+        "progressScope:isDone": {
+          "since": "1.3"
+        },
+        "progressScope:isIndeterminate": {
+          "since": "1.3"
+        },
+        "progressScope:isLowUiPriority": {
+          "since": "8.4"
+        },
+        "progressScope:isPausable": {
+          "since": "7.5"
+        },
+        "progressScope:isPaused": {
+          "since": "7.5"
+        },
+        "progressScope:pause": {
+          "since": "7.5"
+        },
+        "progressScope:setCancelable": {
+          "since": "1.3",
+          "params": [
+            "cancelable:Boolean"
+          ]
+        },
+        "progressScope:setCaption": {
+          "since": "1.3",
+          "params": [
+            "caption:string"
+          ]
+        },
+        "progressScope:setIndeterminate": {
+          "since": "1.3"
+        },
+        "progressScope:setLowUiPriority": {
+          "since": "8.4",
+          "params": [
+            "inPrior:Boolean"
+          ]
+        },
+        "progressScope:setPausable": {
+          "since": "7.5",
+          "params": [
+            "cancelable:Boolean"
+          ]
+        },
+        "progressScope:setPortionComplete": {
+          "since": "1.3",
+          "params": [
+            "amountDone:number",
+            "totalAmount:number"
+          ]
+        },
+        "progressScope:type": {
+          "since": "4.1"
+        }
+      }
     },
     "LrPublishedCollection": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "3.0",
+      "functions": {
+        "pubCollection:addPhotoByRemoteId": {
+          "since": "3.0",
+          "params": [
+            "photo:LrPhoto",
+            "remoteID:string or number",
+            "remoteUrl:string",
+            "published:Boolean"
+          ]
+        },
+        "pubCollection:addPhotos": {
+          "since": "3.0",
+          "params": [
+            "photos:array of LrPhoto"
+          ]
+        },
+        "pubCollection:addPublishedPhotos": {
+          "since": "3.0",
+          "params": [
+            "publishedPhotos:array of LrPublishedPhoto"
+          ]
+        },
+        "pubCollection:delete": {
+          "since": "3.0"
+        },
+        "pubCollection:getCollectionInfoSummary": {
+          "since": "3.0"
+        },
+        "pubCollection:getName": {
+          "since": "3.0"
+        },
+        "pubCollection:getParent": {
+          "since": "3.0"
+        },
+        "pubCollection:getPhotos": {
+          "since": "3.0"
+        },
+        "pubCollection:getPublishedPhotos": {
+          "since": "3.0"
+        },
+        "pubCollection:getRemoteId": {
+          "since": "3.0"
+        },
+        "pubCollection:getRemoteUrl": {
+          "since": "3.0"
+        },
+        "pubCollection:getSearchDescription": {
+          "since": "5.0"
+        },
+        "pubCollection:getService": {
+          "since": "3.0"
+        },
+        "pubCollection:isSmartCollection": {
+          "since": "3.0"
+        },
+        "pubCollection:publishNow": {
+          "since": "4.0",
+          "params": [
+            "doneCallback:function, optional"
+          ]
+        },
+        "pubCollection:removeAllPhotos": {
+          "since": "3.0"
+        },
+        "pubCollection:removePhotos": {
+          "since": "3.0",
+          "params": [
+            "photos:array of LrPhoto"
+          ]
+        },
+        "pubCollection:setCollectionSettings": {
+          "since": "3.0",
+          "params": [
+            "settings:table"
+          ]
+        },
+        "pubCollection:setName": {
+          "since": "3.0",
+          "params": [
+            "name:string"
+          ]
+        },
+        "pubCollection:setParent": {
+          "since": "3.0",
+          "params": [
+            "parent:LrPublishedCollectionSet"
+          ]
+        },
+        "pubCollection:setRemoteId": {
+          "since": "3.0",
+          "params": [
+            "remoteId:string or number"
+          ]
+        },
+        "pubCollection:setRemoteUrl": {
+          "since": "3.0",
+          "params": [
+            "url:string"
+          ]
+        },
+        "pubCollection:setSearchDescription": {
+          "since": "3.0",
+          "params": [
+            "searchDesc:table"
+          ]
+        },
+        "pubCollection:type": {
+          "since": "3.0"
+        },
+        "pubCollection.catalog": {
+          "since": "3.0"
+        },
+        "pubCollection.localIdentifier": {
+          "since": "3.0"
+        }
+      }
     },
     "LrPublishedCollectionSet": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "3.0",
+      "functions": {
+        "pubCollectionSet:delete": {
+          "since": "3.0"
+        },
+        "pubCollectionSet:getChildCollectionSets": {
+          "since": "3.0"
+        },
+        "pubCollectionSet:getChildCollections": {
+          "since": "3.0"
+        },
+        "pubCollectionSet:getChildren": {
+          "since": "3.0"
+        },
+        "pubCollectionSet:getCollectionSetInfoSummary": {
+          "since": "3.0"
+        },
+        "pubCollectionSet:getName": {
+          "since": "3.0"
+        },
+        "pubCollectionSet:getParent": {
+          "since": "3.0"
+        },
+        "pubCollectionSet:getRemoteId": {
+          "since": "3.0"
+        },
+        "pubCollectionSet:getRemoteUrl": {
+          "since": "3.0"
+        },
+        "pubCollectionSet:getService": {
+          "since": "3.0"
+        },
+        "pubCollectionSet:setCollectionSetSettings": {
+          "since": "3.0",
+          "params": [
+            "settings:table"
+          ]
+        },
+        "pubCollectionSet:setName": {
+          "since": "3.0",
+          "params": [
+            "name:string"
+          ]
+        },
+        "pubCollectionSet:setParent": {
+          "since": "3.0",
+          "params": [
+            "parent:LrPublishedCollectionSet"
+          ]
+        },
+        "pubCollectionSet:setRemoteId": {
+          "since": "3.0",
+          "params": [
+            "remoteId:string or number"
+          ]
+        },
+        "pubCollectionSet:setRemoteUrl": {
+          "since": "3.0",
+          "params": [
+            "url:string"
+          ]
+        },
+        "pubCollectionSet:type": {
+          "since": "3.0"
+        },
+        "pubCollectionSet.catalog": {
+          "since": "3.0"
+        },
+        "pubCollectionSet.localIdentifier": {
+          "since": "3.0"
+        }
+      }
     },
     "LrPublishedPhoto": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "3.0",
+      "functions": {
+        "publishedPhoto:getEditedFlag": {
+          "since": "3.0"
+        },
+        "publishedPhoto:getPhoto": {
+          "since": "3.0"
+        },
+        "publishedPhoto:getPublishCount": {
+          "since": "3.0"
+        },
+        "publishedPhoto:getRemoteId": {
+          "since": "3.0"
+        },
+        "publishedPhoto:getRemoteUrl": {
+          "since": "3.0"
+        },
+        "publishedPhoto:setEditedFlag": {
+          "since": "3.0",
+          "params": [
+            "edited:Boolean"
+          ]
+        },
+        "publishedPhoto:setRemoteId": {
+          "since": "3.0",
+          "params": [
+            "remoteID:string or number"
+          ]
+        },
+        "publishedPhoto:setRemoteUrl": {
+          "since": "3.0",
+          "params": [
+            "url:string"
+          ]
+        },
+        "publishedPhoto:type": {
+          "since": "4.1"
+        },
+        "publishedPhoto.catalog": {
+          "since": "3.0"
+        }
+      }
     },
     "LrPublishService": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "3.0",
+      "functions": {
+        "publishService:createPublishedCollection": {
+          "since": "3.0",
+          "params": [
+            "name:string",
+            "parent:optional, LrPublishedCollectionSet",
+            "canReturnExisting:optional, Boolean"
+          ]
+        },
+        "publishService:createPublishedCollectionSet": {
+          "since": "3.0",
+          "params": [
+            "name:string",
+            "parent:optional, LrPublishedCollectionSet",
+            "canReturnExisting:optional, Boolean"
+          ]
+        },
+        "publishService:createPublishedSmartCollection": {
+          "since": "3.0",
+          "params": [
+            "name:string",
+            "searchDesc:table",
+            "parent:optional, LrPublishedCollectionSet",
+            "canReturnExisting:optional, Boolean"
+          ]
+        },
+        "publishService:getChildCollectionSets": {
+          "since": "3.0"
+        },
+        "publishService:getChildCollections": {
+          "since": "3.0"
+        },
+        "publishService:getName": {
+          "since": "3.0"
+        },
+        "publishService:getPluginId": {
+          "since": "3.0"
+        },
+        "publishService:getPublishSettings": {
+          "since": "3.0"
+        },
+        "publishService:type": {
+          "since": "3.0"
+        },
+        "publishService.catalog": {
+          "since": "3.0"
+        },
+        "publishService.localIdentifier": {
+          "since": "3.0"
+        }
+      }
     },
     "LrRecursionGuard": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "2.0",
+      "functions": {
+        "LrRecursionGuard": {
+          "since": "2.0",
+          "params": [
+            "name:optional, string"
+          ]
+        },
+        "recursionGuard:performWithGuard": {
+          "since": "2.0",
+          "params": [
+            "func:function"
+          ]
+        },
+        "recursionGuard.active": {
+          "since": "2.0"
+        }
+      }
     },
     "LrSelection": {
-      "firstCataloguedIn": "8.0"
+      "firstCataloguedIn": "8.0",
+      "firstSupportedIn": "6.0",
+      "functions": {
+        "clearLabels": {
+          "since": "6.0"
+        },
+        "decreaseRating": {
+          "since": "6.0"
+        },
+        "deselectActive": {
+          "since": "6.0"
+        },
+        "deselectOthers": {
+          "since": "6.0"
+        },
+        "extendSelection": {
+          "since": "6.0",
+          "params": [
+            "direction:string",
+            "amount:number"
+          ]
+        },
+        "flagAsPick": {
+          "since": "6.0"
+        },
+        "flagAsReject": {
+          "since": "6.0"
+        },
+        "getColorLabel": {
+          "since": "6.0"
+        },
+        "getFlag": {
+          "since": "6.0"
+        },
+        "getRating": {
+          "since": "6.0"
+        },
+        "increaseRating": {
+          "since": "6.0"
+        },
+        "nextPhoto": {
+          "since": "6.0"
+        },
+        "previousPhoto": {
+          "since": "6.0"
+        },
+        "removeFlag": {
+          "since": "6.0"
+        },
+        "removeFromCatalog": {
+          "since": "14.3"
+        },
+        "selectAll": {
+          "since": "6.0"
+        },
+        "selectFirstPhoto": {
+          "since": "6.0"
+        },
+        "selectInverse": {
+          "since": "6.0"
+        },
+        "selectLastPhoto": {
+          "since": "6.0"
+        },
+        "selectNone": {
+          "since": "6.0"
+        },
+        "setColorLabel": {
+          "since": "6.0",
+          "params": [
+            "label:string"
+          ]
+        },
+        "setRating": {
+          "since": "6.0",
+          "params": [
+            "rating:number"
+          ]
+        },
+        "toggleBlueLabel": {
+          "since": "6.0"
+        },
+        "toggleGreenLabel": {
+          "since": "6.0"
+        },
+        "togglePurpleLabel": {
+          "since": "6.0"
+        },
+        "toggleRedLabel": {
+          "since": "6.0"
+        },
+        "toggleYellowLabel": {
+          "since": "6.0"
+        }
+      }
     },
     "LrShell": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "openFilesInApp": {
+          "since": "1.3",
+          "params": [
+            "files:array of strings",
+            "appPath:string"
+          ]
+        },
+        "openPathsViaCommandLine": {
+          "since": "3.0",
+          "params": [
+            "files:array of strings",
+            "appPath:string",
+            "extraArgs:optional, string"
+          ]
+        },
+        "revealInShell": {
+          "since": "1.3",
+          "params": [
+            "path:string"
+          ]
+        }
+      }
     },
     "LrSlideshow": {
-      "firstCataloguedIn": "8.0"
+      "firstCataloguedIn": "8.0",
+      "firstSupportedIn": "6.0",
+      "functions": {
+        "startSlideshow": {
+          "since": "6.0"
+        },
+        "stopSlideshow": {
+          "since": "6.0"
+        }
+      }
     },
     "LrSocket": {
-      "firstCataloguedIn": "8.0"
+      "firstCataloguedIn": "8.0",
+      "firstSupportedIn": "6.0",
+      "functions": {
+        "bind": {
+          "since": "6.0",
+          "params": [
+            "params:table"
+          ]
+        },
+        "socket:close": {
+          "since": "6.0"
+        },
+        "socket:reconnect": {
+          "since": "6.0"
+        },
+        "socket:send": {
+          "since": "6.0",
+          "params": [
+            "message:string"
+          ]
+        },
+        "socket:type": {
+          "since": "6.0"
+        }
+      }
     },
     "LrSounds": {
-      "firstCataloguedIn": "8.0"
+      "firstCataloguedIn": "8.0",
+      "firstSupportedIn": "6.0",
+      "functions": {
+        "getSystemSounds": {
+          "since": "6.0"
+        },
+        "playSystemSound": {
+          "since": "6.0",
+          "params": [
+            "systemSound:object"
+          ]
+        }
+      }
     },
     "LrStringUtils": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "byteString": {
+          "since": "1.3",
+          "params": [
+            "number:number",
+            "precision:optional, number"
+          ]
+        },
+        "compareStrings": {
+          "since": "1.3",
+          "params": [
+            "string1:string",
+            "string2:string",
+            "treatNumberAsString:optional, Boolean"
+          ]
+        },
+        "decodeBase64": {
+          "since": "1.3",
+          "params": [
+            "string:string"
+          ]
+        },
+        "encodeBase64": {
+          "since": "1.3",
+          "params": [
+            "string:string"
+          ]
+        },
+        "isOnlyAscii": {
+          "since": "1.3",
+          "params": [
+            "string:string"
+          ]
+        },
+        "localizedStringSort": {
+          "since": "1.3",
+          "params": [
+            "strings:table"
+          ]
+        },
+        "lower": {
+          "since": "1.3",
+          "params": [
+            "string:string"
+          ]
+        },
+        "numberToString": {
+          "since": "1.3",
+          "params": [
+            "number:number",
+            "precision:optional, number"
+          ]
+        },
+        "numberToStringWithSeparators": {
+          "params": [
+            "number:number",
+            "precision:optional, number"
+          ]
+        },
+        "trimWhitespace": {
+          "since": "1.3",
+          "params": [
+            "string:string"
+          ]
+        },
+        "truncate": {
+          "since": "1.3",
+          "params": [
+            "string:string",
+            "maxBytes:number"
+          ]
+        },
+        "upper": {
+          "since": "1.3",
+          "params": [
+            "string:string"
+          ]
+        }
+      }
     },
     "LrSystemInfo": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "6.0",
+      "functions": {
+        "appWindowSize": {},
+        "architecture": {},
+        "displayInfo": {},
+        "ipAddress": {
+          "since": "6.0"
+        },
+        "is64Bit": {},
+        "isGCOptimizationEnabled": {},
+        "isSyncEnabled": {},
+        "memSize": {},
+        "numCPUs": {},
+        "osVersion": {},
+        "summaryString": {}
+      }
     },
     "LrTasks": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "canYield": {
+          "since": "1.3"
+        },
+        "execute": {
+          "since": "1.3",
+          "params": [
+            "cmd:string"
+          ]
+        },
+        "pcall": {
+          "since": "1.3",
+          "params": [
+            "func:function"
+          ]
+        },
+        "sleep": {
+          "since": "2.0",
+          "params": [
+            "delay:number"
+          ]
+        },
+        "startAsyncTask": {
+          "since": "1.3",
+          "params": [
+            "func:function",
+            "optName:string, optional"
+          ]
+        },
+        "startAsyncTaskWithoutErrorHandler": {
+          "since": "1.3",
+          "params": [
+            "func:function",
+            "optName:string, optional"
+          ]
+        },
+        "yield": {
+          "since": "1.3"
+        }
+      }
     },
     "LrTether": {
-      "firstCataloguedIn": "8.0"
+      "firstCataloguedIn": "8.0",
+      "firstSupportedIn": "6.0",
+      "functions": {
+        "getAdvanceSelectionOnTetheredCapture": {
+          "since": "6.0"
+        },
+        "isTetherActive": {
+          "since": "6.0"
+        },
+        "numDownloadsPending": {
+          "since": "6.0"
+        },
+        "setAdvanceSelectionOnTetheredCapture": {
+          "since": "6.0",
+          "params": [
+            "advance:boolean"
+          ]
+        },
+        "startTether": {
+          "since": "6.0"
+        },
+        "stopTether": {
+          "since": "6.1"
+        },
+        "triggerCapture": {
+          "since": "6.0"
+        },
+        "triggerCaptureBlocking": {
+          "since": "6.0"
+        }
+      }
     },
     "LrUndo": {
-      "firstCataloguedIn": "8.0"
+      "firstCataloguedIn": "8.0",
+      "firstSupportedIn": "6.0",
+      "functions": {
+        "canRedo": {
+          "since": "6.0"
+        },
+        "canUndo": {
+          "since": "6.0"
+        },
+        "redo": {
+          "since": "6.0"
+        },
+        "undo": {
+          "since": "6.0"
+        }
+      }
     },
     "LrVideoExportPreset": {
-      "firstCataloguedIn": "8.0"
+      "firstCataloguedIn": "8.0",
+      "firstSupportedIn": "4.0",
+      "functions": {
+        "videoExportPreset:extension": {
+          "since": "4.0"
+        },
+        "videoExportPreset:formatID": {
+          "since": "4.0"
+        },
+        "videoExportPreset:name": {
+          "since": "4.0"
+        },
+        "videoExportPreset:presetPath": {
+          "since": "4.0"
+        },
+        "videoExportPreset:targetInfo": {
+          "since": "4.0"
+        },
+        "videoExportPreset:type": {
+          "since": "4.1"
+        }
+      }
     },
     "LrView": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "bind": {
+          "since": "1.3",
+          "params": [
+            "binding:string or table"
+          ]
+        },
+        "conditionalItem": {
+          "since": "2.0",
+          "params": [
+            "condition:any type",
+            "view:view description"
+          ]
+        },
+        "osFactory": {
+          "since": "1.3"
+        },
+        "share": {
+          "since": "1.3",
+          "params": [
+            "name:string"
+          ]
+        },
+        "viewFactory:catalog_photo": {
+          "since": "4.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:checkbox": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:color_well": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:column": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:combo_box": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:control_spacing": {
+          "since": "1.3"
+        },
+        "viewFactory:dialog_spacing": {
+          "since": "1.3"
+        },
+        "viewFactory:edit_field": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:group_box": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:label_spacing": {
+          "since": "1.3"
+        },
+        "viewFactory:password_field": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:picture": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:popup_menu": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:push_button": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:radio_button": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:row": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:scrolled_view": {
+          "since": "4.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:separator": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:simple_list": {
+          "since": "4.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:slider": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:spacer": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:static_text": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:tab_view": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:tab_view_item": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "viewFactory:view": {
+          "since": "1.3",
+          "params": [
+            "args:table"
+          ]
+        },
+        "kIgnoredView": {}
+      }
     },
     "LrWebViewFactory": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "2.0",
+      "functions": {
+        "webViewFactory:checkbox_and_color_row": {
+          "since": "2.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "webViewFactory:checkbox_row": {
+          "since": "2.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "webViewFactory:color_content_column": {
+          "since": "2.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "webViewFactory:content_column": {
+          "since": "2.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "webViewFactory:content_section": {
+          "since": "2.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "webViewFactory:header_section": {
+          "params": [
+            "args:table"
+          ]
+        },
+        "webViewFactory:header_section_label": {
+          "since": "2.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "webViewFactory:identity_plate": {
+          "since": "2.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "webViewFactory:label_and_color_row": {
+          "since": "2.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "webViewFactory:labeled_text_input": {
+          "since": "2.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "webViewFactory:metadataModeControl": {
+          "params": [
+            "args:table"
+          ]
+        },
+        "webViewFactory:panel_content": {
+          "since": "2.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "webViewFactory:popup_row": {
+          "since": "2.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "webViewFactory:row": {
+          "since": "2.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "webViewFactory:row_column_picker": {
+          "since": "2.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "webViewFactory:slider_content_column": {
+          "since": "2.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "webViewFactory:slider_row": {
+          "since": "2.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "webViewFactory:subdivided_sections": {
+          "since": "2.0",
+          "params": [
+            "args:table"
+          ]
+        },
+        "webViewFactory:warning_icon": {
+          "params": [
+            "args:table"
+          ]
+        }
+      }
     },
     "LrXml": {
-      "firstCataloguedIn": "3.0"
+      "firstCataloguedIn": "3.0",
+      "firstSupportedIn": "1.3",
+      "functions": {
+        "createXmlBuilder": {
+          "since": "1.3",
+          "params": [
+            "omitDeclaration:Boolean"
+          ]
+        },
+        "parseXml": {
+          "since": "1.3",
+          "params": [
+            "xmlString:string"
+          ]
+        },
+        "builderInstance:append": {
+          "since": "1.3",
+          "params": [
+            "otherXmlBuilder:builderInstance"
+          ]
+        },
+        "builderInstance:beginBlock": {
+          "since": "1.3",
+          "params": [
+            "name:string",
+            "attributes:table, optional"
+          ]
+        },
+        "builderInstance:comment": {
+          "since": "1.3",
+          "params": [
+            "contents:string"
+          ]
+        },
+        "builderInstance:endBlock": {
+          "since": "1.3"
+        },
+        "builderInstance:serialize": {
+          "since": "1.3"
+        },
+        "builderInstance:tag": {
+          "since": "1.3",
+          "params": [
+            "name:string",
+            "value:string, optional",
+            "attributes:table, optional"
+          ]
+        },
+        "builderInstance:text": {
+          "since": "1.3",
+          "params": [
+            "value:string"
+          ]
+        },
+        "xmlDomInstance:attributes": {
+          "since": "1.3"
+        },
+        "xmlDomInstance:childAtIndex": {
+          "since": "1.3"
+        },
+        "xmlDomInstance:childCount": {
+          "since": "1.3"
+        },
+        "xmlDomInstance:name": {
+          "since": "1.3"
+        },
+        "xmlDomInstance:serialize": {
+          "since": "1.3"
+        },
+        "xmlDomInstance:text": {
+          "since": "3.0"
+        },
+        "xmlDomInstance:transform": {
+          "since": "1.3",
+          "params": [
+            "xsltString:string"
+          ]
+        },
+        "xmlDomInstance:type": {
+          "since": "1.3"
+        }
+      }
     }
   },
   "undocumentedModules": {

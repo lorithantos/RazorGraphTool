@@ -13,7 +13,39 @@ using System.Text.Json.Serialization;
 /// Last catalogued version carrying it, when it is gone from the newest. A removal
 /// or rename, and a real compatibility signal.
 /// </param>
-public sealed record ExternalApiModule(string FirstCataloguedIn, string? AbsentAfter);
+/// <summary>One documented function on a module.</summary>
+/// <param name="Since">
+/// The release the vendor states introduced it. Authoritative, unlike anything
+/// inferred from which packages happen to be on disk.
+/// </param>
+/// <param name="Params">Declared parameters as "name:type", type as the docs give it.</param>
+public sealed record ApiFunction(string? Since = null, List<string>? Params = null);
+
+/// <summary>One module in a catalogued external API surface.</summary>
+/// <param name="FirstCataloguedIn">
+/// Earliest CATALOGUED version carrying it. Says which packages are held, not
+/// when the vendor shipped it -- LrDevelopController reads 8.0 here because that
+/// is the oldest local SDK containing it, where Adobe documents 6.0.
+/// </param>
+/// <param name="AbsentAfter">
+/// Last catalogued version carrying it, when it is gone from the newest. A removal
+/// or rename, and a real compatibility signal.
+/// </param>
+/// <param name="FirstSupportedIn">
+/// The release the vendor states introduced the module, taken as the earliest
+/// across its functions. Preferred over FirstCataloguedIn wherever present,
+/// because it is a fact about the product rather than about our collection.
+/// </param>
+/// <param name="Functions">Documented functions, with their own introduction versions.</param>
+public sealed record ExternalApiModule(
+    string FirstCataloguedIn,
+    string? AbsentAfter = null,
+    string? FirstSupportedIn = null,
+    Dictionary<string, ApiFunction>? Functions = null)
+{
+    /// <summary>The version to reason about: the vendor's, falling back to ours.</summary>
+    public string EffectiveSince => FirstSupportedIn ?? FirstCataloguedIn;
+}
 
 /// <summary>
 /// A document shipped alongside the API surface, recorded by identity rather than
@@ -183,15 +215,52 @@ public sealed class ExternalApiCatalog
         var needed = moduleNames
             .Select(n => Modules.TryGetValue(n, out var m) ? m : null)
             .Where(m => m is not null)
-            .Select(m => m!.FirstCataloguedIn)
+            .Select(m => m!.EffectiveSince)
             .ToList();
 
-        if (needed.Count == 0) return null;
+        return Highest(needed);
+    }
 
-        // Ordinal position in the catalogue, so this does not need to parse
-        // version strings that other products may not number the same way.
-        var latest = needed.Max(v => CatalogedVersions.IndexOf(v));
-        return latest >= 0 ? CatalogedVersions[latest] : null;
+    /// <summary>
+    /// The minimum version for specific FUNCTIONS on a module, which is the
+    /// question a caller actually has. A module existing is not the same as the
+    /// function being called existing: LrDevelopController dates to 6.0 but
+    /// carries functions introduced as late as 15.3, so importing it and calling
+    /// one of those are very different requirements.
+    /// </summary>
+    /// <param name="functionNames">Unqualified names, as written after the dot.</param>
+    public string? MinimumVersionForFunctions(string moduleName, IEnumerable<string> functionNames)
+    {
+        if (!Modules.TryGetValue(moduleName, out var module)) return null;
+
+        var versions = functionNames
+            .Select(f => module.Functions is not null && module.Functions.TryGetValue(f, out var fn) ? fn.Since : null)
+            .Where(v => v is not null)
+            .Select(v => v!)
+            .ToList();
+
+        // Nothing recognised: fall back to the module's own floor rather than
+        // returning null, which would read as "no requirement".
+        return versions.Count > 0 ? Highest(versions) : module.EffectiveSince;
+    }
+
+    /// <summary>
+    /// The latest of a set of version strings, compared as versions. Ordinal
+    /// position in CatalogedVersions cannot be used: vendor-stated versions like
+    /// 1.3 and 6.0 are mostly releases this catalogue does not hold.
+    /// </summary>
+    private static string? Highest(IReadOnlyCollection<string> versions)
+    {
+        if (versions.Count == 0) return null;
+
+        string? best = null;
+        Version? bestParsed = null;
+        foreach (var v in versions)
+        {
+            if (!Version.TryParse(v, out var parsed)) continue;
+            if (bestParsed is null || parsed > bestParsed) { bestParsed = parsed; best = v; }
+        }
+        return best;
     }
 
     /// <summary>Load a catalogue shipped inside this assembly.</summary>
