@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -17,6 +17,7 @@
   <ItemGroup>
     <ProjectReference Include="..\RazorGraph.Core\RazorGraph.Core.csproj" />
     <ProjectReference Include="..\RazorGraph.Extractor\RazorGraph.Extractor.csproj" />
+    <ProjectReference Include="..\RazorGraph.Lua\RazorGraph.Lua.csproj" />
   </ItemGroup>
 
 </Project>

@@ -6,6 +6,7 @@ using ModelContextProtocol.Server;
 using RazorGraph.Core.Graph;
 using RazorGraph.Core.Serialization;
 using RazorGraph.Extractor;
+using RazorGraph.Lua;
 
 /// <summary>
 /// Tools that manage the graphs the server holds: build them from source, load
@@ -62,6 +63,52 @@ public sealed class GraphStoreTools(GraphStore store)
         var graph = await builder.BuildFromSolutionAllAsync(full, ct);
 
         return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries, builder.SkippedTestProjects);
+    }
+
+    [McpServerTool(Name = "build_lua")]
+    [Description("Build a graph from a directory of Lua source. Unlike build_graph there is no compile step: the host environment is detected from the tree (Info.lua → Lightroom, .rockspec → LuaRocks, else plain path conventions) and files are parsed directly, so it is fast. Modules and module references are foreign kinds ('luaModule', 'requires') selectable by name; functions are ordinary Method nodes with Contains edges, so normal navigation works. The response reports the detected host, and counts resolved / external / unresolved references separately — external means a host or standard-library module outside the tree, which is not a failure.")]
+    public string BuildLua(
+        [Description("Absolute path to a directory containing Lua source")] string path,
+        [Description("Id to file the result under. Defaults to the directory name.")] string? graphId = null,
+        [Description("How many unresolved references to list individually; the count is always reported. Default 20.")] int unresolvedLimit = 20,
+        CancellationToken ct = default)
+    {
+        var full = Path.GetFullPath(path);
+        if (!Directory.Exists(full)) throw new McpException($"Directory not found: {full}");
+
+        var (graph, report) = new LuaGraphBuilder().Build(full);
+        var entry = store.Add(graph, full, graphId ?? new DirectoryInfo(full).Name);
+
+        var listed = report.UnresolvedReferences.Take(Math.Max(0, unresolvedLimit)).ToList();
+
+        return ToolResponses.ToJson(new
+        {
+            graphId = entry.Id,
+            source = entry.Source,
+            // Always present: a misdetected host uses the wrong reference function
+            // and yields a graph that is empty for a reason nothing else reveals.
+            host = report.HostName,
+            hostEvidence = report.HostEvidence,
+            nodes = graph.Nodes.Count,
+            edges = graph.Edges.Count,
+            modules = report.Modules,
+            functions = report.Functions,
+            references = new
+            {
+                resolved = report.ResolvedReferences,
+                external = report.ExternalReferences,
+                unresolved = report.UnresolvedReferences.Count
+            },
+            // Listed, not merely counted: these are the edges the graph does not
+            // have, and a bare number cannot be acted on.
+            unresolvedReferences = listed.Count > 0 ? listed : null,
+            unresolvedTruncated = report.UnresolvedReferences.Count > listed.Count,
+            parseFailures = report.ParseFailures.Count > 0 ? report.ParseFailures : null,
+            // Set when the host has no module-reference mechanism at all, so that
+            // an empty module graph reads as a property of the host rather than a
+            // gap in extraction.
+            structuralCaveat = report.StructuralCaveat
+        });
     }
 
     [McpServerTool(Name = "load_graph")]
