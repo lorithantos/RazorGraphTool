@@ -18,6 +18,16 @@ using SymbolInfo = RazorGraph.Extractor.Roslyn.SymbolInfo;
 internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clientAssets)
 {
     /// <summary>
+    /// Razor files awaiting binding, with the project each came from. Resolution
+    /// is deferred because a view name resolves against the referencing project
+    /// AND every project it references — a partial living in a Razor Class
+    /// Library is a legitimate target that a per-project pass cannot see — and
+    /// the project nodes carrying that structure do not exist until the last
+    /// project has been loaded.
+    /// </summary>
+    private readonly List<(RazorPageInfo Info, string? Project)> _pendingBindings = new();
+
+    /// <summary>
     /// Razor files, their correlation to the symbols already in the graph,
     /// partial cross-references, and client assets, for one project.
     /// </summary>
@@ -55,10 +65,12 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
             CorrelateRazorToRoslyn(info, symbols, idScope);
         }
 
-        foreach (var info in razorInfos)
-        {
-            AddPartialEdges(info, razorInfos);
-        }
+        // Held for the binding post-pass rather than resolved here. Partial names
+        // resolve against the referencing project AND the projects it references,
+        // and project nodes do not exist until every project has been loaded —
+        // the same reason GraphBuilder accumulates symbols instead of correlating
+        // Razor per project.
+        foreach (var info in razorInfos) _pendingBindings.Add((info, idScope));
 
         clientAssets.AddClientAssets(projectDir, razorInfos, idScope, includeVendorAssets);
     }
@@ -265,6 +277,72 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Resolve every deferred view name and emit its edges, once all projects are
+    /// in the graph.
+    ///
+    /// Candidates come from the graph rather than a directory walk: the
+    /// referencing project first, then the projects it references over DependsOn.
+    /// That prunes unrelated same-named files at source and makes Razor Class
+    /// Library views resolvable, which a filesystem scan of one project directory
+    /// can never do.
+    ///
+    /// A single-project build has no Project nodes and no project attribution at
+    /// all, because idScope is null. Everything in the graph is then the one
+    /// project, so scoping is skipped rather than narrowed to nothing.
+    /// </summary>
+    internal void AddBindingEdges()
+    {
+        var visibleProjects = BuildProjectVisibility();
+
+        foreach (var (info, project) in _pendingBindings)
+        {
+            var candidates = _pendingBindings
+                .Where(c => IsVisible(project, c.Project, visibleProjects))
+                .Select(c => c.Info)
+                .ToList();
+
+            AddPartialEdges(info, candidates);
+        }
+    }
+
+    /// <summary>
+    /// Each project mapped to the projects it can see: itself plus everything it
+    /// references. Empty when the graph carries no project structure.
+    /// </summary>
+    private Dictionary<string, HashSet<string>> BuildProjectVisibility()
+    {
+        var visibility = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var node in graph.NodesOfType(NodeType.Project))
+        {
+            visibility[node.Name] = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { node.Name };
+        }
+
+        foreach (var edge in graph.Edges.Where(e => e.Type == EdgeType.DependsOn))
+        {
+            // DependsOn runs referencing -> referenced, so the target is what the
+            // source can additionally see.
+            var from = graph.GetNode(edge.FromId);
+            var to = graph.GetNode(edge.ToId);
+            if (from is null || to is null) continue;
+            if (visibility.TryGetValue(from.Name, out var seen)) seen.Add(to.Name);
+        }
+
+        return visibility;
+    }
+
+    private static bool IsVisible(string? fromProject, string? candidateProject, Dictionary<string, HashSet<string>> visibility)
+    {
+        // No project structure: a single-project build, where every Razor file in
+        // the graph belongs to the only project there is.
+        if (fromProject is null || candidateProject is null || visibility.Count == 0) return true;
+
+        return visibility.TryGetValue(fromProject, out var seen)
+            ? seen.Contains(candidateProject)
+            : string.Equals(fromProject, candidateProject, StringComparison.OrdinalIgnoreCase);
     }
 
     private void AddPartialEdges(RazorPageInfo info, List<RazorPageInfo> allPages)

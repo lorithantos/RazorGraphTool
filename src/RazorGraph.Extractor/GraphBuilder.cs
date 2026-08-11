@@ -108,6 +108,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         BuildRoslynLayer();
         _razorLayer.BuildRazorLayer(projectDir, idScope: null, _roslyn.Compilation, _symbols, IncludeVendorAssets);
         _razorLayer.AddGeneratedClassLinks(_symbols);
+        _razorLayer.AddBindingEdges();
         return _graph;
     }
 
@@ -125,7 +126,13 @@ public sealed class GraphBuilder : IAsyncDisposable
         }
 
         _razorLayer.AddGeneratedClassLinks(_symbols);
+
+        // Projects before bindings: a view name resolves against the referencing
+        // project and the ones it references, which needs the project nodes and
+        // their DependsOn edges to already exist.
         _projects.AddProjectNodes(_roslyn.LoadedProjects, _roslyn.Solution);
+        _razorLayer.AddBindingEdges();
+
         _coverage.AddCoverageEdges();
         return _graph;
     }
