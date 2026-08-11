@@ -25,23 +25,13 @@ using Xunit;
 /// </summary>
 public class LorettaCharacterizationTests
 {
-    /// <summary>
-    /// Warm the parser exactly as LuaDeclarationExtractor does, because these
-    /// tests call Loretta directly and would otherwise inherit the cold-start
-    /// quirk from whichever test parsed first.
-    ///
-    /// That is not a workaround hiding the bug — it is the contract being
-    /// stated precisely. What the product relies on is Loretta's behaviour AFTER
-    /// the warm-up, and asserting anything else would pin a state we deliberately
-    /// never run in. The first version of this file omitted it and three tests
-    /// failed depending on execution order, which is the quirk demonstrating
-    /// itself inside its own characterization.
-    /// </summary>
-    static LorettaCharacterizationTests() =>
-        LuaSyntaxTree.ParseText(
-            "do goto skip ::skip:: end",
-            new LuaParseOptions(LuaSyntaxOptions.Lua54),
-            "loretta-warmup.lua");
+    // NO WARM-UP HERE EITHER, deliberately.
+    //
+    // An earlier version warmed the parser in a static constructor, mirroring
+    // what the extractor did on 0.2.13. That was necessary then and is a liability
+    // now: on the nightly these facts hold cold, and a warm-up in the test would
+    // hide a regression if this dependency were ever rolled back. The tests should
+    // exercise the state the product actually runs in, which is now no state at all.
 
     private static IReadOnlyList<Diagnostic> Errors(string source, LuaSyntaxOptions options) =>
         LuaSyntaxTree.ParseText(source, new LuaParseOptions(options), "t.lua")

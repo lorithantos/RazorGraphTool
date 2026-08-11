@@ -9,8 +9,19 @@
   <ItemGroup>
     <!-- Roslyn-shaped Lua syntax trees. Confined to this project on purpose: it is a
          pre-1.0 single-maintainer package, and the blast radius of replacing it must
-         stay inside RazorGraph.Lua. Core never sees a Loretta type. -->
-    <PackageReference Include="Loretta.CodeAnalysis.Lua" Version="0.2.13" />
+         stay inside RazorGraph.Lua. Core never sees a Loretta type.
+
+         A NIGHTLY, deliberately. Upstream issue #152, "Lexer token cache incorrectly
+         caches tokens which have different values in different syntax options", is
+         exactly the defect that made our dialect check silently miss goto, and it was
+         fixed 2025-07-24. The last stable, 0.2.13, shipped 2025-03-31 and predates the
+         fix; there has been no stable release since, so the nightly is the only build
+         that carries it. Same maintainer, same repository, official NuGet feed.
+
+         What makes this safe to pin rather than hopeful: LorettaCharacterizationTests
+         asserts the behaviours our checks rest on, so a bad nightly fails there by
+         name instead of turning a check quietly permissive. -->
+    <PackageReference Include="Loretta.CodeAnalysis.Lua" Version="0.2.14-nightly.26" />
   </ItemGroup>
 
   <ItemGroup>

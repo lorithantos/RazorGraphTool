@@ -84,48 +84,32 @@ public sealed record LuaFileDeclarations(
 /// </summary>
 public sealed class LuaDeclarationExtractor(ILuaHost host)
 {
-    /// <summary>
-    /// Parse one throwaway snippet under the newest dialect before anything else
-    /// is parsed, because Loretta 0.2.13 carries process-global state seeded by
-    /// the FIRST parse.
-    ///
-    /// Measured, not suspected. Parsing a Lua 5.1 file first leaves goto and
-    /// ::label:: unrecognised for the rest of the process even when a later parse
-    /// explicitly sets acceptGoto — the options say True and the parse still
-    /// fails. Warm with 5.4 first and the same parse succeeds.
-    ///
-    /// It made the dialect rule silently miss goto, which is the single likeliest
-    /// mistake in generated 5.1 code and the case the rule was written for. It
-    /// also made the test for it PASS: in a full suite another class parsed a
-    /// goto-accepting dialect first, so the rule worked; run alone, the same test
-    /// failed. Order-dependent, green in the suite, wrong in the product — the
-    /// same shape as the MSBuildLocator race, found the same way, by using the
-    /// thing rather than trusting the test.
-    ///
-    /// The 5.1 parse still rejects goto afterwards, which is what makes this a
-    /// warm-up rather than a loosening: it seeds recognition, it does not change
-    /// what a dialect accepts.
-    /// </summary>
-    private static readonly Lazy<bool> ParserWarmup = new(() =>
-    {
-        LuaSyntaxTree.ParseText(
-            "do goto skip ::skip:: end",
-            new LuaParseOptions(LuaSyntaxOptions.Lua54),
-            "loretta-warmup.lua");
-        return true;
-    });
+    // NO PARSER WARM-UP, as of 0.2.14-nightly.26.
+    //
+    // 0.2.13 needed one. Its lexer cached tokens without accounting for the
+    // syntax options in force, so parsing a 5.1 file first left goto and
+    // ::label:: unrecognised for the rest of the process even where a later
+    // parse set acceptGoto: the option read True and the parse failed anyway.
+    // That silently disabled the goto half of the dialect rule, and a throwaway
+    // 5.4 parse up front defused it.
+    //
+    // Upstream issue #152 fixed it on 2025-07-24, after the last stable release,
+    // which is why this project pins a nightly. Verified cold and out of process
+    // on the tree that exposed the original: goto and integer division are both
+    // caught with no warm-up, and a file that previously fell through as an
+    // ordinary parse failure is now correctly attributed to Lua 5.2.
 
     /// <summary>
     /// Whether the parser can currently tell this dialect from a later one —
     /// checked, not assumed.
     ///
-    /// Loretta keeps process-wide mutable state (a static keyword-kind pool
-    /// among others), and identical source under identical options has been
-    /// observed to parse differently depending on what parsed before it. The
-    /// warm-up above defuses the case we isolated; it cannot promise there is
-    /// only one such case, and the failure is SILENT and directional — a 5.1
-    /// parse that has been taught to accept goto reports no error, which reads
-    /// as clean code rather than as a broken check.
+    /// Kept after the upstream fix, because it is not specific to that bug. The
+    /// failure mode of a parser that cannot separate dialects is SILENCE: a 5.1
+    /// parse that accepts goto reports no error, so the rule finds nothing and
+    /// "found nothing" reads exactly like "clean". Any future cache or state
+    /// defect in this dependency lands the same way, and two parses of six
+    /// tokens is a cheap price for the difference between an absent finding and
+    /// an absent capability.
     ///
     /// So the dialect rule measures its instrument before trusting it. Two
     /// parses of a canonical snippet: the host's dialect must reject goto and a
@@ -137,8 +121,6 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
     /// </summary>
     public static bool DialectDiscriminationWorks(LuaDialect hostDialect)
     {
-        _ = ParserWarmup.Value;
-
         const string probe = "do goto skip ::skip:: end";
 
         static bool Rejects(string source, LuaSyntaxOptions options) =>
@@ -156,8 +138,6 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
 
     public LuaFileDeclarations Extract(LuaSourceFile file, string source)
     {
-        _ = ParserWarmup.Value;
-
         var options = new LuaParseOptions(SyntaxOptionsFor(host.Dialect));
         var tree = LuaSyntaxTree.ParseText(source, options, file.FullPath);
         var root = tree.GetRoot();

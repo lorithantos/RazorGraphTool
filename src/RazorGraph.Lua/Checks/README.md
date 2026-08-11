@@ -66,39 +66,41 @@ Rules run during `Build`, and findings land in `LuaBuildReport.Findings`, so the
 reach the CLI and the MCP envelope without either learning about individual
 rules. A check nobody runs is not a check.
 
-## The parser has process-global state
+## Why this project pins a Loretta nightly
 
-Loretta 0.2.13 seeds keyword recognition from the **first parse in the process**,
-and later parses can move it again. Parse a Lua 5.1 file first and `goto` /
-`::label::` stay unrecognised for the rest of that process — even when a later
-parse sets `acceptGoto` explicitly. The options report `True` and the parse fails
+`0.2.13` — the newest stable, from March 2025 — cached lexer tokens without
+accounting for the syntax options in force. Parse a Lua 5.1 file first and
+`goto` / `::label::` stayed unrecognised for the rest of that process, even where
+a later parse set `acceptGoto`: the option read `True` and the parse failed
 anyway.
 
-This is the *only* cause. An earlier version of this note claimed
-`LuaSyntaxOptions.All` was "a union of conflicting syntaxes" that rejects the
-goto idiom because `::label::` is a type cast in Luau. That was a plausible story
-fitted to a symptom: once the parser is warmed, `All` accepts `goto` too. The
-characterization test now pins that, and the wrong explanation is left here on
-purpose — it was confident, it was written into a commit message, and it was
-wrong for a whole session.
+That silently disabled the `goto` half of `lua.dialect` — the single likeliest
+mistake in generated 5.1 code, and the case the rule exists for — **while its
+test passed**. In a full suite another class parsed a goto-accepting dialect
+first, so the rule worked; run alone, the same test failed. Green in the suite,
+wrong in the product.
 
-`LuaDeclarationExtractor` therefore warms the parser once with a 5.4 snippet
-before anything else. It seeds recognition; it does not loosen anything, and 5.1
-still rejects `goto` afterwards, which is the whole point.
+It is upstream issue **#152**, fixed 2025-07-24, and there has been no stable
+release since. Hence `0.2.14-nightly.26`. Verified cold and out of process: both
+`goto` and integer division are caught with no workaround, and a file that used
+to fall through as an ordinary parse failure is now correctly attributed to
+Lua 5.2.
 
-This cost an hour and is worth the paragraph, because of how it hid: the dialect
-rule silently missed `goto` — the single likeliest mistake in generated 5.1 code
-and the case the rule exists for — while **its test passed**. In a full suite
-another class parsed a goto-accepting dialect first, so the rule worked; run
-alone, the same test failed. Green in the suite, wrong in the product.
+Three things came out of the episode and none of them were the version bump:
 
-Two rules came out of it:
-
-- **Comparison parses need warming**, and any future rule that parses under a
-  second dialect inherits this hazard.
+- **The rule measures its instrument.** `DialectDiscriminationWorks` parses a
+  canonical snippet under both dialects before the rule reads anything, and the
+  rule reports that it *could not run* rather than reporting nothing. That guard
+  outlives this bug, because the failure mode of any parser that cannot separate
+  dialects is silence — and silence otherwise reads as success.
 - **A test that passes only in company is not evidence.** Both order-dependent
   bugs in this codebase — this one and the MSBuildLocator race — were found by
-  *using* the tool, not by running the suite.
+  *using* the tool, never by running the suite.
+- **A confident mechanism can be wrong.** The first explanation here was that
+  `LuaSyntaxOptions.All` is "a union of conflicting syntaxes" rejecting the goto
+  idiom because `::label::` is a type cast in Luau. Plausible, written into a
+  commit message, and false — it was a symptom of the cache bug. Recorded because
+  it stood for a whole session.
 
 ## What the corpus caught
 
