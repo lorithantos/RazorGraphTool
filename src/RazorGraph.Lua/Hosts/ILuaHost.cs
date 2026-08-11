@@ -145,4 +145,29 @@ public interface ILuaHost
     /// Reference targets this host resolved as <see cref="ModuleResolution.External"/>.
     /// </param>
     void Annotate(GraphNode module, IReadOnlyList<string> externalNames) { }
+
+    /// <summary>
+    /// Add host-specific facts about the external API a node actually CALLS, as
+    /// opposed to what it imports.
+    ///
+    /// The distinction is the whole point. An import says a module was named; a
+    /// call says a function was used, and only the second bounds what the host
+    /// must provide. Lightroom's LrDevelopController has existed since SDK 6.0
+    /// while carrying functions added as late as 15.3 — so a file that imports it
+    /// and never calls it requires 6.0, and reporting otherwise sends someone
+    /// hunting for a compatibility problem they do not have. That mistake was
+    /// made against Lori's own plug-ins before calls were extracted.
+    ///
+    /// Called for each function node with external calls, and once per module
+    /// with everything its functions call.
+    /// </summary>
+    void AnnotateExternalCalls(GraphNode node, IReadOnlyList<ExternalCall> calls) { }
 }
+
+/// <summary>
+/// A call into an API that lives outside the graph — the host application's own
+/// surface, or a library this unit does not contain.
+/// </summary>
+/// <param name="Module">The external module, as the source named it.</param>
+/// <param name="Function">The function called on it, unqualified.</param>
+public sealed record ExternalCall(string Module, string Function, int Line);

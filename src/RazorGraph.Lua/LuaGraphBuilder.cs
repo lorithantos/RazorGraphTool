@@ -18,7 +18,20 @@ public sealed record LuaBuildReport(
     IReadOnlyList<string> UnresolvedReferences,
     IReadOnlyList<string> ParseFailures,
     string? StructuralCaveat,
-    IReadOnlyList<string> SkippedVendorFiles);
+    IReadOnlyList<string> SkippedVendorFiles,
+    LuaCallReport Calls);
+
+/// <summary>
+/// What became of the call sites. Counted rather than listed, because the
+/// unresolved ones are dominated by the standard library and by locals this
+/// pass does not track — naming thousands of them would bury the graph's real
+/// gaps under noise, which is the opposite of what reporting is for.
+/// </summary>
+/// <param name="InGraph">Calls linked to a function node — a real Calls edge.</param>
+/// <param name="External">Calls into the host's API or another unit's module.</param>
+/// <param name="Stdlib">Calls to Lua's own library and globals.</param>
+/// <param name="Unresolved">Everything else: locals, parameters, dynamic dispatch.</param>
+public sealed record LuaCallReport(int Total, int InGraph, int External, int Stdlib, int Unresolved);
 
 /// <summary>
 /// Builds a CodeGraph from a tree of Lua source. Sibling of
@@ -116,6 +129,14 @@ public sealed class LuaGraphBuilder
         }
 
         var functions = 0;
+
+        // Function ids within each module, keyed by BOTH the name as declared and
+        // its last segment. A module writes `function M.trim()` while a caller
+        // writes `util.trim()` after requiring it: the declaration carries the
+        // table it hangs off, the call carries the variable it was bound to, and
+        // neither knows the other's spelling. The shared part is the final name.
+        var functionsByModule = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+
         foreach (var decl in declarations)
         {
             var moduleId = moduleIdByPath[decl.File.FullPath];
@@ -138,6 +159,15 @@ public sealed class LuaGraphBuilder
                 _graph.AddNode(fnNode);
                 _graph.AddEdge(new GraphEdge { FromId = moduleId, ToId = fnId, Type = EdgeType.Contains });
                 functions++;
+
+                if (!functionsByModule.TryGetValue(moduleId, out var byName))
+                    functionsByModule[moduleId] = byName = new Dictionary<string, string>(StringComparer.Ordinal);
+
+                // First declaration wins for both spellings: a name declared twice
+                // in one file is a redefinition, and the graph should not invent a
+                // second target for it.
+                byName.TryAdd(fn.Name, fnId);
+                byName.TryAdd(LastSegment(fn.Name), fnId);
             }
         }
 
@@ -145,11 +175,19 @@ public sealed class LuaGraphBuilder
         var external = 0;
         var unresolved = new List<string>();
 
+        // Per module: the variable a reference was bound to, and what it resolved
+        // to. `local LrDialogs = import 'LrDialogs'` is what lets a later
+        // LrDialogs.message() be attributed to the SDK rather than dropped.
+        var bindingsByModule = new Dictionary<string, Dictionary<string, ModuleBinding>>(StringComparer.Ordinal);
+
         foreach (var decl in declarations)
         {
             var moduleId = moduleIdByPath[decl.File.FullPath];
             var externalNames = new List<string>();
             var unresolvedHere = new List<string>();
+
+            if (!bindingsByModule.TryGetValue(moduleId, out var bindings))
+                bindingsByModule[moduleId] = bindings = new Dictionary<string, ModuleBinding>(StringComparer.Ordinal);
 
             foreach (var reference in decl.References)
             {
@@ -167,17 +205,23 @@ public sealed class LuaGraphBuilder
                         edge.Properties["line"] = reference.Line;
                         _graph.AddEdge(edge);
                         resolved++;
+                        if (reference.BoundTo is { Length: > 0 } inGraphName)
+                            bindings[inGraphName] = new ModuleBinding(targetId, null);
                         break;
 
                     case ModuleResolution.InGraph(var path):
                         // Resolved to a real file that is not in this unit.
                         externalNames.Add(reference.Target ?? path);
                         external++;
+                        if (reference.BoundTo is { Length: > 0 } outsideName)
+                            bindings[outsideName] = new ModuleBinding(null, reference.Target ?? path);
                         break;
 
                     case ModuleResolution.External(var name):
                         externalNames.Add(name);
                         external++;
+                        if (reference.BoundTo is { Length: > 0 } externalName)
+                            bindings[externalName] = new ModuleBinding(null, name);
                         break;
 
                     case ModuleResolution.Unresolved(var reason):
@@ -199,6 +243,8 @@ public sealed class LuaGraphBuilder
             if (unresolvedHere.Count > 0)
                 module.SetProperty("unresolvedReferences", unresolvedHere);
         }
+
+        var callReport = AddCallEdges(declarations, moduleIdByPath, functionsByModule, bindingsByModule, host);
 
         // A host with no module-reference mechanism produces a graph with no
         // module edges, which is CORRECT and reads exactly like a broken
@@ -223,8 +269,185 @@ public sealed class LuaGraphBuilder
         var report = new LuaBuildReport(
             host.Name, evidence ?? "host supplied by caller",
             moduleCount, functions, resolved, external,
-            unresolved, parseFailures, caveat, vendorSkips);
+            unresolved, parseFailures, caveat, vendorSkips, callReport);
 
         return (_graph, report);
+    }
+
+    /// <summary>What a module reference was bound to: a module in this graph, or a name outside it.</summary>
+    private sealed record ModuleBinding(string? InGraphModuleId, string? ExternalName);
+
+    /// <summary>
+    /// Link each call site to what it calls.
+    ///
+    /// Four things can be resolved, and everything else is honestly counted
+    /// rather than guessed at:
+    ///
+    /// 1. A call through a bound module — <c>u.trim()</c> after
+    ///    <c>local u = require 'util'</c> — becomes a Calls edge to that
+    ///    module's function.
+    /// 2. A call on a bound EXTERNAL module — <c>LrDialogs.message()</c> — is an
+    ///    external API call, handed to the host. This is what makes a minimum
+    ///    host version answerable from what the code USES rather than what it
+    ///    imports.
+    /// 3. A call naming a function declared in the same module.
+    /// 4. Lua's own library and globals, recognised so they are not reported as
+    ///    gaps: <c>ipairs</c> is not a missing edge.
+    ///
+    /// What is left is genuinely unresolvable here — locals, parameters, values
+    /// returned from other calls — and is a count, not a finding.
+    /// </summary>
+    private LuaCallReport AddCallEdges(
+        List<LuaFileDeclarations> declarations,
+        Dictionary<string, string> moduleIdByPath,
+        Dictionary<string, Dictionary<string, string>> functionsByModule,
+        Dictionary<string, Dictionary<string, ModuleBinding>> bindingsByModule,
+        ILuaHost host)
+    {
+        int total = 0, inGraph = 0, externalCalls = 0, stdlib = 0, unresolved = 0;
+
+        // External calls gathered per node, so the host is asked once per node
+        // rather than once per call.
+        var externalByNode = new Dictionary<string, List<ExternalCall>>(StringComparer.Ordinal);
+
+        void RecordExternal(string nodeId, ExternalCall call)
+        {
+            if (!externalByNode.TryGetValue(nodeId, out var list))
+                externalByNode[nodeId] = list = new List<ExternalCall>();
+            list.Add(call);
+        }
+
+        foreach (var decl in declarations)
+        {
+            var moduleId = moduleIdByPath[decl.File.FullPath];
+            var localFunctions = functionsByModule.GetValueOrDefault(moduleId);
+            var bindings = bindingsByModule.GetValueOrDefault(moduleId);
+
+            foreach (var call in decl.Calls)
+            {
+                total++;
+
+                // A call at file scope belongs to the module: Lua module bodies
+                // run on load, so that is where it really happens.
+                var fromId = moduleId;
+                if (call.EnclosingFunction is { } enclosing && call.EnclosingLine is { } line)
+                {
+                    var candidate = $"{moduleId}.{enclosing}#{line}";
+                    if (_graph.HasNode(candidate)) fromId = candidate;
+                }
+
+                if (call.Member is { Length: > 0 } member
+                    && bindings is not null
+                    && bindings.TryGetValue(call.Root, out var binding))
+                {
+                    if (binding.InGraphModuleId is { } targetModule
+                        && functionsByModule.TryGetValue(targetModule, out var targetFunctions)
+                        && targetFunctions.TryGetValue(member, out var targetId))
+                    {
+                        var edge = new GraphEdge { FromId = fromId, ToId = targetId, Type = EdgeType.Calls };
+                        edge.Properties["line"] = call.Line;
+                        edge.Properties["callee"] = call.Callee;
+                        edge.Properties["form"] = call.Form;
+                        _graph.AddEdge(edge);
+                        inGraph++;
+                        continue;
+                    }
+
+                    if (binding.ExternalName is { } externalModule)
+                    {
+                        RecordExternal(fromId, new ExternalCall(externalModule, member, call.Line));
+                        externalCalls++;
+                        continue;
+                    }
+                }
+
+                // Declared in this module, called by the name it was declared
+                // under (M.f()) or by its bare name (f()).
+                if (localFunctions is not null && localFunctions.TryGetValue(call.Callee, out var sameModule))
+                {
+                    var edge = new GraphEdge { FromId = fromId, ToId = sameModule, Type = EdgeType.Calls };
+                    edge.Properties["line"] = call.Line;
+                    edge.Properties["callee"] = call.Callee;
+                    edge.Properties["form"] = call.Form;
+                    _graph.AddEdge(edge);
+                    inGraph++;
+                    continue;
+                }
+
+                if (IsStandardLibrary(call)) { stdlib++; continue; }
+
+                unresolved++;
+            }
+        }
+
+        foreach (var (nodeId, calls) in externalByNode)
+        {
+            var node = _graph.GetNode(nodeId);
+            if (node is null) continue;
+
+            host.AnnotateExternalCalls(node, calls);
+
+            // Recorded on the node as well as handed to the host, so a graph from
+            // a host with no opinion still says what a function reaches outside
+            // itself.
+            node.SetProperty("externalCalls", calls
+                .Select(c => $"{c.Module}.{c.Function}")
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToList());
+        }
+
+        // A module's external surface is everything its functions reach, so the
+        // host can answer "what does this FILE require of me" in one place.
+        foreach (var decl in declarations)
+        {
+            var moduleId = moduleIdByPath[decl.File.FullPath];
+            var module = _graph.GetNode(moduleId);
+            if (module is null) continue;
+
+            var forModule = _graph.Edges
+                .Where(e => e.Type == EdgeType.Contains && e.FromId == moduleId)
+                .Select(e => e.ToId)
+                .Append(moduleId)
+                .Where(externalByNode.ContainsKey)
+                .SelectMany(id => externalByNode[id])
+                .ToList();
+
+            if (forModule.Count > 0) host.AnnotateExternalCalls(module, forModule);
+        }
+
+        return new LuaCallReport(total, inGraph, externalCalls, stdlib, unresolved);
+    }
+
+    /// <summary>
+    /// Lua's own library and base globals. Recognised so they are counted as
+    /// resolved-elsewhere rather than reported as gaps — a graph claiming 4,000
+    /// unresolved calls because ipairs is not a node would be describing the
+    /// language, not the code.
+    /// </summary>
+    private static bool IsStandardLibrary(LuaCall call)
+    {
+        if (call.Form is "member" or "chain" or "method") return StandardModules.Contains(call.Root);
+        return StandardGlobals.Contains(call.Root);
+    }
+
+    private static readonly HashSet<string> StandardModules = new(StringComparer.Ordinal)
+    {
+        "string", "table", "math", "io", "os", "coroutine", "debug", "package", "utf8", "bit", "bit32", "jit"
+    };
+
+    private static readonly HashSet<string> StandardGlobals = new(StringComparer.Ordinal)
+    {
+        "assert", "collectgarbage", "dofile", "error", "getfenv", "getmetatable", "ipairs", "load",
+        "loadfile", "loadstring", "next", "pairs", "pcall", "print", "rawequal", "rawget", "rawlen",
+        "rawset", "require", "select", "setfenv", "setmetatable", "tonumber", "tostring", "type",
+        "unpack", "xpcall"
+    };
+
+    /// <summary>The final name in a dotted or colon-separated Lua name: M.util.trim -> trim.</summary>
+    private static string LastSegment(string name)
+    {
+        var cut = name.LastIndexOfAny(['.', ':']);
+        return cut >= 0 && cut < name.Length - 1 ? name[(cut + 1)..] : name;
     }
 }

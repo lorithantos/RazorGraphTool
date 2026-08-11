@@ -116,7 +116,23 @@ public sealed class LightroomHost : ILuaHost
         }
 
         if (Catalog.MinimumVersionFor(sdkNames) is { } minimum)
+        {
             module.SetProperty("minimumSdkVersion", minimum);
+
+            // Say WHY, even when the reason is only an import. A bare "6.0" is
+            // what the earlier misreading was built on: the number was right and
+            // its meaning was assumed, and nothing on the node could settle it.
+            // Marked "imported" so a raised floor from a real call is visibly a
+            // different claim.
+            var atFloor = known
+                .Where(k => Catalog.Modules.TryGetValue(k.Name, out var m)
+                            && string.Equals(m.EffectiveSince, minimum, StringComparison.Ordinal))
+                .Select(k => $"{k.Name} ({minimum}, imported)")
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToList();
+
+            if (atFloor.Count > 0) module.SetProperty("minimumSdkVersionDrivenBy", atFloor);
+        }
 
         // Real but undescribed: Adobe ships and imports these, and documents
         // nothing about them. Worth flagging separately -- code built on them is
@@ -132,6 +148,119 @@ public sealed class LightroomHost : ILuaHost
             module.SetProperty("sdkCatalogueRange",
                 $"catalogued {string.Join(", ", Catalog.CatalogedVersions)}; {Catalog.Product} has shipped through {Catalog.NewestKnownRelease}");
         }
+    }
+
+    /// <summary>
+    /// What the code actually CALLS of the SDK, and the minimum version that
+    /// implies.
+    ///
+    /// This is the honest form of a question the import list can only approximate.
+    /// LrDevelopController has shipped since SDK 6.0 and carries functions added
+    /// as late as 15.3, so importing it says 6.0 and calling setValue says 15.3 —
+    /// and a plug-in that imports it without calling those functions runs on 6.0.
+    /// Reported against Lori's own plug-ins as needing 8.0 before calls were
+    /// extracted; the imports were real, the requirement was not.
+    ///
+    /// The floor is the HIGHEST of what the imports and the calls demand, because
+    /// both are real: a module must exist to be imported at all, and a function
+    /// must exist to be called. Whatever sets the floor is named, so the answer
+    /// can be acted on rather than just believed.
+    /// </summary>
+    public void AnnotateExternalCalls(GraphNode node, IReadOnlyList<ExternalCall> calls)
+    {
+        var sdkCalls = calls.Where(c => IsSdkModule(c.Module)).ToList();
+        if (sdkCalls.Count == 0) return;
+
+        node.SetProperty("sdkCalls", sdkCalls
+            .Select(c => $"{c.Module}.{c.Function}")
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToList());
+
+        // Already on the node from the import pass, and still valid: the module
+        // has to be there before anything can be called on it.
+        var required = node.GetProperty<string>("minimumSdkVersion");
+        var importDrivers = node.GetProperty<List<string>>("minimumSdkVersionDrivenBy") ?? [];
+        var callDrivers = new List<string>();
+        var raised = false;
+
+        foreach (var module in sdkCalls
+            .GroupBy(c => c.Module, StringComparer.Ordinal)
+            .OrderBy(group => group.Key, StringComparer.Ordinal))
+        {
+            var functionNames = module.Select(c => c.Function).Distinct(StringComparer.Ordinal).ToList();
+            var version = Catalog.MinimumVersionForFunctions(module.Key, functionNames);
+            if (version is null) continue;
+
+            var comparison = CompareVersions(version, required);
+            if (comparison > 0)
+            {
+                required = version;
+                callDrivers.Clear();
+                raised = true;
+            }
+            if (comparison >= 0) callDrivers.Add($"{module.Key} ({version}, called)");
+        }
+
+        if (required is not null)
+        {
+            node.SetProperty("minimumSdkVersion", required);
+
+            // A call that RAISES the floor replaces the explanation; one that
+            // merely ties it joins the import that already implied it. An import
+            // nothing calls keeps its own reason and stays visibly an import --
+            // which is the whole distinction this pass exists to draw.
+            List<string> drivers;
+            if (raised)
+            {
+                drivers = callDrivers;
+            }
+            else
+            {
+                // One line per module, and "called" wins: a module that is both
+                // imported and called is one fact, and the call is the stronger
+                // half of it. Listing both doubled the explanation for every
+                // module a file actually uses.
+                var byModule = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (var driver in importDrivers) byModule[ModuleOfDriver(driver)] = driver;
+                foreach (var driver in callDrivers) byModule[ModuleOfDriver(driver)] = driver;
+
+                drivers = byModule.Values.OrderBy(name => name, StringComparer.Ordinal).ToList();
+            }
+
+            if (drivers.Count > 0) node.SetProperty("minimumSdkVersionDrivenBy", drivers);
+        }
+
+        // Called but not catalogued. Not an error: the catalogue stops short of
+        // the newest SDK, and 30 of 844 documented functions carry no version at
+        // all, so the likeliest cause is our coverage rather than their code.
+        var uncatalogued = sdkCalls
+            .Where(c => !Catalog.HasFunction(c.Module, c.Function))
+            .Select(c => $"{c.Module}.{c.Function}")
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToList();
+
+        if (uncatalogued.Count > 0) node.SetProperty("sdkCallsNotInCatalogue", uncatalogued);
+    }
+
+    /// <summary>The module name out of a driver line: "LrView (1.3, called)" -> "LrView".</summary>
+    private static string ModuleOfDriver(string driver)
+    {
+        var cut = driver.IndexOf(" (", StringComparison.Ordinal);
+        return cut > 0 ? driver[..cut] : driver;
+    }
+
+    /// <summary>
+    /// Compare two version strings, treating null as "nothing required yet".
+    /// Positive when <paramref name="candidate"/> demands more.
+    /// </summary>
+    private static int CompareVersions(string candidate, string? current)
+    {
+        if (current is null) return 1;
+        if (!Version.TryParse(candidate, out var left)) return 0;
+        if (!Version.TryParse(current, out var right)) return 1;
+        return left.CompareTo(right);
     }
 
     /// <summary>An Lr-prefixed name, i.e. a candidate Lightroom SDK module.</summary>

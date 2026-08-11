@@ -11,14 +11,39 @@ public sealed record LuaFunction(string Name, int LineStart, int LineEnd, string
 
 /// <summary>A module reference site, before the host has resolved it.</summary>
 /// <param name="Target">The literal string argument, or null for a dynamic reference.</param>
-public sealed record LuaReference(string Mechanism, string? Target, int Line);
+/// <param name="BoundTo">
+/// The variable the reference was assigned to, as in
+/// <c>local LrDialogs = import 'LrDialogs'</c>. This is what makes a later
+/// <c>LrDialogs.message(...)</c> resolvable: without the binding, a call through
+/// an imported module is just an unknown name.
+/// </param>
+public sealed record LuaReference(string Mechanism, string? Target, int Line, string? BoundTo = null);
+
+/// <summary>
+/// A call site, attributed to the function containing it.
+/// </summary>
+/// <param name="Form">
+/// How the callee was written, which decides what can resolve it:
+/// <c>bare</c> (<c>f()</c>), <c>member</c> (<c>M.f()</c>), <c>method</c>
+/// (<c>obj:f()</c>), or <c>chain</c> (<c>a.b.c()</c>, where the middle is not
+/// tracked and only the root and final name survive).
+/// </param>
+public sealed record LuaCall(
+    string? EnclosingFunction,
+    int? EnclosingLine,
+    string Callee,
+    string Root,
+    string? Member,
+    string Form,
+    int Line);
 
 /// <summary>What one parsed file yielded.</summary>
 public sealed record LuaFileDeclarations(
     LuaSourceFile File,
     IReadOnlyList<LuaFunction> Functions,
     IReadOnlyList<LuaReference> References,
-    IReadOnlyList<string> ParseErrors);
+    IReadOnlyList<string> ParseErrors,
+    IReadOnlyList<LuaCall> Calls);
 
 /// <summary>
 /// Parses Lua and yields declarations. The ONLY file in the codebase that knows
@@ -44,6 +69,19 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
 
         var functions = new List<LuaFunction>();
         var references = new List<LuaReference>();
+        var calls = new List<LuaCall>();
+
+        // Which syntax node produced each function, so a call can be attributed
+        // to the function containing it. DescendantNodes walks parents before
+        // children, so every enclosing declaration is already recorded by the
+        // time a call inside it is reached.
+        var declaredAt = new Dictionary<SyntaxNode, LuaFunction>();
+
+        void Declare(SyntaxNode at, LuaFunction fn)
+        {
+            functions.Add(fn);
+            declaredAt[at] = fn;
+        }
 
         foreach (var node in root.DescendantNodes())
         {
@@ -51,21 +89,21 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
             {
                 // function M.f() / function M:f() / function f()
                 case FunctionDeclarationStatementSyntax fn:
-                    functions.Add(new LuaFunction(
+                    Declare(fn, new LuaFunction(
                         NameOf(fn.Name), LineOf(fn), EndLineOf(fn),
                         FormOf(fn.Name), fn.Name is MethodFunctionNameSyntax));
                     break;
 
                 // local function f()
                 case LocalFunctionDeclarationStatementSyntax local:
-                    functions.Add(new LuaFunction(
+                    Declare(local, new LuaFunction(
                         local.Name.Name, LineOf(local), EndLineOf(local), "localFunction", IsMethod: false));
                     break;
 
                 // M.f = function() ... end — the form a naive "function <name>("
                 // scan misses entirely, and the second-largest bucket in Kong.
                 case AssignmentStatementSyntax assign:
-                    functions.AddRange(AssignedFunctions(assign));
+                    foreach (var (at, fn) in AssignedFunctions(assign)) Declare(at, fn);
                     break;
 
                 // { __call = function() end } — a field, not an assignment, so the
@@ -74,18 +112,135 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
                 // Kong's 305 setmetatable sites make it common in metatable-heavy
                 // code rather than a curiosity.
                 case IdentifierKeyedTableFieldSyntax { Value: AnonymousFunctionExpressionSyntax anonField } field:
-                    functions.Add(new LuaFunction(
+                    Declare(anonField, new LuaFunction(
                         field.Identifier.Text, LineOf(anonField), EndLineOf(anonField),
                         "tableFieldFunction", IsMethod: false));
                     break;
 
                 case FunctionCallExpressionSyntax call when ReferenceName(call) is { } mechanism:
-                    references.Add(new LuaReference(mechanism, LiteralArgument(call.Argument), LineOf(call)));
+                    references.Add(new LuaReference(
+                        mechanism, LiteralArgument(call.Argument), LineOf(call), BoundVariable(call)));
+                    break;
+
+                // f() and M.f(). Everything the host does not claim as a module
+                // reference is an ordinary call.
+                case FunctionCallExpressionSyntax call:
+                    if (CalleeOf(call.Expression) is var (callRoot, callMember, callForm))
+                        calls.Add(CallAt(call, callRoot, callMember, callForm, declaredAt));
+                    break;
+
+                // obj:f(). A DISTINCT node type in the parser, not a
+                // FunctionCallExpressionSyntax with a colon — so a scan that
+                // handles only the case above silently drops every method call,
+                // which in metatable-heavy Lua is most of them.
+                case MethodCallExpressionSyntax method:
+                    if (RootOf(method.Expression) is { } methodRoot)
+                        calls.Add(CallAt(method, methodRoot, method.Identifier.Text, "method", declaredAt));
                     break;
             }
         }
 
-        return new LuaFileDeclarations(file, functions, references, errors);
+        return new LuaFileDeclarations(file, functions, references, errors, calls);
+    }
+
+    /// <summary>
+    /// One call site, attributed to the innermost function declaration around it.
+    /// A call at file scope has no enclosing function, which is normal in Lua —
+    /// module bodies run on load — and is recorded as null rather than invented.
+    /// </summary>
+    private static LuaCall CallAt(
+        SyntaxNode site, string root, string? member, string form,
+        Dictionary<SyntaxNode, LuaFunction> declaredAt)
+    {
+        LuaFunction? enclosing = null;
+        foreach (var ancestor in site.Ancestors())
+        {
+            if (declaredAt.TryGetValue(ancestor, out var found)) { enclosing = found; break; }
+        }
+
+        var separator = form == "method" ? ":" : ".";
+        var callee = member is null ? root : $"{root}{separator}{member}";
+
+        return new LuaCall(enclosing?.Name, enclosing?.LineStart, callee, root, member, form, LineOf(site));
+    }
+
+    /// <summary>
+    /// The callee split into the name it starts from and the member being
+    /// called. <c>a.b.c()</c> keeps only the root and the final name, and says so
+    /// with the form <c>chain</c>: the middle is not tracked, so resolution must
+    /// not treat it as if <c>c</c> hung off <c>a</c>.
+    /// </summary>
+    private static (string Root, string? Member, string Form)? CalleeOf(PrefixExpressionSyntax expression) => expression switch
+    {
+        IdentifierNameSyntax id => (id.Name, null, "bare"),
+        MemberAccessExpressionSyntax { Expression: IdentifierNameSyntax owner } member
+            => (owner.Name, member.MemberName.Text, "member"),
+        MemberAccessExpressionSyntax member when RootOf(member.Expression) is { } root
+            => (root, member.MemberName.Text, "chain"),
+        _ => null
+    };
+
+    /// <summary>The leftmost identifier of a prefix expression, or null when it does not start from one.</summary>
+    private static string? RootOf(PrefixExpressionSyntax expression) => expression switch
+    {
+        IdentifierNameSyntax id => id.Name,
+        MemberAccessExpressionSyntax member => RootOf(member.Expression),
+        MethodCallExpressionSyntax method => RootOf(method.Expression),
+        FunctionCallExpressionSyntax call => RootOf(call.Expression),
+        _ => null
+    };
+
+    /// <summary>
+    /// The variable a module reference was assigned to — the <c>LrDialogs</c> of
+    /// <c>local LrDialogs = import 'LrDialogs'</c>.
+    ///
+    /// This is what makes a later <c>LrDialogs.message(...)</c> resolvable to the
+    /// module it came from. Without it a call through an imported module is just
+    /// an unknown name, and the only question that could be answered is which
+    /// modules were imported — which is not the same as which were USED.
+    ///
+    /// Paired positionally, the way Lua's multiple assignment works.
+    /// </summary>
+    private static string? BoundVariable(SyntaxNode call)
+    {
+        var child = call;
+
+        foreach (var ancestor in call.Ancestors())
+        {
+            switch (ancestor)
+            {
+                case EqualsValuesClauseSyntax equals when equals.Parent is LocalVariableDeclarationStatementSyntax local:
+                {
+                    var index = IndexOf(equals.Values, child);
+                    return index >= 0 && index < local.Names.Count ? local.Names[index].ToString().Trim() : null;
+                }
+
+                case AssignmentStatementSyntax assign when assign.EqualsValues is { } values:
+                {
+                    var index = IndexOf(values.Values, child);
+                    return index >= 0 && index < assign.Variables.Count ? assign.Variables[index].ToString().Trim() : null;
+                }
+
+                // Anything else means the reference is nested in an expression
+                // rather than bound to a name: require("x").field, or a call
+                // argument. There is no variable to report.
+                case StatementSyntax:
+                    return null;
+            }
+
+            child = ancestor;
+        }
+
+        return null;
+    }
+
+    private static int IndexOf<T>(SeparatedSyntaxList<T> list, SyntaxNode node) where T : SyntaxNode
+    {
+        for (var i = 0; i < list.Count; i++)
+        {
+            if (ReferenceEquals(list[i], node)) return i;
+        }
+        return -1;
     }
 
     /// <summary>
@@ -93,7 +248,7 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
     /// <c>local f = function() end</c>. Paired positionally, which is how Lua's
     /// multiple assignment works.
     /// </summary>
-    private static IEnumerable<LuaFunction> AssignedFunctions(AssignmentStatementSyntax assign)
+    private static IEnumerable<(SyntaxNode At, LuaFunction Function)> AssignedFunctions(AssignmentStatementSyntax assign)
     {
         var targets = assign.Variables.ToList();
         var values = assign.EqualsValues?.Values.ToList() ?? [];
@@ -101,8 +256,8 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
         for (var i = 0; i < Math.Min(targets.Count, values.Count); i++)
         {
             if (values[i] is not AnonymousFunctionExpressionSyntax anon) continue;
-            yield return new LuaFunction(
-                targets[i].ToString().Trim(), LineOf(anon), EndLineOf(anon), "assignedFunction", IsMethod: false);
+            yield return (anon, new LuaFunction(
+                targets[i].ToString().Trim(), LineOf(anon), EndLineOf(anon), "assignedFunction", IsMethod: false));
         }
     }
 

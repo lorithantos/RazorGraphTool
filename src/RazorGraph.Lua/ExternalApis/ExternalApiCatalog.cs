@@ -245,6 +245,19 @@ public sealed class ExternalApiCatalog
     }
 
     /// <summary>
+    /// Whether the catalogue carries this function on this module.
+    ///
+    /// Distinguishes "we know it and it is old" from "we have never heard of
+    /// it", which <see cref="MinimumVersionForFunctions"/> deliberately blurs by
+    /// falling back to the module's own floor. A caller reporting unknown
+    /// functions needs the difference.
+    /// </summary>
+    public bool HasFunction(string moduleName, string functionName) =>
+        Modules.TryGetValue(moduleName, out var module)
+        && module.Functions is not null
+        && module.Functions.ContainsKey(functionName);
+
+    /// <summary>
     /// The latest of a set of version strings, compared as versions. Ordinal
     /// position in CatalogedVersions cannot be used: vendor-stated versions like
     /// 1.3 and 6.0 are mostly releases this catalogue does not hold.

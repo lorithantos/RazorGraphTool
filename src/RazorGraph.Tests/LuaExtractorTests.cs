@@ -335,6 +335,134 @@ public class LuaExtractorTests
         Assert.Empty(report.SkippedVendorFiles);
     }
 
+    // ---- Calls -------------------------------------------------------------
+    // What a file USES, as against what it names. The distinction is the whole
+    // point: an import bounds nothing, a call bounds the host version.
+
+    [Fact]
+    public void Calls_MethodCallsAreADistinctNodeType_AndAreNotDropped()
+    {
+        // obj:m() parses to MethodCallExpressionSyntax, NOT to a function call
+        // with a colon -- so a scan handling only the latter silently loses every
+        // method call, which in metatable-heavy Lua is most of them.
+        var decl = Extract("""
+            local M = {}
+            function M.run(obj)
+              obj:save()
+              helper()
+              other.thing()
+            end
+            return M
+            """);
+
+        Assert.Equal(
+            new[] { "obj:save", "helper", "other.thing" },
+            decl.Calls.Select(c => c.Callee));
+        Assert.Equal(
+            new[] { "method", "bare", "member" },
+            decl.Calls.Select(c => c.Form));
+    }
+
+    [Fact]
+    public void Calls_AreAttributedToTheEnclosingFunction()
+    {
+        var decl = Extract("""
+            local function inner() helper() end
+            local M = {}
+            function M.outer() other() end
+            return M
+            """);
+
+        Assert.Equal(
+            new[] { "inner", "M.outer" },
+            decl.Calls.Select(c => c.EnclosingFunction));
+    }
+
+    [Fact]
+    public void Calls_AtFileScope_HaveNoEnclosingFunction()
+    {
+        // Module bodies run on load, so a call out here is real and belongs to
+        // the module rather than to some invented owner.
+        var decl = Extract("setup()");
+
+        Assert.Null(Assert.Single(decl.Calls).EnclosingFunction);
+    }
+
+    [Fact]
+    public void References_RecordTheVariableTheyAreBoundTo()
+    {
+        // Without this a call through an imported module is an unknown name, and
+        // the only answerable question is which modules were imported -- not
+        // which were used.
+        var decl = Extract(
+            "local d = import 'LrDialogs'\nreturn {}",
+            new LightroomHost(Path.GetTempPath()));
+
+        Assert.Equal("d", Assert.Single(decl.References).BoundTo);
+    }
+
+    [Fact]
+    public void Calls_ThroughARequiredModule_BecomeCallEdges()
+    {
+        using var tree = new TempTree();
+        tree.Write("util.lua", "local M = {}\nfunction M.trim(s) return s end\nreturn M");
+        tree.Write("main.lua", "local util = require 'util'\nlocal function go() util.trim('x') end\nreturn go");
+
+        var (graph, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        // The declaration says M.trim and the call says util.trim: neither knows
+        // the other's spelling, and the final name is what they share.
+        var edge = Assert.Single(graph.Edges, e => e.Type == Core.Graph.EdgeType.Calls);
+        Assert.Equal("util.trim", edge.Properties["callee"]);
+        Assert.Contains("trim", edge.ToId);
+        Assert.Equal(1, report.Calls.InGraph);
+    }
+
+    [Fact]
+    public void Calls_ToTheStandardLibrary_AreNotReportedAsGaps()
+    {
+        // A graph claiming thousands of unresolved calls because ipairs is not a
+        // node would be describing the language, not the code.
+        using var tree = new TempTree();
+        tree.Write("a.lua", "local function f(t) for _ in ipairs(t) do end return string.format('%d', 1) end\nreturn f");
+
+        var (_, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        Assert.Equal(2, report.Calls.Stdlib);
+        Assert.Equal(0, report.Calls.Unresolved);
+    }
+
+    [Fact]
+    public void Lightroom_MinimumVersion_SeparatesImportedFromCalled()
+    {
+        // The defect this pass exists for. LrDevelopController has shipped since
+        // SDK 6.0; importing it requires 6.0 and says nothing more. Reporting a
+        // higher floor from the import list sent someone hunting a compatibility
+        // problem that was not there.
+        using var tree = new TempTree();
+        tree.Write("p.lrdevplugin/Info.lua", "return {}");
+        tree.Write("p.lrdevplugin/Uses.lua", """
+            local LrDialogs = import 'LrDialogs'
+            local LrDevelopController = import 'LrDevelopController'
+            local function go() LrDialogs.message('hi') end
+            return go
+            """);
+
+        var (graph, _) = new LuaGraphBuilder().Build(tree.Root);
+        var module = graph.Nodes.Single(n => n.Name.EndsWith("Uses"));
+
+        // The floor is 6.0, and the ONLY thing holding it there is an import.
+        Assert.Equal("6.0", module.GetProperty<string>("minimumSdkVersion"));
+
+        var driver = Assert.Single(module.GetProperty<List<string>>("minimumSdkVersionDrivenBy")!);
+        Assert.Equal("LrDevelopController (6.0, imported)", driver);
+
+        // The call was captured -- it simply does not drive anything, because
+        // LrDialogs has existed since 1.3. Only what sets the floor is listed, so
+        // the explanation stays as short as the answer.
+        Assert.Contains("LrDialogs.message", module.GetProperty<List<string>>("sdkCalls")!);
+    }
+
     /// <summary>A throwaway directory tree, removed on dispose.</summary>
     private sealed class TempTree : IDisposable
     {

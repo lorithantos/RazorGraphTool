@@ -68,6 +68,14 @@ internal static class LuaCommands
             $"References: {report.ResolvedReferences} resolved, {report.ExternalReferences} external, " +
             $"{report.UnresolvedReferences.Count} unresolved");
 
+        // Reported with the same honesty as references: the unresolved share is
+        // large by nature -- locals and parameters are not statically knowable
+        // here -- and a summary that omitted it would imply the edges are the
+        // whole call graph.
+        Console.WriteLine(
+            $"Calls: {report.Calls.InGraph} in-graph, {report.Calls.External} external API, " +
+            $"{report.Calls.Stdlib} stdlib, {report.Calls.Unresolved} unresolved (of {report.Calls.Total})");
+
         if (report.StructuralCaveat is { } caveat) Console.Error.WriteLine($"note: {caveat}");
 
         // Never silent: dropping most of the tree without saying so would read as
