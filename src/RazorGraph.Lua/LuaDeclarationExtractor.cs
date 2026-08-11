@@ -272,13 +272,16 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
     /// Lightroom's 5.1. "Valid in Lua 5.2" is a different sentence from "failed
     /// to parse", and it is the one a reader can act on.
     ///
-    /// NOT decided against LuaSyntaxOptions.All, which was the first attempt and
-    /// is wrong: All is a union of syntaxes whose meanings CONFLICT, not a
-    /// superset. <c>::label::</c> is a label from 5.2 and a type cast in Luau, so
-    /// All rejects the goto idiom outright — and goto, the single likeliest 5.1
-    /// mistake, was therefore reported as an ordinary parse failure. Caught by
-    /// running the checker against generated code rather than by the test, which
-    /// passed on a suite-order accident.
+    /// A ladder rather than one permissive parse, because naming the earliest
+    /// accepting version is what makes the finding actionable: "valid in Lua
+    /// 5.2" tells a reader which construct they reached for, where "valid in
+    /// some later Lua" only tells them they are wrong.
+    ///
+    /// It was introduced for a second reason that turned out to be a
+    /// misdiagnosis — LuaSyntaxOptions.All appeared not to be a superset, and
+    /// once the parser warm-up below was in place, All accepted the same code.
+    /// The ladder is kept on the first reason alone. See
+    /// LorettaCharacterizationTests.
     ///
     /// Only runs when the first parse already failed, so a clean file costs
     /// nothing.

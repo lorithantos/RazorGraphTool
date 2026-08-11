@@ -68,10 +68,19 @@ rules. A check nobody runs is not a check.
 
 ## The parser has process-global state
 
-Loretta 0.2.13 seeds keyword recognition from the **first parse in the process**.
-Parse a Lua 5.1 file first and `goto` / `::label::` stay unrecognised for the rest
-of that process — even when a later parse sets `acceptGoto` explicitly. The
-options report `True` and the parse fails anyway.
+Loretta 0.2.13 seeds keyword recognition from the **first parse in the process**,
+and later parses can move it again. Parse a Lua 5.1 file first and `goto` /
+`::label::` stay unrecognised for the rest of that process — even when a later
+parse sets `acceptGoto` explicitly. The options report `True` and the parse fails
+anyway.
+
+This is the *only* cause. An earlier version of this note claimed
+`LuaSyntaxOptions.All` was "a union of conflicting syntaxes" that rejects the
+goto idiom because `::label::` is a type cast in Luau. That was a plausible story
+fitted to a symptom: once the parser is warmed, `All` accepts `goto` too. The
+characterization test now pins that, and the wrong explanation is left here on
+purpose — it was confident, it was written into a commit message, and it was
+wrong for a whole session.
 
 `LuaDeclarationExtractor` therefore warms the parser once with a 5.4 snippet
 before anything else. It seeds recognition; it does not loosen anything, and 5.1
