@@ -46,7 +46,7 @@ public sealed class DialectRule : ILuaRule
                 LuaSeverity.Error,
                 declaration.File.RelativePath,
                 first.Line,
-                $"valid in a later Lua, rejected by {dialect} which '{context.Host.Name}' runs",
+                $"valid in {first.AcceptedBy}, rejected by {dialect} which '{context.Host.Name}' runs",
                 $"{first.Message}{extra}");
         }
     }

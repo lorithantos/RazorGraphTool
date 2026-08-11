@@ -66,6 +66,31 @@ Rules run during `Build`, and findings land in `LuaBuildReport.Findings`, so the
 reach the CLI and the MCP envelope without either learning about individual
 rules. A check nobody runs is not a check.
 
+## The parser has process-global state
+
+Loretta 0.2.13 seeds keyword recognition from the **first parse in the process**.
+Parse a Lua 5.1 file first and `goto` / `::label::` stay unrecognised for the rest
+of that process — even when a later parse sets `acceptGoto` explicitly. The
+options report `True` and the parse fails anyway.
+
+`LuaDeclarationExtractor` therefore warms the parser once with a 5.4 snippet
+before anything else. It seeds recognition; it does not loosen anything, and 5.1
+still rejects `goto` afterwards, which is the whole point.
+
+This cost an hour and is worth the paragraph, because of how it hid: the dialect
+rule silently missed `goto` — the single likeliest mistake in generated 5.1 code
+and the case the rule exists for — while **its test passed**. In a full suite
+another class parsed a goto-accepting dialect first, so the rule worked; run
+alone, the same test failed. Green in the suite, wrong in the product.
+
+Two rules came out of it:
+
+- **Comparison parses need warming**, and any future rule that parses under a
+  second dialect inherits this hazard.
+- **A test that passes only in company is not evidence.** Both order-dependent
+  bugs in this codebase — this one and the MSBuildLocator race — were found by
+  *using* the tool, not by running the suite.
+
 ## What the corpus caught
 
 Running these against Adobe's own samples immediately produced a false positive

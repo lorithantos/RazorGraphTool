@@ -46,7 +46,8 @@ public sealed record LuaCall(
 /// in generated code, since the public corpus skews 5.3/5.4 and Lightroom runs
 /// 5.1. Reporting it as "failed to parse" hides exactly the thing worth saying.
 /// </summary>
-public sealed record LuaSyntaxRejection(int Line, string Message);
+/// <param name="AcceptedBy">The oldest later Lua that does accept it, e.g. "Lua 5.2".</param>
+public sealed record LuaSyntaxRejection(int Line, string Message, string AcceptedBy);
 
 /// <summary>
 /// One field of the table a file returns at chunk level.
@@ -68,7 +69,13 @@ public sealed record LuaFileDeclarations(
     IReadOnlyList<string> ParseErrors,
     IReadOnlyList<LuaCall> Calls,
     IReadOnlyList<LuaSyntaxRejection> DialectRejections,
-    IReadOnlyList<LuaManifestField> ReturnedFields);
+    /// <summary>
+    /// Null when the file does not return a table literal at all; empty when it
+    /// returns one with no fields. The difference matters to a manifest check:
+    /// "return {}" is a readable, empty manifest, and reporting it as unreadable
+    /// is a false positive on a legal file.
+    /// </summary>
+    IReadOnlyList<LuaManifestField>? ReturnedFields);
 
 /// <summary>
 /// Parses Lua and yields declarations. The ONLY file in the codebase that knows
@@ -77,8 +84,41 @@ public sealed record LuaFileDeclarations(
 /// </summary>
 public sealed class LuaDeclarationExtractor(ILuaHost host)
 {
+    /// <summary>
+    /// Parse one throwaway snippet under the newest dialect before anything else
+    /// is parsed, because Loretta 0.2.13 carries process-global state seeded by
+    /// the FIRST parse.
+    ///
+    /// Measured, not suspected. Parsing a Lua 5.1 file first leaves goto and
+    /// ::label:: unrecognised for the rest of the process even when a later parse
+    /// explicitly sets acceptGoto — the options say True and the parse still
+    /// fails. Warm with 5.4 first and the same parse succeeds.
+    ///
+    /// It made the dialect rule silently miss goto, which is the single likeliest
+    /// mistake in generated 5.1 code and the case the rule was written for. It
+    /// also made the test for it PASS: in a full suite another class parsed a
+    /// goto-accepting dialect first, so the rule worked; run alone, the same test
+    /// failed. Order-dependent, green in the suite, wrong in the product — the
+    /// same shape as the MSBuildLocator race, found the same way, by using the
+    /// thing rather than trusting the test.
+    ///
+    /// The 5.1 parse still rejects goto afterwards, which is what makes this a
+    /// warm-up rather than a loosening: it seeds recognition, it does not change
+    /// what a dialect accepts.
+    /// </summary>
+    private static readonly Lazy<bool> ParserWarmup = new(() =>
+    {
+        LuaSyntaxTree.ParseText(
+            "do goto skip ::skip:: end",
+            new LuaParseOptions(LuaSyntaxOptions.Lua54),
+            "loretta-warmup.lua");
+        return true;
+    });
+
     public LuaFileDeclarations Extract(LuaSourceFile file, string source)
     {
+        _ = ParserWarmup.Value;
+
         var options = new LuaParseOptions(SyntaxOptionsFor(host.Dialect));
         var tree = LuaSyntaxTree.ParseText(source, options, file.FullPath);
         var root = tree.GetRoot();
@@ -184,7 +224,7 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
     /// which is correct — the fields were assigned elsewhere and this pass does
     /// not track them.
     /// </summary>
-    private static IReadOnlyList<LuaManifestField> ReturnedFields(SyntaxNode root)
+    private static IReadOnlyList<LuaManifestField>? ReturnedFields(SyntaxNode root)
     {
         var chunkReturn = root.DescendantNodes()
             .OfType<ReturnStatementSyntax>()
@@ -193,7 +233,9 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
                   or LocalFunctionDeclarationStatementSyntax
                   or AnonymousFunctionExpressionSyntax));
 
-        if (chunkReturn?.Expressions.FirstOrDefault() is not TableConstructorExpressionSyntax table) return [];
+        // Null, not empty: "returns nothing to read" and "returns an empty
+        // table" are different facts, and only the first is unreadable.
+        if (chunkReturn?.Expressions.FirstOrDefault() is not TableConstructorExpressionSyntax table) return null;
 
         var fields = new List<LuaManifestField>();
         foreach (var field in table.Fields.OfType<IdentifierKeyedTableFieldSyntax>())
@@ -224,11 +266,19 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
     /// Which of this file's parse errors are the HOST's Lua refusing valid
     /// later-Lua, rather than the file being broken.
     ///
-    /// Decided by re-parsing permissively: if every dialect accepts it and this
-    /// host's does not, the construct exists and is simply out of reach here —
-    /// <c>goto</c>, integer division, bitwise operators, all fine from 5.2 or 5.3
-    /// onward and all dead in Lightroom's 5.1. That is a different sentence from
-    /// "failed to parse", and it is the one a reader can act on.
+    /// Decided by re-parsing against SPECIFIC later versions, oldest first, and
+    /// naming the first that accepts the file: <c>goto</c> is 5.2, integer
+    /// division and bitwise operators are 5.3, and all of them are dead in
+    /// Lightroom's 5.1. "Valid in Lua 5.2" is a different sentence from "failed
+    /// to parse", and it is the one a reader can act on.
+    ///
+    /// NOT decided against LuaSyntaxOptions.All, which was the first attempt and
+    /// is wrong: All is a union of syntaxes whose meanings CONFLICT, not a
+    /// superset. <c>::label::</c> is a label from 5.2 and a type cast in Luau, so
+    /// All rejects the goto idiom outright — and goto, the single likeliest 5.1
+    /// mistake, was therefore reported as an ordinary parse failure. Caught by
+    /// running the checker against generated code rather than by the test, which
+    /// passed on a suite-order accident.
     ///
     /// Only runs when the first parse already failed, so a clean file costs
     /// nothing.
@@ -238,22 +288,40 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
     {
         if (diagnostics.Count == 0) return [];
 
-        // Nothing to compare against: this IS the permissive setting.
-        if (SyntaxOptionsFor(host.Dialect) == LuaSyntaxOptions.All) return [];
+        foreach (var (dialect, name) in LaterDialects)
+        {
+            if (dialect == host.Dialect) continue;
 
-        var permissive = LuaSyntaxTree.ParseText(
-            source, new LuaParseOptions(LuaSyntaxOptions.All), file.FullPath);
+            var candidate = LuaSyntaxTree.ParseText(
+                source, new LuaParseOptions(SyntaxOptionsFor(dialect)), file.FullPath);
 
-        // Still broken when every dialect is allowed: the file is malformed, and
-        // saying "wrong Lua version" would send someone looking for a setting.
-        if (permissive.GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error)) return [];
+            if (candidate.GetDiagnostics().Any(d => d.Severity == DiagnosticSeverity.Error)) continue;
 
-        return diagnostics
-            .Select(d => new LuaSyntaxRejection(
-                d.Location.GetLineSpan().StartLinePosition.Line + 1, d.GetMessage()))
-            .Take(10)
-            .ToList();
+            return diagnostics
+                .Select(d => new LuaSyntaxRejection(
+                    d.Location.GetLineSpan().StartLinePosition.Line + 1, d.GetMessage(), name))
+                .Take(10)
+                .ToList();
+        }
+
+        // No later version takes it either: the file is malformed, and saying
+        // "wrong Lua version" would send someone looking for a setting.
+        return [];
     }
+
+    /// <summary>
+    /// Versions to test a rejected file against, oldest first, so the report
+    /// names the EARLIEST Lua that would accept it rather than merely some Lua.
+    /// LuaJIT sits last: it is a 5.1 superset rather than a later standard, so
+    /// attributing a construct to it is only right when no standard version has it.
+    /// </summary>
+    private static readonly (LuaDialect Dialect, string Name)[] LaterDialects =
+    [
+        (LuaDialect.Lua52, "Lua 5.2"),
+        (LuaDialect.Lua53, "Lua 5.3"),
+        (LuaDialect.Lua54, "Lua 5.4"),
+        (LuaDialect.LuaJit21, "LuaJIT 2.1")
+    ];
 
     /// <summary>
     /// One call site, attributed to the innermost function declaration around it.

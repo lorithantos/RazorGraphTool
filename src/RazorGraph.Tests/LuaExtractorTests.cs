@@ -492,6 +492,42 @@ public class LuaExtractorTests
         Assert.Equal(Lua.Checks.LuaSeverity.Error, finding.Severity);
         Assert.Contains("Lua 5.1", finding.Message);
         Assert.Contains("lightroom", finding.Message);
+
+        // Names the EARLIEST version that takes it. goto arrived in 5.2, and
+        // saying so is what makes the finding actionable rather than a scolding.
+        Assert.Contains("valid in Lua 5.2", finding.Message);
+    }
+
+    [Fact]
+    public void Dialect_IntegerDivision_IsAttributedTo53()
+    {
+        // The other half of the pair, and it lands on a different version -- so
+        // the ladder is reporting the earliest acceptor rather than a constant.
+        using var tree = new TempTree();
+        tree.Write("p.lrdevplugin/Info.lua", "return {}");
+        tree.Write("p.lrdevplugin/Div.lua", "local function g(n) return n // 2 end\nreturn g");
+
+        var (_, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        var finding = Assert.Single(report.Findings, f => f.RuleId == "lua.dialect");
+        Assert.Contains("valid in Lua 5.3", finding.Message);
+    }
+
+    [Fact]
+    public void Manifest_AnEmptyTable_IsReadableRatherThanUnreadable()
+    {
+        // return {} is a legal, empty manifest. Reporting it as unreadable was a
+        // false positive on every fixture in this file, hidden because nothing
+        // asserted the absence.
+        using var tree = new TempTree();
+        tree.Write("p.lrdevplugin/Info.lua", "return {}");
+
+        var (_, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        Assert.DoesNotContain(report.Findings, f => f.Message.Contains("could not be read"));
+
+        // It is still missing both required keys, and says so.
+        Assert.Equal(2, report.Findings.Count(f => f.Message.Contains("missing the required key")));
     }
 
     [Fact]
@@ -660,6 +696,9 @@ public class LuaExtractorTests
             return { LrToolkitIdentifier = 'com.example.p', LrForceInitPlugin = true }
             """);
 
+        // Not null: the chunk DOES return a table literal, and the inner one is
+        // simply not it.
+        Assert.NotNull(decl.ReturnedFields);
         Assert.Equal(new[] { "LrToolkitIdentifier", "LrForceInitPlugin" }, decl.ReturnedFields.Select(f => f.Key));
         Assert.Equal(new[] { "string", "boolean" }, decl.ReturnedFields.Select(f => f.Kind));
     }

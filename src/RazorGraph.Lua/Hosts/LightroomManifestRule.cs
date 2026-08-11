@@ -37,7 +37,7 @@ public sealed class LightroomManifestRule : ILuaRule
         {
             var file = manifest.File.RelativePath;
 
-            if (manifest.ReturnedFields.Count == 0)
+            if (manifest.ReturnedFields is null)
             {
                 // Legal Lua -- the table may be built up and returned by name --
                 // and simply not checkable here. Said out loud, because silence
