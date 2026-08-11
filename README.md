@@ -58,7 +58,7 @@ dotnet run --project src/RazorGraph.Cli -- research graph.json --focus "page:Pag
 dotnet publish src/RazorGraph.Mcp -c Release -o .mcp-bin   # .mcp.json launches this published copy
 ```
 
-Restart the session and 22 tools appear: `build_graph`, `build_solution`, `load_graph`,
+Restart the session and 23 tools appear: `build_graph`, `build_solution`, `build_lua`, `load_graph`,
 `save_graph`, `list_graphs`, `drop_graph`, `graph_summary`, `find_nodes`, `get_node`,
 `render_tree`, `page_context`, `trace_data_flow`, `find_path`, `covering_tests`,
 `covered_methods`, `uncovered_methods`, `deep_methods`, `exception_escapes`,
