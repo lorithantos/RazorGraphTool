@@ -191,6 +191,184 @@ public class GraphSerializerTests
         Assert.Equal(2, result.Graph.Edges.Count);
     }
 
+    // ---- Foreign vocabulary ------------------------------------------------
+    // A kind this build has no enum member for must load, survive a save
+    // unchanged, and be declared in the file as untrustworthy. All three:
+    // throwing blocks third-party extractors, rewriting corrupts their graph,
+    // and staying quiet is the drift the format stamp exists to catch.
+
+    private static string ForeignGraphJson(string? formatVersion = null) =>
+        $$"""
+        {
+          {{(formatVersion is null ? "" : $"\"formatVersion\": \"{formatVersion}\",")}}
+          "nodes": [
+            { "id": "mod:app.init", "type": "module", "name": "init" },
+            { "id": "m:App.Go()", "type": "method", "name": "Go" }
+          ],
+          "edges": [
+            { "from": "mod:app.init", "to": "m:App.Go()", "type": "requires" }
+          ]
+        }
+        """;
+
+    [Fact]
+    public void Read_UnknownNodeAndEdgeKinds_LoadInsteadOfThrowing()
+    {
+        // The blocker this whole change exists to remove: a Lua extractor's first
+        // file used to take load_graph down entirely.
+        var graph = GraphSerializer.Read(ForeignGraphJson()).Graph;
+
+        var module = graph.GetNode("mod:app.init")!;
+        Assert.Equal(NodeType.Unknown, module.Type);
+        Assert.Equal("module", module.ForeignType);
+        Assert.Equal(EdgeType.Unknown, graph.Edges.Single().Type);
+        Assert.Equal("requires", graph.Edges.Single().ForeignType);
+    }
+
+    [Fact]
+    public void Read_KnownKindsAlongsideForeignOnes_StillResolve()
+    {
+        // Tolerance must be per-kind, not a whole-document fallback.
+        var graph = GraphSerializer.Read(ForeignGraphJson()).Graph;
+
+        var method = graph.GetNode("m:App.Go()")!;
+        Assert.Equal(NodeType.Method, method.Type);
+        Assert.Null(method.ForeignType);
+    }
+
+    [Fact]
+    public void Read_GenuineUnknownKind_IsNotMarkedForeign()
+    {
+        // "unknown" is a real member of the vocabulary. Only a name we cannot map
+        // is foreign, or every unclassified node would claim foreign provenance.
+        var graph = GraphSerializer.Read(
+            """{"nodes":[{"id":"x","type":"unknown","name":"x"}],"edges":[]}""").Graph;
+
+        Assert.Equal(NodeType.Unknown, graph.GetNode("x")!.Type);
+        Assert.Null(graph.GetNode("x")!.ForeignType);
+    }
+
+    [Fact]
+    public void DisplayType_ShowsForeignNameRatherThanUnknown()
+    {
+        // Preserving a kind in storage and rendering it as "Unknown" would discard
+        // it at the one moment it matters. Every report and tool response reads
+        // this property.
+        var graph = GraphSerializer.Read(ForeignGraphJson()).Graph;
+
+        Assert.Equal("module", graph.GetNode("mod:app.init")!.DisplayType);
+        Assert.Equal("Method", graph.GetNode("m:App.Go()")!.DisplayType);
+        Assert.Equal("requires", graph.Edges.Single().DisplayType);
+    }
+
+    [Fact]
+    public void RoundTrip_ForeignKindNamesSurviveVerbatim()
+    {
+        var once = GraphSerializer.ToJson(GraphSerializer.Read(ForeignGraphJson()).Graph);
+        using var doc = JsonDocument.Parse(once);
+
+        var types = doc.RootElement.GetProperty("nodes").EnumerateArray()
+            .Select(n => n.GetProperty("type").GetString()).ToList();
+        Assert.Contains("module", types);
+        Assert.Equal("requires", doc.RootElement.GetProperty("edges").EnumerateArray()
+            .Single().GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public void ToJson_KnownKinds_KeepTheirExistingWireNames()
+    {
+        // Regression guard on the string-typed DTO: the previously published
+        // server strict-parses these names, so a casing change would lock it out
+        // of every graph written from here on.
+        using var doc = JsonDocument.Parse(GraphSerializer.ToJson(BuildGraph()));
+
+        var types = doc.RootElement.GetProperty("nodes").EnumerateArray()
+            .Select(n => n.GetProperty("type").GetString()).ToList();
+        Assert.Contains("razorPage", types);
+        Assert.Contains("pageModel", types);
+        Assert.Contains("pageServedBy", doc.RootElement.GetProperty("edges").EnumerateArray()
+            .Select(e => e.GetProperty("type").GetString()).ToList());
+    }
+
+    [Fact]
+    public void ToJson_ForeignData_DeclaredInTheFileWithItsCaveat()
+    {
+        // The caveat goes in the FILE, not only in the load response: the file
+        // outlives the session that wrote it and is what gets reused.
+        var json = GraphSerializer.ToJson(GraphSerializer.Read(ForeignGraphJson()).Graph);
+        using var doc = JsonDocument.Parse(json);
+
+        var foreign = doc.RootElement.GetProperty("foreignData");
+        var comment = string.Join(" ", foreign.GetProperty(".comment").EnumerateArray().Select(l => l.GetString()));
+
+        Assert.Contains("not uniformly trustworthy", comment);
+        Assert.Contains($"Only data belonging to format {GraphFormat.Current}", comment);
+        Assert.Equal("module", foreign.GetProperty("nodeTypes").EnumerateArray().Single().GetString());
+        Assert.Equal("requires", foreign.GetProperty("edgeTypes").EnumerateArray().Single().GetString());
+        Assert.Equal(1, foreign.GetProperty("nodes").GetInt32());
+        Assert.Equal(1, foreign.GetProperty("edges").GetInt32());
+    }
+
+    [Fact]
+    public void ToJson_CleanGraph_HasNoForeignDataBlock()
+    {
+        // Presence is the signal, so an empty block would cry wolf on every graph.
+        using var doc = JsonDocument.Parse(GraphSerializer.ToJson(BuildGraph()));
+
+        Assert.False(doc.RootElement.TryGetProperty("foreignData", out _));
+    }
+
+    [Fact]
+    public void ToJson_NewerMinorOrigin_IsNamedInTheFile()
+    {
+        var newerMinor = $"{GraphFormat.Current.Major}.{GraphFormat.Current.Minor + 1}";
+
+        var json = GraphSerializer.ToJson(GraphSerializer.Read(ForeignGraphJson(newerMinor)).Graph);
+        using var doc = JsonDocument.Parse(json);
+
+        var foreign = doc.RootElement.GetProperty("foreignData");
+        Assert.Equal(newerMinor, foreign.GetProperty("fromVersions").EnumerateArray().Single().GetString());
+
+        // The writer stamps ITS OWN version -- claiming the newer one would assert
+        // semantics this build never applied.
+        Assert.Equal(GraphFormat.Current.ToString(), doc.RootElement.GetProperty("formatVersion").GetString());
+
+        var comment = string.Join(" ", foreign.GetProperty(".comment").EnumerateArray().Select(l => l.GetString()));
+        Assert.Contains($"read from format {newerMinor}", comment);
+    }
+
+    [Fact]
+    public void RoundTrip_ForeignProvenanceSurvivesRepeatedSaves()
+    {
+        // Provenance has to survive the chain, not just the first hop: a graph
+        // that loses its origin on the second save has laundered itself clean.
+        var newerMinor = $"{GraphFormat.Current.Major}.{GraphFormat.Current.Minor + 1}";
+
+        var first = GraphSerializer.ToJson(GraphSerializer.Read(ForeignGraphJson(newerMinor)).Graph);
+        var second = GraphSerializer.ToJson(GraphSerializer.Read(first).Graph);
+
+        using var doc = JsonDocument.Parse(second);
+        var foreign = doc.RootElement.GetProperty("foreignData");
+        Assert.Equal(newerMinor, foreign.GetProperty("fromVersions").EnumerateArray().Single().GetString());
+        Assert.Equal("module", foreign.GetProperty("nodeTypes").EnumerateArray().Single().GetString());
+    }
+
+    [Fact]
+    public void ToJson_ForeignKindsWithoutANewerVersion_SayTheyCameFromAnExtension()
+    {
+        // Same hazard, different origin: an extractor extending this version.
+        // Claiming a newer version produced it would be a fabricated provenance.
+        var json = GraphSerializer.ToJson(
+            GraphSerializer.Read(ForeignGraphJson(GraphFormat.Current.ToString())).Graph);
+        using var doc = JsonDocument.Parse(json);
+
+        var foreign = doc.RootElement.GetProperty("foreignData");
+        Assert.False(foreign.TryGetProperty("fromVersions", out _));
+
+        var comment = string.Join(" ", foreign.GetProperty(".comment").EnumerateArray().Select(l => l.GetString()));
+        Assert.Contains("extractor extending the format", comment);
+    }
+
     [Fact]
     public void ResearchDocument_FiltersByRelevanceThreshold()
     {

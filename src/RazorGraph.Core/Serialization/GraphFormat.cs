@@ -74,6 +74,48 @@ public static class GraphFormat
     }
 
     /// <summary>
+    /// The caveat written into a saved graph that carries data this build did not
+    /// model. It goes in the file, not only in a tool response, because the file
+    /// outlives the session that wrote it and will be read by something that never
+    /// saw the warning — including a human opening it in an editor.
+    ///
+    /// Returned as lines for a <c>.comment</c> array: the house JSON convention
+    /// for prose that belongs to a document rather than to its data.
+    /// </summary>
+    /// <param name="fromVersions">
+    /// Newer format versions the data was read from. Empty when the unmodelled
+    /// vocabulary arrived from an extractor extending this version rather than
+    /// from a later one — a different origin, the same hazard.
+    /// </param>
+    public static IReadOnlyList<string> ForeignDataComment(IReadOnlyList<string> fromVersions)
+    {
+        var lines = new List<string>
+        {
+            "This graph holds data the writer did not model, so it is not uniformly trustworthy."
+        };
+
+        lines.Add(fromVersions.Count > 0
+            ? $"Some of it was read from format {string.Join(", ", fromVersions)}, which is newer than " +
+              $"the {Current} writer that produced this file. Only data belonging to format {Current} " +
+              "-- the version in formatVersion -- can be relied on."
+            : $"It uses node or edge kinds outside format {Current}, so it came from an extractor " +
+              $"extending the format. Only data belonging to format {Current} -- the version in " +
+              "formatVersion -- can be relied on.");
+
+        lines.Add(
+            "Everything listed here was preserved exactly as it was read and never interpreted. " +
+            "No query in this build reasons about it, so an empty result for one of these kinds " +
+            "means 'not modelled here', not 'not present'.");
+
+        lines.Add(
+            "The listing covers node and edge kinds only. Node and edge properties are an open " +
+            "dictionary with no fixed schema, so unmodelled properties on kinds this build does " +
+            "know are preserved as well but cannot be enumerated.");
+
+        return lines;
+    }
+
+    /// <summary>
     /// Decide what to do with the version a document carried. Pass null for a
     /// document with no stamp.
     /// </summary>

@@ -13,6 +13,19 @@ public sealed class CodeGraph
     public IReadOnlyCollection<GraphNode> Nodes => _nodes.Values;
     public IReadOnlyCollection<GraphEdge> Edges => _edges.AsReadOnly();
 
+    /// <summary>
+    /// Format versions newer than this build's that data in this graph was read
+    /// from. Empty for a graph built from source, or loaded from a file at or
+    /// below this build's version.
+    ///
+    /// Carried on the graph rather than recomputed at save time because it is
+    /// not derivable: a newer format can add a property to a node kind we do
+    /// know, leaving nothing locally strange to notice. Drop this and foreign
+    /// data becomes indistinguishable from data this build understands, which is
+    /// the exact confusion the format stamp exists to prevent.
+    /// </summary>
+    public SortedSet<string> ForeignFormatVersions { get; } = new(StringComparer.Ordinal);
+
     public void AddNode(GraphNode node)
     {
         ArgumentNullException.ThrowIfNull(node);

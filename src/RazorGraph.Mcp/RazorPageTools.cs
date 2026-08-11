@@ -22,7 +22,7 @@ public sealed class RazorPageTools(GraphStore store)
         ToolArguments.RequireNode(graph, pageId);
         var query = new GraphQuery(graph);
         var items = query.GetRenderTree(pageId)
-            .Select(t => new { edgeType = t.Edge.Type.ToString(), node = ToolResponses.NodeSummary(t.Node) })
+            .Select(t => new { edgeType = t.Edge.DisplayType, node = ToolResponses.NodeSummary(t.Node) })
             .ToList();
         return ToolResponses.ToJson(new { pageId, returned = items.Count, items });
     }
@@ -53,7 +53,7 @@ public sealed class RazorPageTools(GraphStore store)
     {
         var graph = store.Require(graphId).Graph;
         var items = new GraphQuery(graph).FindServerToJsMismatches()
-            .Select(m => new { server = ToolResponses.NodeSummary(m.ServerNode), js = ToolResponses.NodeSummary(m.JsNode), edgeType = m.Edge.Type.ToString() })
+            .Select(m => new { server = ToolResponses.NodeSummary(m.ServerNode), js = ToolResponses.NodeSummary(m.JsNode), edgeType = m.Edge.DisplayType })
             .ToList();
         return ToolResponses.ToJson(new { returned = items.Count, items });
     }

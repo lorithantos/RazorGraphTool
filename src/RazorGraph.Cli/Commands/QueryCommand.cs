@@ -145,7 +145,7 @@ internal static class QueryCommand
         var found = 0;
         foreach (var (server, js, edge) in query.FindServerToJsMismatches())
         {
-            Console.WriteLine($"  [{server.Type}] {server.Name} --{edge.Type}--> [{js.Type}] {js.Name}");
+            Console.WriteLine($"  [{server.DisplayType}] {server.Name} --{edge.DisplayType}--> [{js.DisplayType}] {js.Name}");
             found++;
         }
         Console.WriteLine(found == 0
@@ -223,14 +223,14 @@ internal static class QueryCommand
         {
             Console.WriteLine("\n--- Outgoing ---");
             foreach (var (edge, target) in query.GetNeighbors(nodeId))
-                Console.WriteLine($"  {edge.Type} -> [{target.Type}] {target.Name}");
+                Console.WriteLine($"  {edge.DisplayType} -> [{target.DisplayType}] {target.Name}");
         }
 
         if (options.RenderTree && node.Type == NodeType.RazorPage)
         {
             Console.WriteLine("\n--- Render Tree ---");
             foreach (var (n, e) in query.GetRenderTree(nodeId))
-                Console.WriteLine($"  {e.Type} -> [{n.Type}] {n.Name}");
+                Console.WriteLine($"  {e.DisplayType} -> [{n.DisplayType}] {n.Name}");
         }
 
         if (options.Context)
@@ -274,7 +274,7 @@ internal static class QueryCommand
         Console.WriteLine($"  ViewModel: {GraphReports.Describe(context.ViewModel)}");
         Console.WriteLine($"  Injected services ({context.InjectedServices.Count}):");
         foreach (var svc in context.InjectedServices)
-            Console.WriteLine($"    [{svc.Type}] {svc.Name}");
+            Console.WriteLine($"    [{svc.DisplayType}] {svc.Name}");
     }
 
     private static int PrintDataFlow(GraphQuery query, string nodeId, int depth, string directionText)
@@ -287,7 +287,7 @@ internal static class QueryCommand
 
         Console.WriteLine($"\n--- Data Flow ({direction}) ---");
         foreach (var (n, e, d) in query.TraceDataFlow(nodeId, depth, direction))
-            Console.WriteLine($"  {new string(' ', d * 2)}{e.Type} -> [{n.Type}] {n.Name}");
+            Console.WriteLine($"  {new string(' ', d * 2)}{e.DisplayType} -> [{n.DisplayType}] {n.Name}");
         return 0;
     }
 

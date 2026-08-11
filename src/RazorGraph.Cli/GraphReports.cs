@@ -9,11 +9,11 @@ using RazorGraph.Core.Graph;
 internal static class GraphReports
 {
     internal static string Describe(GraphNode? node) =>
-        node == null ? "(not found)" : $"[{node.Type}] {node.Name} ({node.Id})";
+        node == null ? "(not found)" : $"[{node.DisplayType}] {node.Name} ({node.Id})";
 
     internal static void PrintNode(GraphNode node)
     {
-        Console.WriteLine($"[{node.Type}] {node.Name}");
+        Console.WriteLine($"[{node.DisplayType}] {node.Name}");
         Console.WriteLine($"  Id: {node.Id}");
         Console.WriteLine($"  File: {node.FilePath}");
         if (node.LineStart.HasValue) Console.WriteLine($"  Line: {node.LineStart}");
@@ -32,18 +32,22 @@ internal static class GraphReports
 
     internal static void PrintSummary(CodeGraph graph)
     {
+        // Grouped rather than enumerated over the enum: a foreign vocabulary has
+        // no enum members to iterate, and walking NodeType would silently omit
+        // every kind this build does not have a name for.
         Console.WriteLine("\n--- Nodes ---");
-        foreach (NodeType type in Enum.GetValues<NodeType>())
-        {
-            var count = graph.NodesOfType(type).Count();
-            if (count > 0) Console.WriteLine($"  {type}: {count}");
-        }
+        PrintCensus(graph.Nodes.GroupBy(n => n.DisplayType));
     }
 
     internal static void PrintEdgeSummary(CodeGraph graph)
     {
         Console.WriteLine("\n--- Edges ---");
-        foreach (var group in graph.Edges.GroupBy(e => e.Type).OrderByDescending(g => g.Count()))
+        PrintCensus(graph.Edges.GroupBy(e => e.DisplayType));
+    }
+
+    private static void PrintCensus<T>(IEnumerable<IGrouping<string, T>> groups)
+    {
+        foreach (var group in groups.OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal))
         {
             Console.WriteLine($"  {group.Key}: {group.Count()}");
         }

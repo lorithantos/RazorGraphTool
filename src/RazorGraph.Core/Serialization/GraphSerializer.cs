@@ -30,26 +30,67 @@ public static class GraphSerializer
         var dto = new GraphDto
         {
             FormatVersion = GraphFormat.Current.ToString(),
-            Nodes = graph.Nodes.Select(n => new NodeDto
-            {
-                Id = n.Id,
-                Type = n.Type,
-                Name = n.Name,
-                FilePath = n.FilePath,
-                LineStart = n.LineStart,
-                LineEnd = n.LineEnd,
-                Properties = n.Properties,
-                Labels = n.Labels
-            }).ToList(),
+            ForeignData = DescribeForeignData(graph),
+            Nodes = graph.Nodes.Select(ToNodeDto).ToList(),
             Edges = graph.Edges.Select(e => new EdgeDto
             {
                 From = e.FromId,
                 To = e.ToId,
-                Type = e.Type,
+                Type = TypeName(e.Type, e.ForeignType),
                 Properties = e.Properties
             }).ToList()
         };
         return JsonSerializer.Serialize(dto, Options);
+    }
+
+    private static NodeDto ToNodeDto(GraphNode n) => new()
+    {
+        Id = n.Id,
+        Type = TypeName(n.Type, n.ForeignType),
+        Name = n.Name,
+        FilePath = n.FilePath,
+        LineStart = n.LineStart,
+        LineEnd = n.LineEnd,
+        Properties = n.Properties,
+        Labels = n.Labels
+    };
+
+    /// <summary>
+    /// A kind's wire name: the camelCase enum name for vocabulary this build
+    /// models, and otherwise the foreign name verbatim. Verbatim matters —
+    /// re-casing a third party's name is a silent rewrite of their graph, and the
+    /// round-trip is only lossless if what we write back is what we read.
+    /// </summary>
+    private static string TypeName<TEnum>(TEnum type, string? foreignType) where TEnum : struct, Enum =>
+        foreignType ?? JsonNamingPolicy.CamelCase.ConvertName(type.ToString()!);
+
+    /// <summary>
+    /// What in this graph the writer could not model, or null when everything in
+    /// it belongs to this format version.
+    /// </summary>
+    private static ForeignDataDto? DescribeForeignData(CodeGraph graph)
+    {
+        var foreignNodes = graph.Nodes.Where(n => n.ForeignType is not null).ToList();
+        var foreignEdges = graph.Edges.Where(e => e.ForeignType is not null).ToList();
+        var fromVersions = graph.ForeignFormatVersions.ToList();
+
+        if (foreignNodes.Count == 0 && foreignEdges.Count == 0 && fromVersions.Count == 0) return null;
+
+        return new ForeignDataDto
+        {
+            Comment = GraphFormat.ForeignDataComment(fromVersions),
+            FromVersions = fromVersions.Count > 0 ? fromVersions : null,
+            NodeTypes = Distinct(foreignNodes.Select(n => n.ForeignType!)),
+            EdgeTypes = Distinct(foreignEdges.Select(e => e.ForeignType!)),
+            Nodes = foreignNodes.Count,
+            Edges = foreignEdges.Count
+        };
+    }
+
+    private static List<string>? Distinct(IEnumerable<string> names)
+    {
+        var list = names.Distinct(StringComparer.Ordinal).OrderBy(n => n, StringComparer.Ordinal).ToList();
+        return list.Count > 0 ? list : null;
     }
 
     /// <summary>
@@ -68,7 +109,7 @@ public static class GraphSerializer
 
         if (!assessment.Supported) throw new InvalidOperationException(assessment.Caveat);
 
-        return new GraphReadResult(ToGraph(dto), assessment);
+        return new GraphReadResult(ToGraph(dto, assessment), assessment);
     }
 
     /// <summary>
@@ -77,15 +118,27 @@ public static class GraphSerializer
     /// </summary>
     public static CodeGraph FromJson(string json) => Read(json).Graph;
 
-    private static CodeGraph ToGraph(GraphDto dto)
+    private static CodeGraph ToGraph(GraphDto dto, GraphFormatAssessment assessment)
     {
         var graph = new CodeGraph();
+
+        // Provenance the elements cannot carry. A newer format can add a property
+        // to a kind we do know, which leaves nothing locally strange to spot at
+        // save time -- so the origin is recorded from the stamp, and from any
+        // origins the file was already carrying, rather than inferred later.
+        if (assessment.Version is { } v && (v.Major, v.Minor).CompareTo((GraphFormat.Current.Major, GraphFormat.Current.Minor)) > 0)
+            graph.ForeignFormatVersions.Add(v.ToString());
+        foreach (var origin in dto.ForeignData?.FromVersions ?? [])
+            graph.ForeignFormatVersions.Add(origin);
+
         foreach (var n in dto.Nodes)
         {
+            var (type, foreign) = ParseType<NodeType>(n.Type);
             var node = new GraphNode
             {
                 Id = n.Id,
-                Type = n.Type,
+                Type = type,
+                ForeignType = foreign,
                 Name = n.Name,
                 FilePath = n.FilePath,
                 LineStart = n.LineStart,
@@ -97,16 +150,32 @@ public static class GraphSerializer
         }
         foreach (var e in dto.Edges)
         {
+            var (type, foreign) = ParseType<EdgeType>(e.Type);
             var edge = new GraphEdge
             {
                 FromId = e.From,
                 ToId = e.To,
-                Type = e.Type
+                Type = type,
+                ForeignType = foreign
             };
             foreach (var p in e.Properties) edge.Properties[p.Key] = NormalizeValue(p.Value);
             graph.AddEdge(edge);
         }
         return graph;
+    }
+
+    /// <summary>
+    /// Map a wire kind name onto this build's vocabulary. A name we do not have
+    /// is preserved rather than rejected: strict parsing here is what would stop
+    /// a third-party extractor's first file from loading at all, and what would
+    /// stop this build from reading a newer minor version it is promised to be
+    /// able to read.
+    /// </summary>
+    private static (TEnum Type, string? ForeignType) ParseType<TEnum>(string name) where TEnum : struct, Enum
+    {
+        // Case-insensitive because the wire form is camelCase and the enum is Pascal.
+        if (Enum.TryParse<TEnum>(name, ignoreCase: true, out var parsed)) return (parsed, null);
+        return (Enum.Parse<TEnum>("Unknown"), name);
     }
 
     /// <summary>
@@ -163,23 +232,17 @@ public static class GraphSerializer
         {
             Query = query,
             GeneratedAt = DateTimeOffset.UtcNow,
-            Nodes = subNodes.Select(n => new NodeDto
+            Nodes = subNodes.Select(n =>
             {
-                Id = n.Id,
-                Type = n.Type,
-                Name = n.Name,
-                FilePath = n.FilePath,
-                LineStart = n.LineStart,
-                LineEnd = n.LineEnd,
-                Relevance = kept[n.Id],
-                Properties = n.Properties,
-                Labels = n.Labels
+                var dto = ToNodeDto(n);
+                dto.Relevance = kept[n.Id];
+                return dto;
             }).OrderByDescending(n => n.Relevance).ToList(),
             Edges = subEdges.Select(e => new EdgeDto
             {
                 From = e.FromId,
                 To = e.ToId,
-                Type = e.Type,
+                Type = TypeName(e.Type, e.ForeignType),
                 Properties = e.Properties
             }).ToList()
         };
@@ -192,14 +255,40 @@ public static class GraphSerializer
         // First so it lands at the top of the file: a reader deciding whether it
         // can read this document should not have to scan past 20k nodes to find out.
         public string? FormatVersion { get; set; }
+
+        // Second for the same reason, and omitted entirely when the graph holds
+        // nothing foreign -- its presence is the signal.
+        public ForeignDataDto? ForeignData { get; set; }
+
         public List<NodeDto> Nodes { get; set; } = new();
         public List<EdgeDto> Edges { get; set; } = new();
+    }
+
+    /// <summary>
+    /// The in-file caveat: what this graph carries that its writer did not model.
+    /// A tool response warns the session that ran the load; this warns everything
+    /// downstream of the file, which is where the graph actually gets reused.
+    /// </summary>
+    private sealed class ForeignDataDto
+    {
+        [JsonPropertyName(".comment")]
+        public IReadOnlyList<string> Comment { get; set; } = [];
+
+        /// <summary>Newer format versions this data was read from, if any.</summary>
+        public List<string>? FromVersions { get; set; }
+
+        public List<string>? NodeTypes { get; set; }
+        public List<string>? EdgeTypes { get; set; }
+        public int Nodes { get; set; }
+        public int Edges { get; set; }
     }
 
     private sealed class NodeDto
     {
         public string Id { get; set; } = string.Empty;
-        public NodeType Type { get; set; }
+        // A string, not the enum: System.Text.Json throws on an enum name it does
+        // not know, which would make an unrecognised kind fatal to the whole load.
+        public string Type { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public string? FilePath { get; set; }
         public int? LineStart { get; set; }
@@ -213,7 +302,7 @@ public static class GraphSerializer
     {
         public string From { get; set; } = string.Empty;
         public string To { get; set; } = string.Empty;
-        public EdgeType Type { get; set; }
+        public string Type { get; set; } = string.Empty;
         public Dictionary<string, object> Properties { get; set; } = new();
     }
 

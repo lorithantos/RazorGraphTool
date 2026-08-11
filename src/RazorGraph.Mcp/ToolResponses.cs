@@ -24,7 +24,7 @@ internal static class ToolResponses
     internal static object NodeSummary(GraphNode n) => new
     {
         id = n.Id,
-        type = n.Type.ToString(),
+        type = n.DisplayType,
         name = n.Name,
         project = n.GetProperty<string>("project"),
         filePath = n.FilePath,
@@ -34,7 +34,7 @@ internal static class ToolResponses
     internal static object NodeDetail(GraphNode n) => new
     {
         id = n.Id,
-        type = n.Type.ToString(),
+        type = n.DisplayType,
         name = n.Name,
         filePath = n.FilePath,
         lineStart = n.LineStart,

@@ -47,19 +47,19 @@ public sealed class GraphNavigationTools(GraphStore store)
 
         var outgoing = graph.Outgoing(id).Select(e => new
         {
-            type = e.Type.ToString(),
+            type = e.DisplayType,
             to = e.ToId,
             toName = graph.GetNode(e.ToId)?.Name,
-            toType = graph.GetNode(e.ToId)?.Type.ToString(),
+            toType = graph.GetNode(e.ToId)?.DisplayType,
             properties = e.Properties.Count > 0 ? e.Properties : null
         }).ToList();
 
         var incoming = graph.Incoming(id).Select(e => new
         {
-            type = e.Type.ToString(),
+            type = e.DisplayType,
             from = e.FromId,
             fromName = graph.GetNode(e.FromId)?.Name,
-            fromType = graph.GetNode(e.FromId)?.Type.ToString(),
+            fromType = graph.GetNode(e.FromId)?.DisplayType,
             properties = e.Properties.Count > 0 ? e.Properties : null
         }).ToList();
 
@@ -79,7 +79,7 @@ public sealed class GraphNavigationTools(GraphStore store)
         var dir = ToolArguments.ParseDirection(direction);
 
         var items = new GraphQuery(graph).TraceDataFlow(startId, maxDepth, dir)
-            .Select(t => new { depth = t.Depth, edgeType = t.Edge.Type.ToString(), node = ToolResponses.NodeSummary(t.Node) })
+            .Select(t => new { depth = t.Depth, edgeType = t.Edge.DisplayType, node = ToolResponses.NodeSummary(t.Node) })
             .ToList();
         return ToolResponses.ToJson(new { startId, maxDepth, direction = dir.ToString(), returned = items.Count, items });
     }
@@ -103,7 +103,7 @@ public sealed class GraphNavigationTools(GraphStore store)
         {
             from = e.FromId,
             fromName = graph.GetNode(e.FromId)?.Name,
-            type = e.Type.ToString(),
+            type = e.DisplayType,
             to = e.ToId,
             toName = graph.GetNode(e.ToId)?.Name
         }).ToList();

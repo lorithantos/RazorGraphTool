@@ -127,12 +127,15 @@ public sealed class GraphStoreTools(GraphStore store)
         GraphFormatAssessment? format = null)
     {
         var graph = entry.Graph;
-        var nodeCounts = graph.Nodes.GroupBy(n => n.Type)
+        // Grouped by display kind, so a foreign vocabulary is censused under its
+        // own names. Collapsing it into one "Unknown" bucket would hide both what
+        // is in the graph and how much of it this build cannot reason about.
+        var nodeCounts = graph.Nodes.GroupBy(n => n.DisplayType)
             .OrderByDescending(g => g.Count())
-            .ToDictionary(g => g.Key.ToString(), g => g.Count());
-        var edgeCounts = graph.Edges.GroupBy(e => e.Type)
+            .ToDictionary(g => g.Key, g => g.Count());
+        var edgeCounts = graph.Edges.GroupBy(e => e.DisplayType)
             .OrderByDescending(g => g.Count())
-            .ToDictionary(g => g.Key.ToString(), g => g.Count());
+            .ToDictionary(g => g.Key, g => g.Count());
 
         var projects = graph.NodesOfType(NodeType.Project).Select(n => n.Name).OrderBy(n => n).ToList();
 
