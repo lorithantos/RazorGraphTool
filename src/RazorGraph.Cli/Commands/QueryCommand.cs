@@ -186,7 +186,10 @@ internal static class QueryCommand
     private static void Emit(object envelope) =>
         Console.WriteLine(JsonSerializer.Serialize(envelope, JsonOptions));
 
-    /// <summary>Lean node summary for JSON results: enough to act on, no property bag.</summary>
+    /// <summary>
+    /// Lean node summary for JSON results: enough to act on, no property bag —
+    /// except for what the node reports as BROKEN, which travels with it.
+    /// </summary>
     private static object NodeRef(GraphNode n) => new
     {
         id = n.Id,
@@ -194,8 +197,44 @@ internal static class QueryCommand
         name = n.Name,
         file = n.FilePath,
         line = n.LineStart,
-        project = n.GetProperty<string>("project")
+        project = n.GetProperty<string>("project"),
+        findings = FindingsOn(n)
     };
+
+    /// <summary>
+    /// What this node reports as broken, or null when nothing is.
+    ///
+    /// A listing is otherwise an index — id, name, where it lives — and a finding
+    /// recorded only as a node property is invisible to anyone who did not
+    /// already know to fetch that node and look. Listing 265 shape names without
+    /// saying that three of them are served by nothing is the absence-as-finding
+    /// trap in report form.
+    ///
+    /// One function so a new finding-bearing property has one place to be added,
+    /// rather than being remembered at each surface.
+    /// </summary>
+    private static List<string>? FindingsOn(GraphNode n)
+    {
+        var findings = new List<string>();
+
+        // Unbound, but only where something requires a template: an alternate or
+        // a test fixture records the same flag and is not a failure.
+        if (n.GetProperty<bool>("unbound") && !n.GetProperty<bool>("noRequiredProducer"))
+        {
+            var requiredBy = n.GetProperty<List<string>>("requiredBy");
+            findings.Add(requiredBy is { Count: > 0 }
+                ? $"nothing serves this name; required by {string.Join(", ", requiredBy)}"
+                : "nothing serves this name");
+        }
+
+        foreach (var missing in n.GetProperty<List<string>>("missingViews") ?? [])
+            findings.Add($"names a view no template serves at {missing}");
+
+        foreach (var unresolved in n.GetProperty<List<string>>("unresolvedViews") ?? [])
+            findings.Add($"view name could not be determined at {unresolved}");
+
+        return findings.Count > 0 ? findings : null;
+    }
 
     private static int RunMismatches(GraphQuery query, QueryOptions options)
     {
@@ -480,7 +519,13 @@ internal static class QueryCommand
 
         Console.WriteLine($"Found {nodes.Count} nodes of type {kind}:");
         foreach (var n in nodes)
+        {
             Console.WriteLine($"  [{n.Id}] {n.Name} ({n.FilePath})");
+
+            // The same rule the JSON rows follow: a listing that stays silent
+            // about the broken ones reads as a clean bill of health.
+            foreach (var finding in FindingsOn(n) ?? []) Console.WriteLine($"      ! {finding}");
+        }
         return 0;
     }
 
