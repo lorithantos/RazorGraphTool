@@ -84,6 +84,42 @@ $ErrorActionPreference = 'Stop'
 # an unanchored prefix test is what admitted the six LrView doc pages.
 $ModuleNamePattern = '^Lr[A-Za-z0-9]+$'
 
+<#
+.SYNOPSIS
+    Identity of the SDK guides shipped in one Manual folder.
+.DESCRIPTION
+    Name, size and SHA-256 -- deliberately NOT parsed content.
+
+    Provenance wants identity, not prose. A hash pins the exact file anyone else
+    can re-verify, which is stronger evidence than a title line lifted out of
+    page one, and it costs no dependency: no PDF library, no cloud extraction
+    service, no credentials, and nothing leaves the machine. Adobe's own PDF
+    Services API would extract these more faithfully than a local parser, but it
+    is a network round-trip with credentials to obtain a fact a hash already
+    settles.
+
+    The guides' body text is not a data source in any case. Extraction runs words
+    together across layout boundaries -- "LrDialogsAllows",
+    "LrSdkVersionRequirednumberThe" -- so anything built from it would be
+    fragments wearing the shape of real names.
+#>
+function Read-GuideProvenance {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string] $ManualDir)
+
+    if (-not (Test-Path -LiteralPath $ManualDir -PathType Container)) { return , @() }
+
+    $results = @()
+    foreach ($pdf in Get-ChildItem -LiteralPath $ManualDir -Filter '*.pdf' -ErrorAction SilentlyContinue) {
+        $results += [ordered] @{
+            file   = $pdf.Name
+            bytes  = $pdf.Length
+            sha256 = (Get-FileHash -LiteralPath $pdf.FullName -Algorithm SHA256).Hash
+        }
+    }
+    return , $results
+}
+
 $outputPath = Join-Path $PSScriptRoot $OutputFileName
 
 $sdkDirs = @(Get-ChildItem -LiteralPath $SdkRoot -Directory -Filter 'Lightroom SDK *')
@@ -134,6 +170,16 @@ foreach ($dir in ($sdkDirs | Sort-Object { [version] ($_.Name -replace '^Lightro
     $entry = [ordered] @{ declares = $attestation }
     $buildLine = ($readmeHead | Where-Object { $_ -match 'Build:\s*"(?<build>[^"]+)"' } | Select-Object -First 1)
     if ($buildLine -and $buildLine -match 'Build:\s*"(?<build>[^"]+)"') { $entry['build'] = $Matches.build }
+
+    # The guides are part of the same official package and state what they are
+    # and who published them, so they corroborate the readme rather than
+    # duplicating it. Only their identity is taken -- their prose is not a usable
+    # source for module names, as the extracted text runs words together.
+    # Assigned directly: the function already returns an array via the comma
+    # operator, so wrapping in @() here would nest it and collapse two guides
+    # into one element.
+    $guides = Read-GuideProvenance -ManualDir (Join-Path $dir.FullName 'Manual')
+    if ($guides.Count -gt 0) { $entry['guides'] = $guides }
 
     $provenance[$version] = $entry
 

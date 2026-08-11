@@ -16,6 +16,14 @@ using System.Text.Json.Serialization;
 public sealed record ExternalApiModule(string FirstCataloguedIn, string? AbsentAfter);
 
 /// <summary>
+/// A document shipped alongside the API surface, recorded by identity rather than
+/// content: a hash is re-verifiable evidence that this exact file was the source,
+/// which is what provenance needs. Parsing the prose would add a dependency in
+/// order to learn something weaker.
+/// </summary>
+public sealed record ExternalApiDocument(string File, long Bytes, string Sha256);
+
+/// <summary>
 /// What one catalogued version's source package attested about itself.
 /// </summary>
 /// <param name="Declares">The version line the package states in its own readme.</param>
@@ -23,7 +31,15 @@ public sealed record ExternalApiModule(string FirstCataloguedIn, string? AbsentA
 /// Exact build the package was cut from, where it stamps one. Pins the data far
 /// more precisely than a version number; older packages carry no such stamp.
 /// </param>
-public sealed record ExternalApiProvenance(string Declares, string? Build = null);
+/// <param name="Guides">
+/// Manuals shipped in the same package, by hash. Corroborates the readme from a
+/// second artefact, and lets anyone confirm they hold the same files. Absent
+/// where a package shipped none — Lightroom SDK 3.0's Manual folder is empty.
+/// </param>
+public sealed record ExternalApiProvenance(
+    string Declares,
+    string? Build = null,
+    List<ExternalApiDocument>? Guides = null);
 
 /// <summary>
 /// A namespace the vendor ships and uses without documenting.

@@ -167,7 +167,13 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
     /// </summary>
     private static LuaSyntaxOptions SyntaxOptionsFor(LuaDialect dialect) => dialect switch
     {
-        LuaDialect.Lua51 => LuaSyntaxOptions.Lua51,
+        // Nested long strings -- [[ ... [[ ... ]] ... ]] -- were DEPRECATED in Lua
+        // 5.1 and only removed in 5.2, so a real 5.1 interpreter accepts them.
+        // Loretta's preset rejects them, which is stricter than the language and
+        // stricter than the host: Lightroom runs 5.1.5, and Adobe's own
+        // remote_control sample uses the construct and works. Left alone, that
+        // file fails to parse and silently contributes nothing to the graph.
+        LuaDialect.Lua51 => LuaSyntaxOptions.Lua51.With(acceptNestingOfLongStrings: true),
         LuaDialect.Lua52 => LuaSyntaxOptions.Lua52,
         LuaDialect.Lua53 => LuaSyntaxOptions.Lua53,
         LuaDialect.Lua54 => LuaSyntaxOptions.Lua54,

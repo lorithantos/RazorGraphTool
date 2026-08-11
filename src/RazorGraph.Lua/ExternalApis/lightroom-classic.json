@@ -25,11 +25,30 @@
       "declares": "Welcome to the Adobe® Photoshop® Lightroom® 3.0 Software Development Kit"
     },
     "8.0": {
-      "declares": "Welcome to the Adobe® Lightroom® Classic 8.0 Software Development Kit"
+      "declares": "Welcome to the Adobe® Lightroom® Classic 8.0 Software Development Kit",
+      "guides": [
+        {
+          "file": "Lightroom SDK Guide.pdf",
+          "bytes": 5460026,
+          "sha256": "65F43F0115F80A1B523004BECDD71A637431EB475BAC7FD95BBDEC14CEC4372D"
+        }
+      ]
     },
     "15.3": {
       "declares": "Welcome to the Adobe Lightroom Classic 15.3 Software Development Kit",
-      "build": "202604090947-8f3672ed"
+      "build": "202604090947-8f3672ed",
+      "guides": [
+        {
+          "file": "Lightroom Classic SDK Guide.pdf",
+          "bytes": 5368690,
+          "sha256": "8361B7174194C7FEE222DCAA15A1946BA105485E96E5FAE2B86CD0AB7C6BE5D3"
+        },
+        {
+          "file": "Lightroom Controller SDK Guide.pdf",
+          "bytes": 462492,
+          "sha256": "B7585ECBDA2F951CF55F024B2AB240E7CCB7301DF2763BD0DF165EBA6C44B6F8"
+        }
+      ]
     }
   },
   "modulePrefix": "Lr",
