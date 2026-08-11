@@ -703,6 +703,73 @@ public class LuaExtractorTests
         Assert.Equal(new[] { "string", "boolean" }, decl.ReturnedFields.Select(f => f.Kind));
     }
 
+    // ---- Reachability ------------------------------------------------------
+    // A file that ships in a plug-in and is never loaded. Nothing breaks, which
+    // is the problem: someone maintains it for months believing it is live.
+
+    [Fact]
+    public void Reachability_AFileNothingLoads_IsReported()
+    {
+        using var tree = new TempTree();
+        WriteManifest(tree, """
+              LrSdkVersion = 15.0,
+              LrToolkitIdentifier = 'com.example.p',
+              LrLibraryMenuItems = {
+                { title = 'Go', file = 'Entry.lua' },
+              },
+            """);
+        tree.Write("p.lrdevplugin/Entry.lua", "local helper = require 'Helper'\nreturn {}");
+        tree.Write("p.lrdevplugin/Helper.lua", "return {}");
+        tree.Write("p.lrdevplugin/Orphan.lua", "return {}");
+
+        var (_, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        // Only the orphan. Helper is not named in the manifest either, but the
+        // entry point requires it -- which is why this follows edges instead of
+        // matching names.
+        var finding = Assert.Single(report.Findings, f => f.RuleId == "lightroom.unreachable-file");
+        Assert.Contains("Orphan.lua", finding.File);
+    }
+
+    [Fact]
+    public void Reachability_ABareArrayOfFileNames_CountsAsLoading()
+    {
+        // Adobe's custommetadatasample writes
+        // LrMetadataTagsetFactory = { 'A.lua', 'B.lua' } -- no `file =` key in
+        // sight. Reading only the keyed spelling reported three of their own
+        // files as loaded by nothing, and for a rule whose advice is "delete
+        // this", a false positive is the expensive direction.
+        using var tree = new TempTree();
+        WriteManifest(tree, """
+              LrSdkVersion = 15.0,
+              LrToolkitIdentifier = 'com.example.p',
+              LrMetadataTagsetFactory = {
+                'TagsetOne.lua',
+                'TagsetTwo.lua',
+              },
+            """);
+        tree.Write("p.lrdevplugin/TagsetOne.lua", "return {}");
+        tree.Write("p.lrdevplugin/TagsetTwo.lua", "return {}");
+
+        var (_, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        Assert.DoesNotContain(report.Findings, f => f.RuleId == "lightroom.unreachable-file");
+    }
+
+    [Fact]
+    public void Reachability_AManifestNamingNothing_ReportsNothing()
+    {
+        // Every file would look unreachable, which would be the rule failing at
+        // the user rather than at itself.
+        using var tree = new TempTree();
+        WriteManifest(tree, "  LrSdkVersion = 15.0,\n  LrToolkitIdentifier = 'com.example.p',");
+        tree.Write("p.lrdevplugin/Thing.lua", "return {}");
+
+        var (_, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        Assert.DoesNotContain(report.Findings, f => f.RuleId == "lightroom.unreachable-file");
+    }
+
     /// <summary>A throwaway directory tree, removed on dispose.</summary>
     private sealed class TempTree : IDisposable
     {

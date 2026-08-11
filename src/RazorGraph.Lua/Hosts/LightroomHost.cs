@@ -32,7 +32,8 @@ public sealed class LightroomHost : ILuaHost
     /// The SDK checks only this host can make. Language-level rules run for
     /// every host and are not listed here.
     /// </summary>
-    public IEnumerable<Checks.ILuaRule> Rules => [new LightroomSdkRule(), new LightroomManifestRule()];
+    public IEnumerable<Checks.ILuaRule> Rules =>
+        [new LightroomSdkRule(), new LightroomManifestRule(), new LightroomReachabilityRule()];
 
     /// <summary>The Lightroom SDK is Lua 5.1.</summary>
     public LuaDialect Dialect => LuaDialect.Lua51;

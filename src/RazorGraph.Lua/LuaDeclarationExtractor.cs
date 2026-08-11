@@ -75,7 +75,19 @@ public sealed record LuaFileDeclarations(
     /// "return {}" is a readable, empty manifest, and reporting it as unreadable
     /// is a false positive on a legal file.
     /// </summary>
-    IReadOnlyList<LuaManifestField>? ReturnedFields);
+    IReadOnlyList<LuaManifestField>? ReturnedFields,
+
+    /// <summary>
+    /// Every string assigned to a field named <c>file</c> anywhere inside the
+    /// returned table.
+    ///
+    /// Manifests name their entry points that way — Lightroom's menu items are
+    /// <c>{ title = "...", file = "X.lua" }</c> — and those names are the ROOTS
+    /// of what the host will load. Collected generically here because finding a
+    /// string in a table is parsing; deciding that it means "load this script"
+    /// is host knowledge.
+    /// </summary>
+    IReadOnlyList<string> ReturnedFileReferences);
 
 /// <summary>
 /// Parses Lua and yields declarations. The ONLY file in the codebase that knows
@@ -229,8 +241,47 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
             }
         }
 
+        var returnedTable = ReturnedTable(root);
+
         return new LuaFileDeclarations(
-            file, functions, references, errors, calls, dialectRejections, ReturnedFields(root));
+            file, functions, references, errors, calls, dialectRejections,
+            FieldsOf(returnedTable), FileReferencesIn(returnedTable));
+    }
+
+    /// <summary>
+    /// Strings assigned to a field named <c>file</c>, at any depth inside the
+    /// returned table. Depth matters: menu items are a list of tables, so the
+    /// interesting names are two levels below the key a reader would name.
+    /// </summary>
+    private static IReadOnlyList<string> FileReferencesIn(TableConstructorExpressionSyntax? table)
+    {
+        if (table is null) return [];
+
+        // Two spellings, because manifests use both. A menu item names its
+        // script with `file = "X.lua"`; a provider list is a bare array of
+        // names — Adobe's custommetadatasample writes
+        // LrMetadataTagsetFactory = { 'CustomMetadataTagset.lua', ... }.
+        //
+        // Collecting only the keyed form reported three of Adobe's own files as
+        // loaded by nothing, which for a rule that says "delete this" is the
+        // worst possible direction to be wrong in. Any string ending in .lua is
+        // taken as a reference: a false root only costs silence, a false orphan
+        // costs someone their code.
+        var keyed = table.DescendantNodes()
+            .OfType<IdentifierKeyedTableFieldSyntax>()
+            .Where(field => string.Equals(field.Identifier.Text, "file", StringComparison.OrdinalIgnoreCase))
+            .Select(field => (field.Value as LiteralExpressionSyntax)?.Token.Value as string);
+
+        var anyLuaName = table.DescendantNodes()
+            .OfType<LiteralExpressionSyntax>()
+            .Select(literal => literal.Token.Value as string)
+            .Where(value => value is not null && value.EndsWith(".lua", StringComparison.OrdinalIgnoreCase));
+
+        return keyed.Concat(anyLuaName)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     /// <summary>
@@ -243,7 +294,7 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
     /// which is correct — the fields were assigned elsewhere and this pass does
     /// not track them.
     /// </summary>
-    private static IReadOnlyList<LuaManifestField>? ReturnedFields(SyntaxNode root)
+    private static TableConstructorExpressionSyntax? ReturnedTable(SyntaxNode root)
     {
         var chunkReturn = root.DescendantNodes()
             .OfType<ReturnStatementSyntax>()
@@ -252,9 +303,14 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
                   or LocalFunctionDeclarationStatementSyntax
                   or AnonymousFunctionExpressionSyntax));
 
+        return chunkReturn?.Expressions.FirstOrDefault() as TableConstructorExpressionSyntax;
+    }
+
+    private static IReadOnlyList<LuaManifestField>? FieldsOf(TableConstructorExpressionSyntax? table)
+    {
         // Null, not empty: "returns nothing to read" and "returns an empty
         // table" are different facts, and only the first is unreadable.
-        if (chunkReturn?.Expressions.FirstOrDefault() is not TableConstructorExpressionSyntax table) return null;
+        if (table is null) return null;
 
         var fields = new List<LuaManifestField>();
         foreach (var field in table.Fields.OfType<IdentifierKeyedTableFieldSyntax>())
