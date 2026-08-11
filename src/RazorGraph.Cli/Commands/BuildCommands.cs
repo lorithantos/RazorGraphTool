@@ -71,6 +71,11 @@ internal static class BuildCommands
 
         await GraphFiles.WriteGraphAsync(graph, outputPath, ct);
 
+        // Findings ride the build output; a finding that must be queried for is
+        // a secret. Stderr, because it is a diagnosis rather than a result.
+        foreach (var shape in builder.UnboundShapes)
+            Console.Error.WriteLine($"warning: unbound shape: {shape} — no template, Liquid file or code binding serves this name; OrchardCore throws at render time.");
+
         GraphReports.PrintSummary(graph);
         return 0;
     }
@@ -142,6 +147,8 @@ internal static class BuildCommands
             Console.WriteLine($"Projects: {string.Join(", ", projects)}");
         if (builder.SkippedTestProjects.Count > 0)
             Console.WriteLine($"Test projects skipped: {string.Join(", ", builder.SkippedTestProjects)}");
+        foreach (var shape in builder.UnboundShapes)
+            Console.Error.WriteLine($"warning: unbound shape: {shape} — no template, Liquid file or code binding serves this name; OrchardCore throws at render time.");
 
         GraphReports.PrintSummary(graph);
         GraphReports.PrintEdgeSummary(graph);

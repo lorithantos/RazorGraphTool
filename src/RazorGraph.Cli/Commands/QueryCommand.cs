@@ -1,15 +1,37 @@
 namespace RazorGraph.Cli;
 
 using System.CommandLine;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using RazorGraph.Core.Graph;
 using RazorGraph.Core.Query;
 
 /// <summary>
 /// The query command and its modes: node report, type listing, and the
 /// whole-graph reports (mismatches, escapes, uncovered, deep nesting).
+///
+/// Every mode computes its data first and renders second, so text and JSON are
+/// two views of one result rather than two code paths that can drift. The JSON
+/// envelope exists because the likelier consumer of this tool is an agent, not a
+/// person: a human reads the text; everything else was scraping it.
 /// </summary>
 internal static class QueryCommand
 {
+    /// <summary>
+    /// Envelope version for --json output. Bump on any change to the shape of
+    /// existing fields; additive fields do not bump it. Carried in every
+    /// envelope so a consumer can notice drift instead of mis-parsing quietly —
+    /// the same convention Invoke-DotnetCheck stamps on its output.
+    /// </summary>
+    private const int JsonContract = 1;
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
     public static Command Query()
     {
         var graphArg = new Argument<FileInfo>("graph") { Description = "Path to a built graph JSON file" };
@@ -35,6 +57,7 @@ internal static class QueryCommand
         var escapesOpt = new Option<bool>("--escapes") { Description = "Report exceptions that can reach an entry point uncaught (use with --project, --entry-kind, --exception)" };
         var entryKindOpt = new Option<string?>("--entry-kind") { Description = "With --escapes: restrict to one entry-point kind (main, pageHandler, controllerAction, eventHandler, asyncVoid, frameworkOverride, frameworkInterface, callback)" };
         var exceptionOpt = new Option<string?>("--exception") { Description = "With --escapes: case-insensitive substring filter on the escaping exception type" };
+        var jsonOpt = new Option<bool>("--json") { Description = "Emit a contract-numbered JSON envelope instead of text. For agents and scripts; the shape is versioned by the 'contract' field." };
 
         var cmd = new Command("query", "Run a query against a built graph");
         cmd.Add(graphArg);
@@ -56,6 +79,7 @@ internal static class QueryCommand
         cmd.Add(escapesOpt);
         cmd.Add(entryKindOpt);
         cmd.Add(exceptionOpt);
+        cmd.Add(jsonOpt);
 
         cmd.SetAction((parseResult, ct) => RunQueryAsync(
             parseResult.GetValue(graphArg)!,
@@ -78,7 +102,8 @@ internal static class QueryCommand
                 Mismatches = parseResult.GetValue(mismatchesOpt),
                 Escapes = parseResult.GetValue(escapesOpt),
                 EntryKind = parseResult.GetValue(entryKindOpt),
-                ExceptionFilter = parseResult.GetValue(exceptionOpt)
+                ExceptionFilter = parseResult.GetValue(exceptionOpt),
+                Json = parseResult.GetValue(jsonOpt)
             },
             ct));
 
@@ -106,6 +131,7 @@ internal static class QueryCommand
         public bool Escapes { get; init; }
         public string? EntryKind { get; init; }
         public string? ExceptionFilter { get; init; }
+        public bool Json { get; init; }
     }
 
     private static async Task<int> RunQueryAsync(FileInfo graphFile, QueryOptions options, CancellationToken ct)
@@ -119,24 +145,37 @@ internal static class QueryCommand
             // Mode precedence, most specific first. This ordering is the command's
             // contract; it used to be implicit in the order of if-blocks inside one
             // long lambda.
-            if (options.Mismatches) return RunMismatches(query);
-            if (options.Escapes) return RunEscapes(query, options.EntryKind, options.ExceptionFilter, options.Project);
-            if (options.Uncovered) return RunUncovered(query, options.Project);
-            if (options.Deep > 0) return RunDeepListing(query, options.Deep, options.Project);
+            if (options.Mismatches) return RunMismatches(query, options);
+            if (options.Escapes) return RunEscapes(query, options);
+            if (options.Uncovered) return RunUncovered(query, options);
+            if (options.Deep > 0) return RunDeepListing(query, options);
             if (options.Id != null) return RunNodeReport(query, options.Id, options);
             // Any kind the graph actually holds, foreign ones included. An
             // unparseable --type used to fall through to the generic "Graph
             // loaded" banner and exit 0, so a typo reported success and no
             // results -- the caller could not tell a bad argument from an empty
             // graph.
-            if (options.Type != null) return RunTypeListing(query, graph, options.Type, options.Name, options.Project);
+            if (options.Type != null) return RunTypeListing(query, graph, options);
         }
         catch (InvalidOperationException ex)
         {
             // The query layer refuses questions the graph cannot answer (e.g.
-            // coverage against a test-less graph). The refusal is the report.
+            // coverage against a test-less graph). The refusal is the report --
+            // and in JSON mode it must still BE the report, structured, because
+            // an agent that only sees exit 1 has been told nothing.
+            if (options.Json)
+            {
+                Emit(new { contract = JsonContract, mode = "error", error = ex.Message });
+                return 1;
+            }
             Console.Error.WriteLine(ex.Message);
             return 1;
+        }
+
+        if (options.Json)
+        {
+            Emit(new { contract = JsonContract, mode = "summary", nodes = graph.Nodes.Count, edges = graph.Edges.Count });
+            return 0;
         }
 
         Console.WriteLine("Graph loaded. Use --id, --type, or --mismatches to query.");
@@ -144,26 +183,83 @@ internal static class QueryCommand
         return 0;
     }
 
-    private static int RunMismatches(GraphQuery query)
+    private static void Emit(object envelope) =>
+        Console.WriteLine(JsonSerializer.Serialize(envelope, JsonOptions));
+
+    /// <summary>Lean node summary for JSON results: enough to act on, no property bag.</summary>
+    private static object NodeRef(GraphNode n) => new
     {
-        var found = 0;
-        foreach (var (server, js, edge) in query.FindServerToJsMismatches())
+        id = n.Id,
+        type = n.DisplayType,
+        name = n.Name,
+        file = n.FilePath,
+        line = n.LineStart,
+        project = n.GetProperty<string>("project")
+    };
+
+    private static int RunMismatches(GraphQuery query, QueryOptions options)
+    {
+        var found = query.FindServerToJsMismatches().ToList();
+
+        if (options.Json)
         {
-            Console.WriteLine($"  [{server.DisplayType}] {server.Name} --{edge.DisplayType}--> [{js.DisplayType}] {js.Name}");
-            found++;
+            Emit(new
+            {
+                contract = JsonContract,
+                mode = "mismatches",
+                returned = found.Count,
+                results = found.Select(m => new { server = NodeRef(m.ServerNode), js = NodeRef(m.JsNode), edgeType = m.Edge.DisplayType })
+            });
+            return 0;
         }
-        Console.WriteLine(found == 0
+
+        foreach (var (server, js, edge) in found)
+            Console.WriteLine($"  [{server.DisplayType}] {server.Name} --{edge.DisplayType}--> [{js.DisplayType}] {js.Name}");
+        Console.WriteLine(found.Count == 0
             ? "No server-to-JS mismatches found."
-            : $"{found} server-to-JS mismatch(es).");
+            : $"{found.Count} server-to-JS mismatch(es).");
         return 0;
     }
 
-    private static int RunEscapes(GraphQuery query, string? entryKind, string? exceptionFilter, string? project)
+    private static int RunEscapes(GraphQuery query, QueryOptions options)
     {
-        var escapes = query.FindEscapingExceptions(entryKind, exceptionFilter, project).ToList();
-        Console.WriteLine($"{escapes.Count} exception escape(s)"
-            + (project == null ? " (all projects)" : $" into {project}") + ":");
+        const string caveat =
+            "Static reachability over in-solution code only: BCL throwers are invisible, "
+            + "interface dispatch widens to in-solution implementations (class virtual overrides do not), "
+            + "delegate registrations are followed one hop, boundary interception is catch-set matching "
+            + "(pipeline order is not modeled), and top-level-statement Main and minimal-API lambdas are not entry points.";
 
+        var escapes = query.FindEscapingExceptions(options.EntryKind, options.ExceptionFilter, options.Project).ToList();
+
+        if (options.Json)
+        {
+            // The caveat rides the envelope. An honest result names its own
+            // limits; an agent that never sees them will treat reachability as
+            // proof.
+            Emit(new
+            {
+                contract = JsonContract,
+                mode = "escapes",
+                project = options.Project,
+                returned = escapes.Count,
+                results = escapes.Select(e => new
+                {
+                    exceptionType = e.Edge.GetProperty<string>("exceptionType"),
+                    thrower = NodeRef(e.Thrower),
+                    entryPoint = NodeRef(e.EntryPoint),
+                    entryPointKind = e.EntryPoint.GetProperty<string>("entryPointKind"),
+                    depth = e.Edge.GetProperty<int>("depth"),
+                    conditional = e.Edge.GetProperty<bool>("conditional") ? true : (bool?)null,
+                    shapedByBoundary = e.Edge.GetProperty<List<string>>("interceptedBy") is { Count: > 0 } s ? s : null,
+                    conditionallyShapedBy = e.Edge.GetProperty<List<string>>("interceptedConditionallyBy") is { Count: > 0 } c ? c : null
+                }),
+                caveats = new[] { caveat }
+            });
+            return 0;
+        }
+
+        Console.WriteLine($"{escapes.Count} exception escape(s)"
+            + (options.Project == null ? " (all projects)" : $" into {options.Project}") + ":");
         foreach (var (thrower, entry, edge) in escapes)
         {
             var conditional = edge.GetProperty<bool>("conditional") ? " (conditional — filtered catch en route)" : "";
@@ -180,32 +276,64 @@ internal static class QueryCommand
             else if (edge.GetProperty<List<string>>("interceptedConditionallyBy") is { Count: > 0 } maybeShapedBy)
                 Console.WriteLine($"    conditionally shaped by: {string.Join(", ", maybeShapedBy)} — the boundary may decline at runtime");
         }
-
         Console.WriteLine();
-        Console.WriteLine("Static reachability over in-solution code only: BCL throwers are invisible,");
-        Console.WriteLine("interface dispatch widens to in-solution implementations (class virtual");
-        Console.WriteLine("overrides do not), delegate registrations are followed one hop, boundary");
-        Console.WriteLine("interception is catch-set matching (pipeline order is not modeled), and");
-        Console.WriteLine("top-level-statement Main and minimal-API lambdas are not entry points.");
+        Console.WriteLine(caveat);
         return 0;
     }
 
-    private static int RunUncovered(GraphQuery query, string? project)
+    private static int RunUncovered(GraphQuery query, QueryOptions options)
     {
-        var uncovered = query.FindUncoveredMethods(project).ToList();
+        var uncovered = query.FindUncoveredMethods(options.Project).ToList();
+
+        if (options.Json)
+        {
+            // No cap in JSON: the 200-row limit exists to keep a terminal
+            // readable, and an agent asked for the data, not a page of it. The
+            // envelope still reports its own size so a consumer can notice bulk.
+            Emit(new
+            {
+                contract = JsonContract,
+                mode = "uncovered",
+                project = options.Project,
+                returned = uncovered.Count,
+                results = uncovered.Select(NodeRef)
+            });
+            return 0;
+        }
+
         Console.WriteLine($"{uncovered.Count} method(s) no test reaches"
-            + (project == null ? " (all projects)" : $" in {project}") + ":");
+            + (options.Project == null ? " (all projects)" : $" in {options.Project}") + ":");
         foreach (var m in uncovered.Take(200))
             Console.WriteLine($"  [{m.GetProperty<string>("project")}] {m.Name}  ({m.FilePath}:{m.LineStart})");
         if (uncovered.Count > 200) Console.WriteLine($"  ... {uncovered.Count - 200} more not shown");
         return 0;
     }
 
-    private static int RunDeepListing(GraphQuery query, int minDepth, string? project)
+    private static int RunDeepListing(GraphQuery query, QueryOptions options)
     {
-        var deep = query.FindDeepMethods(minDepth, project).ToList();
-        Console.WriteLine($"{deep.Count} method(s) with body nesting depth >= {minDepth}"
-            + (project == null ? " (all projects)" : $" in {project}") + ":");
+        var deep = query.FindDeepMethods(options.Deep, options.Project).ToList();
+
+        if (options.Json)
+        {
+            Emit(new
+            {
+                contract = JsonContract,
+                mode = "deep",
+                minDepth = options.Deep,
+                project = options.Project,
+                returned = deep.Count,
+                results = deep.Select(m => new
+                {
+                    depth = m.GetProperty<int>("bodyDepth"),
+                    declaringType = m.GetProperty<string>("declaringType"),
+                    node = NodeRef(m)
+                })
+            });
+            return 0;
+        }
+
+        Console.WriteLine($"{deep.Count} method(s) with body nesting depth >= {options.Deep}"
+            + (options.Project == null ? " (all projects)" : $" in {options.Project}") + ":");
         foreach (var m in deep)
             Console.WriteLine($"  depth {m.GetProperty<int>("bodyDepth")}: [{m.GetProperty<string>("project")}] "
                 + $"{m.GetProperty<string>("declaringType")}.{m.Name}  ({m.FilePath}:{m.LineStart})");
@@ -217,8 +345,57 @@ internal static class QueryCommand
         var node = query.GetNode(nodeId);
         if (node == null)
         {
+            if (options.Json)
+            {
+                Emit(new { contract = JsonContract, mode = "node", error = $"Node not found: {nodeId}" });
+                return 1;
+            }
             Console.WriteLine($"Node not found: {nodeId}");
             return 1;
+        }
+
+        if (!Enum.TryParse<TraversalDirection>(options.Direction, true, out var direction))
+        {
+            var msg = $"Unknown --direction '{options.Direction}'. Valid: outgoing, incoming, both.";
+            if (options.Json) { Emit(new { contract = JsonContract, mode = "node", error = msg }); return 1; }
+            Console.Error.WriteLine(msg);
+            return 1;
+        }
+
+        if (options.Json)
+        {
+            var context = options.Context ? query.GetPageContext(nodeId) : null;
+            Emit(new
+            {
+                contract = JsonContract,
+                mode = "node",
+                node = NodeRef(node),
+                properties = node.Properties.Count > 0 ? node.Properties : null,
+                labels = node.Labels.Count > 0 ? node.Labels : null,
+                neighbors = options.Neighbors
+                    ? query.GetNeighbors(nodeId).Select(x => new { edgeType = x.Edge.DisplayType, target = NodeRef(x.Target) })
+                    : null,
+                renderTree = options.RenderTree && node.Type == NodeType.RazorPage
+                    ? query.GetRenderTree(nodeId).Select(x => new { edgeType = x.Edge.DisplayType, node = NodeRef(x.Node) })
+                    : null,
+                pageContext = context is null ? null : new
+                {
+                    pageModel = context.PageModel is null ? null : NodeRef(context.PageModel),
+                    viewModel = context.ViewModel is null ? null : NodeRef(context.ViewModel),
+                    injectedServices = context.InjectedServices.Select(NodeRef)
+                },
+                dataFlow = options.Trace
+                    ? query.TraceDataFlow(nodeId, options.Depth, direction)
+                        .Select(x => new { depth = x.Depth, edgeType = x.Edge.DisplayType, node = NodeRef(x.Node) })
+                    : null,
+                coveringTests = options.CoveringTests
+                    ? query.GetCoveringTests(nodeId).Select(x => new { depth = x.Depth, test = NodeRef(x.Test) })
+                    : null,
+                coveredMethods = options.CoveredMethods
+                    ? query.GetCoveredMethods(nodeId).Select(x => new { depth = x.Depth, method = NodeRef(x.Method) })
+                    : null
+            });
+            return 0;
         }
 
         GraphReports.PrintNode(node);
@@ -240,8 +417,12 @@ internal static class QueryCommand
         if (options.Context)
             PrintPageContext(query, nodeId);
 
-        if (options.Trace && PrintDataFlow(query, nodeId, options.Depth, options.Direction) != 0)
-            return 1;
+        if (options.Trace)
+        {
+            Console.WriteLine($"\n--- Data Flow ({direction}) ---");
+            foreach (var (n, e, d) in query.TraceDataFlow(nodeId, options.Depth, direction))
+                Console.WriteLine($"  {new string(' ', d * 2)}{e.DisplayType} -> [{n.DisplayType}] {n.Name}");
+        }
 
         if (options.CoveringTests)
         {
@@ -281,29 +462,22 @@ internal static class QueryCommand
             Console.WriteLine($"    [{svc.DisplayType}] {svc.Name}");
     }
 
-    private static int PrintDataFlow(GraphQuery query, string nodeId, int depth, string directionText)
+    private static int RunTypeListing(GraphQuery query, CodeGraph graph, QueryOptions options)
     {
-        if (!Enum.TryParse<TraversalDirection>(directionText, true, out var direction))
-        {
-            Console.Error.WriteLine($"Unknown --direction '{directionText}'. Valid: outgoing, incoming, both.");
-            return 1;
-        }
-
-        Console.WriteLine($"\n--- Data Flow ({direction}) ---");
-        foreach (var (n, e, d) in query.TraceDataFlow(nodeId, depth, direction))
-            Console.WriteLine($"  {new string(' ', d * 2)}{e.DisplayType} -> [{n.DisplayType}] {n.Name}");
-        return 0;
-    }
-
-    private static int RunTypeListing(GraphQuery query, CodeGraph graph, string requestedType, string? name, string? project)
-    {
-        var kind = ResolveKind(graph, requestedType);
+        var kind = ResolveKind(graph, options.Type!, options.Json);
         if (kind == null) return 1;
 
-        var nodes = query.FindNodes(kind, name)
-            .Where(n => project == null ||
-                        string.Equals(n.GetProperty<string>("project"), project, StringComparison.OrdinalIgnoreCase))
+        var nodes = query.FindNodes(kind, options.Name)
+            .Where(n => options.Project == null ||
+                        string.Equals(n.GetProperty<string>("project"), options.Project, StringComparison.OrdinalIgnoreCase))
             .ToList();
+
+        if (options.Json)
+        {
+            Emit(new { contract = JsonContract, mode = "type", type = kind, name = options.Name, project = options.Project, returned = nodes.Count, results = nodes.Select(NodeRef) });
+            return 0;
+        }
+
         Console.WriteLine($"Found {nodes.Count} nodes of type {kind}:");
         foreach (var n in nodes)
             Console.WriteLine($"  [{n.Id}] {n.Name} ({n.FilePath})");
@@ -315,7 +489,7 @@ internal static class QueryCommand
     /// kinds the graph actually holds, or report what it could have been. Null
     /// means the caller was told; do not also print results.
     /// </summary>
-    private static string? ResolveKind(CodeGraph graph, string requested)
+    private static string? ResolveKind(CodeGraph graph, string requested, bool json)
     {
         var trimmed = requested.Trim();
 
@@ -326,11 +500,26 @@ internal static class QueryCommand
             .FirstOrDefault(k => string.Equals(k, trimmed, StringComparison.OrdinalIgnoreCase));
         if (foreign != null) return foreign;
 
+        var knownTypes = Enum.GetNames<NodeType>().Where(n => n != nameof(NodeType.Unknown)).ToList();
+        if (json)
+        {
+            Emit(new
+            {
+                contract = JsonContract,
+                mode = "type",
+                error = $"unknown node type '{requested}'",
+                knownTypes,
+                foreignKindsInGraph = graph.ForeignNodeKinds
+            });
+            return null;
+        }
+
         Console.Error.WriteLine($"error: unknown node type '{requested}'.");
-        Console.Error.WriteLine($"  known types: {string.Join(", ", Enum.GetNames<NodeType>().Where(n => n != nameof(NodeType.Unknown)))}");
+        Console.Error.WriteLine($"  known types: {string.Join(", ", knownTypes)}");
         Console.Error.WriteLine(graph.ForeignNodeKinds.Count > 0
             ? $"  foreign kinds in this graph: {string.Join(", ", graph.ForeignNodeKinds)}"
             : "  this graph carries no foreign node kinds.");
         return null;
     }
+
 }

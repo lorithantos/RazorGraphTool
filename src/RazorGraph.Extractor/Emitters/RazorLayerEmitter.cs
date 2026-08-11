@@ -395,8 +395,23 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
         // Marked so a shape named in twenty drivers resolves once, and so the
         // unbound case is answerable by looking for the absent flag.
         name.SetProperty("bound", rank > 0);
-        if (rank == 0) name.SetProperty("unbound", true);
+        if (rank == 0)
+        {
+            name.SetProperty("unbound", true);
+            var producedAt = producer is null ? "unknown producer" : $"{producer.Name}:{shape.Line}";
+            _unboundShapes.Add($"{shape.Name} (produced by {producedAt})");
+        }
     }
+
+    /// <summary>
+    /// Shape names nothing binds, collected during the binding pass. OrchardCore
+    /// throws when a shape resolves to no binding — no catch-all rendering — so
+    /// each of these is a runtime failure on whatever path produces it. Held here
+    /// so every build surface can report them: a finding that only exists for
+    /// someone who thinks to query for it is not a finding, it is a secret.
+    /// </summary>
+    internal IReadOnlyList<string> UnboundShapes => _unboundShapes;
+    private readonly List<string> _unboundShapes = new();
 
     /// <summary>
     /// Link a controller action to the view it renders.

@@ -38,7 +38,7 @@ public sealed class GraphStoreTools(GraphStore store)
             ? await builder.BuildFromSolutionAsync(full, projectName!, ct)
             : await builder.BuildFromProjectAsync(full, ct);
 
-        return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries);
+        return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries, unboundShapes: builder.UnboundShapes);
     }
 
     [McpServerTool(Name = "build_solution")]
@@ -62,7 +62,7 @@ public sealed class GraphStoreTools(GraphStore store)
         };
         var graph = await builder.BuildFromSolutionAllAsync(full, ct);
 
-        return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries, builder.SkippedTestProjects);
+        return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries, builder.SkippedTestProjects, builder.UnboundShapes);
     }
 
     [McpServerTool(Name = "build_lua")]
@@ -175,6 +175,7 @@ public sealed class GraphStoreTools(GraphStore store)
         GraphStore.GraphEntry entry,
         IReadOnlyList<string>? vendorSkips = null,
         IReadOnlyList<string>? testProjectSkips = null,
+        IReadOnlyList<string>? unboundShapes = null,
         GraphFormatAssessment? format = null)
     {
         var graph = entry.Graph;
@@ -209,7 +210,12 @@ public sealed class GraphStoreTools(GraphStore store)
             skippedVendorAssets = vendorSkips is { Count: > 0 } ? vendorSkips : null,
             // Same contract for excluded test projects: this graph cannot
             // answer coverage questions, and its summary must say why.
-            skippedTestProjects = testProjectSkips is { Count: > 0 } ? testProjectSkips : null
+            skippedTestProjects = testProjectSkips is { Count: > 0 } ? testProjectSkips : null,
+            // Shape names nothing binds. OrchardCore throws when a shape resolves
+            // to no binding, so each is a runtime failure on whatever path
+            // produces it -- a finding, and findings ride the build response
+            // rather than waiting to be queried for.
+            unboundShapes = unboundShapes is { Count: > 0 } ? unboundShapes : null
         });
     }
 }

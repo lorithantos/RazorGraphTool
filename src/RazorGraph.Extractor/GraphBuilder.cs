@@ -56,6 +56,13 @@ public sealed class GraphBuilder : IAsyncDisposable
     public IReadOnlyList<string> AssetSkipSummaries => _clientAssets.AssetSkipSummaries;
 
     /// <summary>
+    /// Shape names nothing binds. Each is a runtime InvalidOperationException on
+    /// whatever path produces it, and must reach every build report the same way
+    /// vendor skips do.
+    /// </summary>
+    public IReadOnlyList<string> UnboundShapes => _razorLayer.UnboundShapes;
+
+    /// <summary>
     /// Skip test projects when building from a solution — no test Method
     /// nodes, no Covers edges, roughly a fifth of the edges on a well-tested
     /// solution. Off by default: the default graph must be able to answer
