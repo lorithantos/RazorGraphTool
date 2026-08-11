@@ -48,6 +48,18 @@ public sealed record LuaCall(
 /// </summary>
 public sealed record LuaSyntaxRejection(int Line, string Message);
 
+/// <summary>
+/// One field of the table a file returns at chunk level.
+///
+/// A manifest in Lua is just a file returning a table — Lightroom's Info.lua,
+/// a rockspec, a WoW .toc equivalent — so this is a general fact about a file
+/// rather than a Lightroom one. What the keys MEAN is host knowledge; that they
+/// are there is not.
+/// </summary>
+/// <param name="Kind">number, string, boolean, table, function, or other.</param>
+/// <param name="Value">The literal, when it is one. Null for tables and functions.</param>
+public sealed record LuaManifestField(string Key, string Kind, string? Value, int Line);
+
 /// <summary>What one parsed file yielded.</summary>
 public sealed record LuaFileDeclarations(
     LuaSourceFile File,
@@ -55,7 +67,8 @@ public sealed record LuaFileDeclarations(
     IReadOnlyList<LuaReference> References,
     IReadOnlyList<string> ParseErrors,
     IReadOnlyList<LuaCall> Calls,
-    IReadOnlyList<LuaSyntaxRejection> DialectRejections);
+    IReadOnlyList<LuaSyntaxRejection> DialectRejections,
+    IReadOnlyList<LuaManifestField> ReturnedFields);
 
 /// <summary>
 /// Parses Lua and yields declarations. The ONLY file in the codebase that knows
@@ -157,8 +170,55 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
             }
         }
 
-        return new LuaFileDeclarations(file, functions, references, errors, calls, dialectRejections);
+        return new LuaFileDeclarations(
+            file, functions, references, errors, calls, dialectRejections, ReturnedFields(root));
     }
+
+    /// <summary>
+    /// The fields of a table returned at CHUNK level — <c>return { a = 1 }</c> at
+    /// the end of the file.
+    ///
+    /// Chunk level only: a return inside a function is that function's result,
+    /// not the file's, and treating one as a manifest would read a table from
+    /// whichever function happened to be scanned. <c>return M</c> yields nothing,
+    /// which is correct — the fields were assigned elsewhere and this pass does
+    /// not track them.
+    /// </summary>
+    private static IReadOnlyList<LuaManifestField> ReturnedFields(SyntaxNode root)
+    {
+        var chunkReturn = root.DescendantNodes()
+            .OfType<ReturnStatementSyntax>()
+            .FirstOrDefault(r => !r.Ancestors().Any(a =>
+                a is FunctionDeclarationStatementSyntax
+                  or LocalFunctionDeclarationStatementSyntax
+                  or AnonymousFunctionExpressionSyntax));
+
+        if (chunkReturn?.Expressions.FirstOrDefault() is not TableConstructorExpressionSyntax table) return [];
+
+        var fields = new List<LuaManifestField>();
+        foreach (var field in table.Fields.OfType<IdentifierKeyedTableFieldSyntax>())
+        {
+            var (kind, value) = ValueOf(field.Value);
+            fields.Add(new LuaManifestField(field.Identifier.Text, kind, value, LineOf(field)));
+        }
+
+        return fields;
+    }
+
+    /// <summary>
+    /// A field value classified far enough to check a declared type against,
+    /// without evaluating anything.
+    /// </summary>
+    private static (string Kind, string? Value) ValueOf(ExpressionSyntax expression) => expression switch
+    {
+        LiteralExpressionSyntax { Token.Value: string s } => ("string", s),
+        LiteralExpressionSyntax { Token.Value: bool b } => ("boolean", b ? "true" : "false"),
+        LiteralExpressionSyntax literal when literal.Token.Value is not null
+            => ("number", Convert.ToString(literal.Token.Value, System.Globalization.CultureInfo.InvariantCulture)),
+        TableConstructorExpressionSyntax => ("table", null),
+        AnonymousFunctionExpressionSyntax => ("function", null),
+        _ => ("other", null)
+    };
 
     /// <summary>
     /// Which of this file's parse errors are the HOST's Lua refusing valid

@@ -25,10 +25,31 @@ public sealed class RoslynExtractor : IAsyncDisposable
     // because MSBuild types are first referenced inside LoadProjectAsync.
     public RoslynExtractor() => EnsureMsBuildRegistered();
 
+    /// <summary>
+    /// Register MSBuild once, whoever asks first.
+    ///
+    /// The check and the registration must be atomic. Unguarded, two threads
+    /// both see IsRegistered false, both call RegisterDefaults, and the second
+    /// throws "MSBuild assemblies were already loaded" -- because the first
+    /// call's registration loaded them. Classic check-then-act.
+    ///
+    /// It is not a test-only concern, which is why the fix is here rather than
+    /// in a fixture: the MCP server holds several graphs and can be asked to
+    /// build two at once, and that is the same race with a worse failure mode --
+    /// one build dies with a message about assembly loading that says nothing
+    /// about the graph the caller asked for. Found by the test suite, which
+    /// reproduced it once in three runs before growing enough parallel classes
+    /// to hit it every time.
+    /// </summary>
     public static void EnsureMsBuildRegistered()
     {
-        if (!MSBuildLocator.IsRegistered) MSBuildLocator.RegisterDefaults();
+        lock (LocatorGate)
+        {
+            if (!MSBuildLocator.IsRegistered) MSBuildLocator.RegisterDefaults();
+        }
     }
+
+    private static readonly object LocatorGate = new();
 
     /// <summary>One compiled project and the Roslyn project it came from.</summary>
     public sealed record LoadedProject(Project Project, Compilation Compilation)

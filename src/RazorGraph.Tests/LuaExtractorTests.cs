@@ -553,6 +553,117 @@ public class LuaExtractorTests
         Assert.Null(reference.BoundTo);
     }
 
+    // ---- Manifest ----------------------------------------------------------
+    // Info.lua is the one file Lightroom reads before anything runs, so a
+    // mistake here fails the whole plug-in at load, where there is no stack.
+
+    private static void WriteManifest(TempTree tree, string body) =>
+        tree.Write("p.lrdevplugin/Info.lua", $"return {{\n{body}\n}}");
+
+    [Fact]
+    public void Manifest_MissingARequiredKey_IsAnError()
+    {
+        using var tree = new TempTree();
+        WriteManifest(tree, "  LrToolkitIdentifier = 'com.example.p',");
+
+        var (_, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        var finding = Assert.Single(report.Findings, f => f.Message.Contains("LrSdkVersion"));
+        Assert.Equal(Lua.Checks.LuaSeverity.Error, finding.Severity);
+        Assert.Equal("lightroom.manifest", finding.RuleId);
+    }
+
+    [Fact]
+    public void Manifest_DeclaringAnSdkOlderThanTheCodeNeeds_IsAnError()
+    {
+        // The check no vocabulary can give. A plug-in claiming 1.3 while calling
+        // a 6.0 function installs happily and fails when that path runs. Found
+        // live in Lori''s own plug-in and in three of Adobe''s ftp_upload samples.
+        using var tree = new TempTree();
+        WriteManifest(tree, """
+              LrSdkVersion = 15.0,
+              LrSdkMinimumVersion = 1.3,
+              LrToolkitIdentifier = 'com.example.p',
+            """);
+        tree.Write("p.lrdevplugin/Work.lua", "local c = import 'LrDevelopController'\nreturn {}");
+
+        var (_, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        var finding = Assert.Single(report.Findings, f => f.Message.Contains("LrSdkMinimumVersion"));
+        Assert.Equal(Lua.Checks.LuaSeverity.Error, finding.Severity);
+        Assert.Contains("needs 6.0", finding.Message);
+
+        // Names the file and the reason, so the answer can be acted on.
+        Assert.Contains("Work.lua", finding.Evidence);
+    }
+
+    [Fact]
+    public void Manifest_DeclaringEnough_SaysNothing()
+    {
+        using var tree = new TempTree();
+        WriteManifest(tree, """
+              LrSdkVersion = 15.0,
+              LrSdkMinimumVersion = 6.0,
+              LrToolkitIdentifier = 'com.example.p',
+            """);
+        tree.Write("p.lrdevplugin/Work.lua", "local c = import 'LrDevelopController'\nreturn {}");
+
+        var (_, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        Assert.DoesNotContain(report.Findings, f => f.Message.Contains("LrSdkMinimumVersion"));
+    }
+
+    [Fact]
+    public void Manifest_UnknownKeys_AreOneNoteAboutOurCoverage()
+    {
+        // A statement about the catalogue, not about the plug-in: the vocabulary
+        // holds 22 Lr-prefixed keys, and VERSION -- which Adobe's own manifests
+        // carry -- is not among them. One note per manifest, because repeating a
+        // known gap per key turns it into a wall.
+        using var tree = new TempTree();
+        WriteManifest(tree, """
+              LrSdkVersion = 15.0,
+              LrToolkitIdentifier = 'com.example.p',
+              VERSION = { major = 1, minor = 0 },
+              SomethingElse = 3,
+            """);
+
+        var (_, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        var note = Assert.Single(report.Findings, f => f.Message.Contains("not in the catalogued vocabulary"));
+        Assert.Equal(Lua.Checks.LuaSeverity.Note, note.Severity);
+        Assert.Contains("SomethingElse", note.Message);
+        Assert.Contains("VERSION", note.Message);
+    }
+
+    [Fact]
+    public void Manifest_ThatIsNotATableLiteral_SaysSoRatherThanPassing()
+    {
+        // Legal Lua and simply not checkable. Silence would read as a clean
+        // manifest, which is the absence-as-finding trap.
+        using var tree = new TempTree();
+        tree.Write("p.lrdevplugin/Info.lua", "local M = {}\nM.LrSdkVersion = 15.0\nreturn M");
+
+        var (_, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        var note = Assert.Single(report.Findings, f => f.Message.Contains("could not be read"));
+        Assert.Equal(Lua.Checks.LuaSeverity.Note, note.Severity);
+    }
+
+    [Fact]
+    public void Manifest_FieldsAreReadFromTheChunkReturnOnly()
+    {
+        // A return inside a function is that function's result. Treating one as
+        // a manifest would read keys from whichever function was scanned first.
+        var decl = Extract("""
+            local function build() return { LrSdkVersion = 1.0 } end
+            return { LrToolkitIdentifier = 'com.example.p', LrForceInitPlugin = true }
+            """);
+
+        Assert.Equal(new[] { "LrToolkitIdentifier", "LrForceInitPlugin" }, decl.ReturnedFields.Select(f => f.Key));
+        Assert.Equal(new[] { "string", "boolean" }, decl.ReturnedFields.Select(f => f.Kind));
+    }
+
     /// <summary>A throwaway directory tree, removed on dispose.</summary>
     private sealed class TempTree : IDisposable
     {
