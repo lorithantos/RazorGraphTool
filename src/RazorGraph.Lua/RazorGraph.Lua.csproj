@@ -14,8 +14,15 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Core ONLY. Not RazorGraph.Extractor: a Lua graph that needs nothing from the
-         Roslyn pipeline is what demonstrates the any-language claim structurally. -->
+    <!-- Shipped as a resource so a published single-file server carries it. The
+         .ps1 beside it regenerates it from official SDK folders; it is derived
+         data, so never hand-edit the JSON. -->
+    <EmbeddedResource Include="ExternalApis\*.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Core ONLY. Not RazorGraph.Extractor: a Lua graph that needs nothing from
+         the Roslyn pipeline is what demonstrates the any-language claim structurally. -->
     <ProjectReference Include="..\RazorGraph.Core\RazorGraph.Core.csproj" />
   </ItemGroup>
 

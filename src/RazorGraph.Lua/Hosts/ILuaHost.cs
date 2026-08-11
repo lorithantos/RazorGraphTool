@@ -1,5 +1,7 @@
 namespace RazorGraph.Lua.Hosts;
 
+using RazorGraph.Core.Graph;
+
 /// <summary>
 /// Which Lua dialect a host runs. Our own enum rather than the parser's, so the
 /// choice of parser stays replaceable: this is a property of the host, not of
@@ -114,4 +116,19 @@ public interface ILuaHost
     /// unresolvable or meaningful in its environment.
     /// </summary>
     ModuleResolution Resolve(string? reference, LuaSourceFile from);
+
+    /// <summary>
+    /// Add host-specific facts to a module node once its references are known.
+    /// Optional: the default does nothing, so a host with nothing to add stays a
+    /// three-method implementation.
+    ///
+    /// This is where an environment says what only it can — which host-API
+    /// modules a file uses, what minimum host version that implies, which
+    /// references it does not recognise. The builder cannot know any of it
+    /// without becoming host-specific itself.
+    /// </summary>
+    /// <param name="externalNames">
+    /// Reference targets this host resolved as <see cref="ModuleResolution.External"/>.
+    /// </param>
+    void Annotate(GraphNode module, IReadOnlyList<string> externalNames) { }
 }

@@ -1,5 +1,8 @@
 namespace RazorGraph.Lua.Hosts;
 
+using RazorGraph.Core.Graph;
+using RazorGraph.Lua.ExternalApis;
+
 /// <summary>
 /// Adobe Lightroom plugins: an <c>Info.lua</c> manifest beside a set of .lua files,
 /// with <c>import</c> rather than <c>require</c>.
@@ -13,9 +16,15 @@ namespace RazorGraph.Lua.Hosts;
 /// </summary>
 public sealed class LightroomHost : ILuaHost
 {
+    private static readonly Lazy<ExternalApiCatalog> Sdk =
+        new(() => ExternalApiCatalog.LoadEmbedded("lightroom-classic"));
+
     private readonly string _root;
 
     public LightroomHost(string root) => _root = Path.GetFullPath(root);
+
+    /// <summary>The catalogued Lightroom Classic SDK surface used to classify imports.</summary>
+    public static ExternalApiCatalog Catalog => Sdk.Value;
 
     public string Name => "lightroom";
 
@@ -51,6 +60,51 @@ public sealed class LightroomHost : ILuaHost
         var rel = file.RelativePath.Replace('\\', '/');
         return rel.EndsWith(".lua", StringComparison.OrdinalIgnoreCase) ? rel[..^4] : rel;
     }
+
+    /// <summary>
+    /// Record what the SDK catalogue makes of this module's imports: which are
+    /// known Lightroom Classic modules, what minimum SDK version they imply, and
+    /// which the catalogue does not recognise.
+    ///
+    /// Unrecognised is reported as unrecognised-by-this-catalogue, never as
+    /// invalid. The catalogue stops well short of the newest SDK Adobe ships, so
+    /// the likeliest reason for an unknown Lr* module is that it is newer than
+    /// anything catalogued — calling it an error would be a confident wrong answer.
+    /// </summary>
+    public void Annotate(GraphNode module, IReadOnlyList<string> externalNames)
+    {
+        var sdkNames = externalNames.Where(IsSdkModule).ToList();
+        if (sdkNames.Count == 0) return;
+
+        var verdicts = sdkNames.Select(Catalog.Classify).ToList();
+
+        var known = verdicts.OfType<ExternalApiVerdict.Known>().ToList();
+        if (known.Count > 0)
+        {
+            module.SetProperty("sdkModules", known.Select(k => k.Name).ToList());
+
+            // A module removed from the newest catalogued SDK is a live
+            // compatibility problem, not trivia.
+            var retired = known.Where(k => k.AbsentAfter is not null)
+                .Select(k => $"{k.Name} (absent after SDK {k.AbsentAfter})").ToList();
+            if (retired.Count > 0) module.SetProperty("sdkModulesRetired", retired);
+        }
+
+        if (Catalog.MinimumVersionFor(sdkNames) is { } minimum)
+            module.SetProperty("minimumSdkVersion", minimum);
+
+        var unknown = verdicts.OfType<ExternalApiVerdict.UnknownToCatalogue>().Select(u => u.Name).ToList();
+        if (unknown.Count > 0)
+        {
+            module.SetProperty("sdkModulesUnknownToCatalogue", unknown);
+            module.SetProperty("sdkCatalogueRange",
+                $"catalogued {string.Join(", ", Catalog.CatalogedVersions)}; {Catalog.Product} has shipped through {Catalog.NewestKnownRelease}");
+        }
+    }
+
+    /// <summary>An Lr-prefixed name, i.e. a candidate Lightroom SDK module.</summary>
+    private static bool IsSdkModule(string name) =>
+        name.StartsWith("Lr", StringComparison.Ordinal);
 
     /// <summary>The .lrdevplugin directory a file sits under, if any.</summary>
     private static string? PluginOf(string relativePath) =>

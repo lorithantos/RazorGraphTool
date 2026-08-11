@@ -166,6 +166,11 @@ public sealed class LuaGraphBuilder
             }
 
             var module = _graph.GetNode(moduleId)!;
+
+            // Host-specific facts the builder cannot know without becoming
+            // host-specific itself. Default implementation does nothing.
+            host.Annotate(module, externalNames);
+
             if (externalNames.Count > 0)
                 module.SetProperty("externalReferences", externalNames.Distinct(StringComparer.Ordinal).OrderBy(n => n, StringComparer.Ordinal).ToList());
             if (unresolvedHere.Count > 0)
