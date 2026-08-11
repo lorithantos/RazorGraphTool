@@ -56,6 +56,24 @@ public class ViewCallScannerTests
         return ViewCallScanner.ViewCalls(method, model).ToList();
     }
 
+    private static ActionMethod? ActionMethodFor(string source, string methodName)
+    {
+        var tree = CSharpSyntaxTree.ParseText(source);
+        var shim = CSharpSyntaxTree.ParseText(ControllerShim);
+        var compilation = CSharpCompilation.Create(
+            "T",
+            [tree, shim],
+            [MetadataReference.CreateFromFile(typeof(object).Assembly.Location)],
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+        var model = compilation.GetSemanticModel(tree);
+        var method = tree.GetRoot().DescendantNodes()
+            .OfType<MethodDeclarationSyntax>()
+            .Single(m => m.Identifier.ValueText == methodName);
+
+        return ViewCallScanner.ActionMethodOf(method, model);
+    }
+
     private static string Controller(string body) => $$"""
         using Microsoft.AspNetCore.Mvc;
         public class MenuController : Controller
@@ -161,8 +179,30 @@ public class ViewCallScannerTests
             Controller("private ViewResult CreateInternalAsync() => View();"), "CreateInternalAsync"));
 
         Assert.Null(call.Name);
-        Assert.Equal(ViewNameSource.Dynamic, call.Source);
         Assert.Contains("route data", call.Reason);
+
+        // Not Dynamic: the name is unknown HERE, not unknowable. It is the
+        // invoking action's, and the graph knows the callers — so the call is
+        // marked for that resolution rather than written off.
+        Assert.Equal(ViewNameSource.InvokingAction, call.Source);
+    }
+
+    [Fact]
+    public void ActionMethodOf_ReportsTheRoutingName_ForHelperAttribution()
+    {
+        // What the helper case resolves against. The routing name is what a view
+        // lookup uses, so an [ActionName] override has to travel with it: a caller
+        // recorded as LoginPOST would send its helper looking for LoginPOST.cshtml.
+        var source = Controller("""
+            [ActionName("Login")]
+            public ViewResult LoginPOST() => Helper();
+            private ViewResult Helper() => View();
+            """);
+
+        Assert.Equal("Login", ActionMethodFor(source, "LoginPOST")?.ActionName);
+
+        // The helper is not an action, so it contributes no name of its own.
+        Assert.Null(ActionMethodFor(source, "Helper"));
     }
 
     [Fact]

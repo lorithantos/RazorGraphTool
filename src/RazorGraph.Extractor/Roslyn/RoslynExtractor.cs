@@ -262,14 +262,45 @@ public sealed class RoslynExtractor : IAsyncDisposable
     {
         if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
 
+        foreach (var loaded in _loaded)
+        {
+            // Decided once per project, not once per shape: a test fixture naming
+            // a shape is not a render path, and reporting it as one puts noise in
+            // the only stream this pass exists to produce. OrchardCore's whole
+            // solution surfaced exactly one such name (ContentZone, from
+            // DisplayDriverTestHelper) among four.
+            var inTestCode = IsTestProject(loaded.Project);
+
+            foreach (var (root, model) in loaded.Compilation.SyntaxTrees
+                         .Select(t => (t.GetRoot(), loaded.Compilation.GetSemanticModel(t))))
+            {
+                foreach (var shape in root.DescendantNodes()
+                    .OfType<BaseMethodDeclarationSyntax>()
+                    .SelectMany(decl => ViewCallScanner.ShapeNames(decl, model)))
+                {
+                    yield return inTestCode ? shape with { InTestCode = true } : shape;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Every controller action and the name routing knows it by; see
+    /// ViewCallScanner. Needed to attribute a helper's render to the action that
+    /// invoked it, which is the only thing that knows the view name.
+    /// </summary>
+    public IEnumerable<ActionMethod> ExtractActionMethods()
+    {
+        if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
+
         foreach (var (root, model) in _loaded.SelectMany(
                      l => l.Compilation.SyntaxTrees.Select(t => (t.GetRoot(), l.Compilation.GetSemanticModel(t)))))
         {
-            foreach (var shape in root.DescendantNodes()
+            foreach (var action in root.DescendantNodes()
                 .OfType<BaseMethodDeclarationSyntax>()
-                .SelectMany(decl => ViewCallScanner.ShapeNames(decl, model)))
+                .Select(decl => ViewCallScanner.ActionMethodOf(decl, model)))
             {
-                yield return shape;
+                if (action is not null) yield return action;
             }
         }
     }

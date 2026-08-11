@@ -32,7 +32,23 @@ public sealed record ViewCall(
 /// shape itself. Alternates are the override mechanism, so they are the most
 /// specific bindings rather than an afterthought.
 /// </param>
-public sealed record ShapeReference(string MethodId, string Name, bool IsAlternate, int Line);
+/// <param name="InTestCode">
+/// True when the producing method compiles in a test project. A shape named by a
+/// test fixture is never rendered by the application, so it cannot throw for want
+/// of a template — stamped at extraction, where the project is known, rather than
+/// guessed at from the method name later.
+/// </param>
+public sealed record ShapeReference(string MethodId, string Name, bool IsAlternate, int Line, bool InTestCode = false);
+
+/// <summary>
+/// A controller method reachable as an action, with the name routing knows it by.
+///
+/// Collected for every action, not only those rendering a view, because the name
+/// is needed by OTHER methods: a private helper that renders on its caller's
+/// behalf takes the caller's action name, and the caller may never touch View
+/// itself.
+/// </summary>
+public sealed record ActionMethod(string MethodId, string ActionName);
 
 /// <summary>Where a view name came from.</summary>
 public enum ViewNameSource
@@ -44,7 +60,15 @@ public enum ViewNameSource
     Constant,
 
     /// <summary>A name argument that did not fold. Not resolvable, and reported as such.</summary>
-    Dynamic
+    Dynamic,
+
+    /// <summary>
+    /// No name argument, and the renderer is not itself an action: the name is
+    /// the INVOKING action's, which this method does not know. Resolvable from
+    /// the graph — the callers are Calls edges — but not from the declaration,
+    /// so it is reported as a name to be worked out rather than as unknowable.
+    /// </summary>
+    InvokingAction
 }
 
 /// <summary>
@@ -179,7 +203,7 @@ public static class ViewCallScanner
                 // report a missing template that never existed.
                 if (!IsAction(action))
                 {
-                    yield return new ViewCall(methodId, null, controller, ViewNameSource.Dynamic, line,
+                    yield return new ViewCall(methodId, null, controller, ViewNameSource.InvokingAction, line,
                         $"rendered from non-action '{action.Name}'; the view name is the invoking action's, taken from route data");
                     continue;
                 }
@@ -201,6 +225,24 @@ public static class ViewCallScanner
             yield return new ViewCall(methodId, null, controller, ViewNameSource.Dynamic, line,
                 $"view name is not a compile-time constant: {nameArgument}");
         }
+    }
+
+    /// <summary>
+    /// The action, if this declaration is one, and the name routing knows it by.
+    ///
+    /// Exists so a helper's render can be attributed to the action that invoked
+    /// it. Reading the caller's method name off the graph would be wrong for the
+    /// same reason it is wrong at the call site: <c>[ActionName(nameof(Login))]
+    /// LoginPOST</c> renders Login.cshtml, and a graph node called LoginPOST does
+    /// not say so.
+    /// </summary>
+    public static ActionMethod? ActionMethodOf(BaseMethodDeclarationSyntax decl, SemanticModel model)
+    {
+        if (model.GetDeclaredSymbol(decl) is not IMethodSymbol method) return null;
+        if (ControllerNameOf(method.ContainingType) is null) return null;
+        if (!IsAction(method)) return null;
+
+        return new ActionMethod(SymbolIds.MethodId(method), ActionNameOf(method));
     }
 
     /// <summary>

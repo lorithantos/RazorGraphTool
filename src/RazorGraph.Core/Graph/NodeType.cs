@@ -27,6 +27,17 @@ public enum NodeType
     /// off it, and a name with no binding is a runtime failure waiting to happen.
     /// </summary>
     NamedBinding,
+
+    /// <summary>
+    /// A configuration file that takes part in the structure the graph models,
+    /// rather than one that merely configures a service: an OrchardCore
+    /// placement.json decides which shapes render, under which extra names, and
+    /// which are dropped entirely. Config that can break rendering is code for
+    /// this tool's purposes, and a name it introduces must resolve like any other.
+    /// The framework-specific meaning rides on a 'kind' property, the same way
+    /// NamedBinding carries orchardCoreShape.
+    /// </summary>
+    ConfigurationFile,
     Middleware,
     Route,
     HtmlElement,

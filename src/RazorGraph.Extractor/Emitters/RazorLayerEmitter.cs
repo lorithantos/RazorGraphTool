@@ -28,6 +28,42 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
     private readonly List<(RazorPageInfo Info, string? Project)> _pendingBindings = new();
 
     /// <summary>
+    /// placement.json rules awaiting the same post-pass, for the same reason: a
+    /// name a rule introduces resolves against every project the module can see.
+    /// </summary>
+    private readonly List<(PlacementEntry Entry, string? Project, string RelativePath)> _pendingPlacements = new();
+
+    /// <summary>
+    /// What is known about each name, accumulated across code and config before
+    /// anything is resolved.
+    ///
+    /// Two producers of the same name must agree on one node, and the finding
+    /// depends on facts that arrive in no fixed order — a driver naming a shape,
+    /// a placement rule hiding it — so binding is decided in a sweep at the end
+    /// rather than at whichever mention happens to come first.
+    /// </summary>
+    private sealed class NameFacts
+    {
+        public required string NodeId { get; init; }
+
+        /// <summary>Projects that mention the name; candidates must be visible from one of them.</summary>
+        public HashSet<string?> Projects { get; } = new();
+
+        /// <summary>
+        /// Mentions that REQUIRE a template, described for the report. An alternate
+        /// does not qualify: OrchardCore tries alternates and falls back to the
+        /// base shape, so a missing alternate template is the mechanism working,
+        /// not a failure.
+        /// </summary>
+        public List<string> RequiredBy { get; } = new();
+
+        /// <summary>Set when a placement rule drops the shape on every render.</summary>
+        public string? SuppressedBy { get; set; }
+    }
+
+    private readonly Dictionary<string, NameFacts> _names = new(StringComparer.Ordinal);
+
+    /// <summary>
     /// Razor files, their correlation to the symbols already in the graph,
     /// partial cross-references, and client assets, for one project.
     /// </summary>
@@ -72,7 +108,41 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
         // Razor per project.
         foreach (var info in razorInfos) _pendingBindings.Add((info, idScope));
 
+        CollectPlacementFiles(projectDir, idScope);
+
         clientAssets.AddClientAssets(projectDir, razorInfos, idScope, includeVendorAssets);
+    }
+
+    /// <summary>
+    /// placement.json files in one project, held for the binding post-pass.
+    ///
+    /// A malformed one is reported and skipped rather than failing the build,
+    /// matching how unparseable Razor is handled: config that cannot be read is a
+    /// gap in the report, not a reason to have no graph.
+    /// </summary>
+    private void CollectPlacementFiles(string projectDir, string? idScope)
+    {
+        // Matched by exact name, which is what OrchardCore looks for. Case
+        // sensitivity follows the platform, and the framework ships the file
+        // lower-case, so the lower-case spelling is the only one that resolves on
+        // Linux either.
+        foreach (var file in Directory.EnumerateFiles(projectDir, PlacementReader.FileName, SearchOption.AllDirectories)
+                     .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
+                              && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}")))
+        {
+            try
+            {
+                var relative = Path.GetRelativePath(projectDir, file).Replace('\\', '/');
+                foreach (var entry in PlacementReader.Read(file))
+                {
+                    _pendingPlacements.Add((entry, idScope, relative));
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Warning: failed to read {file}: {ex.Message}");
+            }
+        }
     }
 
     /// <summary>
@@ -295,7 +365,8 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
     /// </summary>
     internal void AddBindingEdges(
         IReadOnlyList<ViewCall>? viewCalls = null,
-        IReadOnlyList<ShapeReference>? shapeNames = null)
+        IReadOnlyList<ShapeReference>? shapeNames = null,
+        IReadOnlyList<ActionMethod>? actionMethods = null)
     {
         var visibleProjects = BuildProjectVisibility();
 
@@ -309,97 +380,248 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
             AddPartialEdges(info, candidates);
         }
 
+        var actionNames = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var action in actionMethods ?? []) actionNames.TryAdd(action.MethodId, action.ActionName);
+
         foreach (var call in viewCalls ?? [])
         {
-            AddViewCallEdge(call, visibleProjects);
+            AddViewCallEdge(call, visibleProjects, actionNames);
         }
 
-        foreach (var shape in shapeNames ?? [])
-        {
-            AddShapeBinding(shape, visibleProjects);
-        }
+        // Names first, from both sources, then resolution. Code and config each
+        // name shapes the other never mentions, and a placement rule can retire a
+        // finding a driver raises — so nothing is judged until every mention is in.
+        foreach (var shape in shapeNames ?? []) AddShapeReference(shape);
+        foreach (var (entry, project, relativePath) in _pendingPlacements) AddPlacementRule(entry, project, relativePath);
+
+        BindNames(visibleProjects);
     }
 
     /// <summary>
-    /// Record one shape name as a node, link the code that names it, and hang
-    /// every template that could serve it off the name.
-    ///
-    /// The name is the node rather than an edge from code to template, because a
-    /// shape is served by whichever binding wins at runtime, and that depends on
-    /// the active theme and tenant. Naming a single winner would assert something
-    /// static that is not. Showing the candidates in order says exactly what is
-    /// known, which is the same reason resolution returns a list.
-    ///
-    /// A name with NO candidate is the finding this pass exists for: OrchardCore
-    /// throws an InvalidOperationException when nothing binds, so an unbound shape
-    /// is a 500 waiting for the code path to run.
+    /// Record one name a driver produces, and whether anything must serve it.
     /// </summary>
-    private void AddShapeBinding(ShapeReference shape, Dictionary<string, HashSet<string>> visibleProjects)
+    private void AddShapeReference(ShapeReference shape)
     {
         var producer = graph.GetNode(shape.MethodId);
         var project = producer?.GetProperty<string>("project");
-
-        var id = $"shape:{shape.Name}";
-        if (!graph.HasNode(id))
-        {
-            var node = new GraphNode
-            {
-                Id = id,
-                Type = NodeType.NamedBinding,
-                Name = shape.Name
-            };
-            node.SetProperty("kind", "orchardCoreShape");
-            graph.AddNode(node);
-        }
+        var facts = EnsureName(shape.Name, project);
 
         if (producer is not null)
         {
             var produces = new GraphEdge
             {
                 FromId = producer.Id,
-                ToId = id,
+                ToId = facts.NodeId,
                 Type = EdgeType.Produces
             };
             produces.Properties["line"] = shape.Line;
             if (shape.IsAlternate) produces.Properties["isAlternate"] = true;
+            if (shape.InTestCode) produces.Properties["inTestCode"] = true;
             graph.AddEdge(produces);
         }
 
-        var name = graph.GetNode(id)!;
-        if (name.GetProperty<bool>("bound")) return;
+        // Neither of these can produce a runtime failure for want of a template:
+        // an alternate is tried and fallen back from, and test code renders
+        // nothing. Both stay in the graph — they are real mentions — and both stay
+        // out of the report.
+        if (shape.IsAlternate || shape.InTestCode) return;
 
-        var byStem = new Dictionary<string, RazorPageInfo>(StringComparer.OrdinalIgnoreCase);
-        foreach (var page in _pendingBindings.Where(c => IsVisible(project, c.Project, visibleProjects)).Select(c => c.Info))
+        facts.RequiredBy.Add(producer is null ? "unknown producer" : $"{producer.Name}:{shape.Line}");
+    }
+
+    /// <summary>
+    /// Apply one placement.json rule: the shape it places, the names it adds, and
+    /// the hide that can prove a shape never renders at all.
+    /// </summary>
+    private void AddPlacementRule(PlacementEntry entry, string? project, string relativePath)
+    {
+        var configId = EnsurePlacementNode(entry, project, relativePath);
+
+        // The key is a REFERENCE, not a producer. Arranging a shape another module
+        // owns is ordinary here — OrchardCore.Contents places parts it does not
+        // define — so demanding a template for every placed name would invent a
+        // finding for every module that lays out someone else's content.
+        var placed = EnsureName(entry.ShapeType, project);
+        var reference = new GraphEdge
         {
-            var stem = Path.GetFileNameWithoutExtension(page.RelativePath);
-            if (!byStem.ContainsKey(stem)) byStem[stem] = page;
+            FromId = configId,
+            ToId = placed.NodeId,
+            Type = EdgeType.References
+        };
+        reference.Properties["role"] = "placement";
+        reference.Properties["line"] = entry.Line;
+        if (entry.Place is { Length: > 0 } place) reference.Properties["place"] = place;
+        if (entry.DisplayType is { Length: > 0 } displayType) reference.Properties["displayType"] = displayType;
+        if (entry.Differentiator is { Length: > 0 } differentiator) reference.Properties["differentiator"] = differentiator;
+        if (entry.Filters.Count > 0) reference.Properties["filters"] = entry.Filters.ToList();
+        if (entry.Hides) reference.Properties["hides"] = true;
+        graph.AddEdge(reference);
+
+        // Only an UNCONDITIONAL hide proves the shape never renders. A hide behind
+        // a content type or a display type still leaves every other path live, so
+        // it must not retire the finding.
+        if (entry.Hides && entry.IsUnconditional)
+        {
+            placed.SuppressedBy = $"{relativePath}:{entry.Line} places it as \"-\"";
         }
 
-        var rank = 0;
-        foreach (var candidate in ShapeNameGrammar.CandidateTemplateNames(shape.Name))
-        {
-            if (!byStem.TryGetValue(candidate, out var template)) continue;
+        foreach (var alternate in entry.Alternates) AddPlacementName(configId, alternate, project, entry, "alternate", required: false);
+        foreach (var wrapper in entry.Wrappers) AddPlacementName(configId, wrapper, project, entry, "wrapper", required: true);
 
-            var bound = new GraphEdge
+        if (entry.RenamedTo is { Length: > 0 } renamed)
+        {
+            AddPlacementName(configId, renamed, project, entry, "shape", required: true);
+            graph.GetNode(placed.NodeId)?.SetProperty("renamedTo", renamed);
+        }
+    }
+
+    /// <summary>
+    /// A name a placement rule introduces.
+    /// </summary>
+    /// <param name="required">
+    /// Whether a missing template is a failure. A wrapper and a substituted shape
+    /// are rendered as shapes in their own right and throw when nothing binds; an
+    /// alternate is an optional override with the base shape behind it.
+    /// </param>
+    private void AddPlacementName(
+        string configId, string name, string? project, PlacementEntry entry, string role, bool required)
+    {
+        var facts = EnsureName(name, project);
+
+        var edge = new GraphEdge
+        {
+            FromId = configId,
+            ToId = facts.NodeId,
+            Type = EdgeType.Produces
+        };
+        edge.Properties["role"] = role;
+        edge.Properties["line"] = entry.Line;
+        graph.AddEdge(edge);
+
+        if (required) facts.RequiredBy.Add($"{Path.GetFileName(entry.FilePath)}:{entry.Line} ({role})");
+    }
+
+    private string EnsurePlacementNode(PlacementEntry entry, string? project, string relativePath)
+    {
+        var id = project is null ? $"placement:{relativePath}" : $"placement:{project}:{relativePath}";
+        if (graph.HasNode(id)) return id;
+
+        var node = new GraphNode
+        {
+            Id = id,
+            Type = NodeType.ConfigurationFile,
+            Name = relativePath,
+            FilePath = entry.FilePath
+        };
+        node.SetProperty("kind", "orchardCorePlacement");
+        if (project is not null) node.SetProperty("project", project);
+        graph.AddNode(node);
+
+        return id;
+    }
+
+    private NameFacts EnsureName(string name, string? project)
+    {
+        if (!_names.TryGetValue(name, out var facts))
+        {
+            var id = $"shape:{name}";
+            _names[name] = facts = new NameFacts { NodeId = id };
+
+            if (!graph.HasNode(id))
             {
-                FromId = id,
-                ToId = template.Id,
-                Type = EdgeType.BoundBy
-            };
-            bound.Properties["rank"] = rank++;
-            bound.Properties["bindingKind"] = Path.GetExtension(template.RelativePath).Equals(".liquid", StringComparison.OrdinalIgnoreCase) ? "liquid" : "razor";
-            bound.Properties["matchedAs"] = candidate;
-            graph.AddEdge(bound);
+                var node = new GraphNode
+                {
+                    Id = id,
+                    Type = NodeType.NamedBinding,
+                    Name = name
+                };
+                node.SetProperty("kind", "orchardCoreShape");
+                graph.AddNode(node);
+            }
         }
 
-        // Marked so a shape named in twenty drivers resolves once, and so the
-        // unbound case is answerable by looking for the absent flag.
-        name.SetProperty("bound", rank > 0);
-        if (rank == 0)
+        facts.Projects.Add(project);
+        return facts;
+    }
+
+    /// <summary>
+    /// Hang every template that could serve each name off the name, then report
+    /// the names nothing serves.
+    ///
+    /// Every visible match is emitted rather than the first, because that is the
+    /// mechanism OrchardCore is built on: a theme serving Menu-Main.cshtml
+    /// overrides a module's without either one changing, and a graph showing only
+    /// one of them hides the override it exists to reveal. Rank carries the order.
+    ///
+    /// A name with NO candidate is the finding this pass exists for — but only
+    /// when something actually requires a template, and only when no placement
+    /// rule drops the shape entirely.
+    /// </summary>
+    private void BindNames(Dictionary<string, HashSet<string>> visibleProjects)
+    {
+        var byStem = new Dictionary<string, List<(RazorPageInfo Info, string? Project)>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pending in _pendingBindings)
         {
-            name.SetProperty("unbound", true);
-            var producedAt = producer is null ? "unknown producer" : $"{producer.Name}:{shape.Line}";
-            _unboundShapes.Add($"{shape.Name} (produced by {producedAt})");
+            var stem = Path.GetFileNameWithoutExtension(pending.Info.RelativePath);
+            if (!byStem.TryGetValue(stem, out var templates)) byStem[stem] = templates = new();
+            templates.Add(pending);
+        }
+
+        // Ordinal name order, so two runs of the same solution produce the same
+        // file and a diff of two graphs shows only what changed.
+        foreach (var (name, facts) in _names.OrderBy(entry => entry.Key, StringComparer.Ordinal))
+        {
+            var node = graph.GetNode(facts.NodeId);
+            if (node is null) continue;
+
+            var rank = 0;
+            foreach (var candidate in ShapeNameGrammar.CandidateTemplateNames(name))
+            {
+                if (!byStem.TryGetValue(candidate, out var templates)) continue;
+
+                foreach (var (template, templateProject) in templates.OrderBy(t => t.Info.Id, StringComparer.Ordinal))
+                {
+                    if (!facts.Projects.Any(from => IsVisible(from, templateProject, visibleProjects))) continue;
+
+                    var bound = new GraphEdge
+                    {
+                        FromId = facts.NodeId,
+                        ToId = template.Id,
+                        Type = EdgeType.BoundBy
+                    };
+                    bound.Properties["rank"] = rank++;
+                    bound.Properties["bindingKind"] =
+                        Path.GetExtension(template.RelativePath).Equals(".liquid", StringComparison.OrdinalIgnoreCase)
+                            ? "liquid"
+                            : "razor";
+                    bound.Properties["matchedAs"] = candidate;
+                    graph.AddEdge(bound);
+                }
+            }
+
+            node.SetProperty("bound", rank > 0);
+            if (rank > 0) continue;
+
+            node.SetProperty("unbound", true);
+
+            if (facts.RequiredBy.Count == 0)
+            {
+                // Mentioned only where a miss is survivable: an alternate, a
+                // placement key, a test fixture. Kept on the node so a query can
+                // still reach it, kept out of the report so the report stays worth
+                // reading — a finding stream with noise in it gets ignored whole.
+                node.SetProperty("noRequiredProducer", true);
+                continue;
+            }
+
+            if (facts.SuppressedBy is { } suppressor)
+            {
+                node.SetProperty("renderSuppressedBy", suppressor);
+                continue;
+            }
+
+            node.SetProperty("requiredBy", facts.RequiredBy.ToList());
+            _unboundShapes.Add($"{name} (produced by {string.Join(", ", facts.RequiredBy)})");
         }
     }
 
@@ -421,10 +643,17 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
     /// A dynamic name records itself on the action rather than guessing a target,
     /// because inventing an edge here would be worse than having none.
     /// </summary>
-    private void AddViewCallEdge(ViewCall call, Dictionary<string, HashSet<string>> visibleProjects)
+    private void AddViewCallEdge(
+        ViewCall call, Dictionary<string, HashSet<string>> visibleProjects, Dictionary<string, string> actionNames)
     {
         var action = graph.GetNode(call.MethodId);
         if (action is null) return;
+
+        if (call.Source == ViewNameSource.InvokingAction)
+        {
+            AddHelperRenderEdges(call, action, visibleProjects, actionNames);
+            return;
+        }
 
         if (call.Name is null)
         {
@@ -434,21 +663,8 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
             return;
         }
 
-        var project = action.GetProperty<string>("project");
-        var candidates = _pendingBindings
-            .Where(c => IsVisible(project, c.Project, visibleProjects))
-            .Select(c => c.Info)
-            .ToList();
-
-        var byPath = new Dictionary<string, RazorPageInfo>(StringComparer.OrdinalIgnoreCase);
-        foreach (var page in candidates)
-        {
-            var key = page.RelativePath.Replace('\\', '/').TrimStart('/');
-            if (!byPath.ContainsKey(key)) byPath[key] = page;
-        }
-
-        var best = ViewNameResolver.ResolveForController(call.Name, call.Controller, byPath.Keys).FirstOrDefault();
-        if (best is null || !byPath.TryGetValue(best, out var view))
+        var view = ResolveView(call.Name, call.Controller, action.GetProperty<string>("project"), visibleProjects);
+        if (view is null)
         {
             // Named a view that no template serves. Recorded on the action: at
             // runtime this is a 500, and it is exactly what this pass is for.
@@ -469,6 +685,114 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
         edge.Properties["line"] = call.Line;
         graph.AddEdge(edge);
     }
+
+    /// <summary>
+    /// Attribute a helper's render to the actions that invoke it.
+    ///
+    /// A private method ending in <c>return View(model)</c> renders the INVOKING
+    /// action's view, taken from route data — so the helper has no name of its
+    /// own, and its own name is the one answer guaranteed to be wrong. What the
+    /// helper does have is callers, and the graph already knows them: the edge
+    /// runs from each calling action to the view it thereby renders, which is
+    /// also the direction a reader asks the question in ("what does this action
+    /// render?").
+    ///
+    /// One hop only. A helper reached through another helper is left unresolved
+    /// rather than followed, because the chain can fan out to actions that never
+    /// reach this call and a wrong edge is worse than a missing one.
+    /// </summary>
+    private void AddHelperRenderEdges(
+        ViewCall call, GraphNode helper,
+        Dictionary<string, HashSet<string>> visibleProjects, Dictionary<string, string> actionNames)
+    {
+        var callers = CallersOf().TryGetValue(call.MethodId, out var found) ? found : [];
+        var rendered = new List<string>();
+
+        foreach (var callerId in callers.OrderBy(id => id, StringComparer.Ordinal))
+        {
+            if (!actionNames.TryGetValue(callerId, out var actionName)) continue;
+
+            var caller = graph.GetNode(callerId);
+            if (caller is null) continue;
+
+            var view = ResolveView(actionName, call.Controller, caller.GetProperty<string>("project"), visibleProjects);
+            if (view is null)
+            {
+                var missing = caller.GetProperty<List<string>>("missingViews") ?? [];
+                missing.Add($"line {call.Line} (via {helper.Name}): {actionName}");
+                caller.SetProperty("missingViews", missing);
+                continue;
+            }
+
+            var edge = new GraphEdge
+            {
+                FromId = callerId,
+                ToId = view.Id,
+                Type = EdgeType.ReturnsView
+            };
+            edge.Properties["viewName"] = actionName;
+            edge.Properties["nameSource"] = call.Source.ToString();
+            edge.Properties["via"] = helper.Name;
+            edge.Properties["line"] = call.Line;
+            graph.AddEdge(edge);
+
+            rendered.Add($"{actionName} (for {caller.Name})");
+        }
+
+        if (rendered.Count > 0)
+        {
+            helper.SetProperty("rendersForCallers", rendered);
+            return;
+        }
+
+        // No action caller found: unreached, called only through another helper,
+        // or invoked by something outside this graph. Reported as unresolved, the
+        // same as any other name that could not be worked out.
+        var unresolved = helper.GetProperty<List<string>>("unresolvedViews") ?? [];
+        unresolved.Add($"line {call.Line}: {call.Reason}");
+        helper.SetProperty("unresolvedViews", unresolved);
+    }
+
+    /// <summary>
+    /// The template a controller renders for a view name, searched over the
+    /// projects it can see.
+    /// </summary>
+    private RazorPageInfo? ResolveView(
+        string name, string controller, string? project, Dictionary<string, HashSet<string>> visibleProjects)
+    {
+        var byPath = new Dictionary<string, RazorPageInfo>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (info, candidateProject) in _pendingBindings)
+        {
+            if (!IsVisible(project, candidateProject, visibleProjects)) continue;
+
+            var key = info.RelativePath.Replace('\\', '/').TrimStart('/');
+            if (!byPath.ContainsKey(key)) byPath[key] = info;
+        }
+
+        var best = ViewNameResolver.ResolveForController(name, controller, byPath.Keys).FirstOrDefault();
+        return best is not null && byPath.TryGetValue(best, out var view) ? view : null;
+    }
+
+    /// <summary>
+    /// Who calls each method, indexed once. Built from the Calls edges already in
+    /// the graph, which is the whole reason this resolution is possible without a
+    /// second Roslyn pass.
+    /// </summary>
+    private Dictionary<string, List<string>> CallersOf()
+    {
+        if (_callersOf is not null) return _callersOf;
+
+        _callersOf = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var edge in graph.Edges.Where(e => e.Type == EdgeType.Calls))
+        {
+            if (!_callersOf.TryGetValue(edge.ToId, out var callers)) _callersOf[edge.ToId] = callers = new();
+            if (!callers.Contains(edge.FromId)) callers.Add(edge.FromId);
+        }
+
+        return _callersOf;
+    }
+
+    private Dictionary<string, List<string>>? _callersOf;
 
     /// <summary>
     /// Each project mapped to the projects it can see: itself plus everything it
