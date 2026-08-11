@@ -14,9 +14,9 @@ using RazorGraph.Core.Serialization;
 public sealed class GraphNavigationTools(GraphStore store)
 {
     [McpServerTool(Name = "find_nodes")]
-    [Description($"Find nodes by type, optionally filtered by case-insensitive name substring and by project. Valid node types: {ToolArguments.NodeTypeList}. Check 'truncated' before concluding you have seen everything.")]
+    [Description($"Find nodes by type, optionally filtered by case-insensitive name substring and by project. Valid node types: {ToolArguments.NodeTypeList}. A graph written by a newer version or a non-C# extractor may also carry foreign kinds; those are selectable by the name graph_summary and other results show for them. An unrecognised type is refused with the foreign kinds this graph holds, rather than returning nothing. Check 'truncated' before concluding you have seen everything.")]
     public string FindNodes(
-        [Description("Node type, e.g. RazorPage")] string nodeType,
+        [Description("Node type, e.g. RazorPage; or a foreign kind name this graph carries, e.g. luaModule")] string nodeType,
         [Description("Case-insensitive name substring filter")] string? nameContains = null,
         [Description("Restrict to nodes from this project (solution graphs only)")] string? project = null,
         [Description("Max nodes to return (default 50)")] int limit = 50,
@@ -24,7 +24,7 @@ public sealed class GraphNavigationTools(GraphStore store)
     {
         var graph = store.Require(graphId).Graph;
         var query = new GraphQuery(graph);
-        var all = query.FindNodes(ToolArguments.ParseNodeType(nodeType), nameContains).ToList();
+        var all = query.FindNodes(ToolArguments.ResolveNodeKind(graph, nodeType), nameContains).ToList();
 
         if (!string.IsNullOrWhiteSpace(project))
         {

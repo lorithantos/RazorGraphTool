@@ -38,6 +38,36 @@ internal static class ToolArguments
             ? type
             : throw new McpException($"Unknown node type '{value}'. Valid types: {NodeTypeList}");
 
+    /// <summary>
+    /// Resolve a node kind against a specific graph, accepting both this build's
+    /// vocabulary and any foreign kind the graph actually contains.
+    ///
+    /// Validated against the graph rather than the enum alone so the failure is
+    /// specific: a kind that exists nowhere is refused with the foreign kinds
+    /// present listed by name. Returning an empty result instead would be the
+    /// absence-as-finding trap — indistinguishable from "that kind exists here
+    /// and has no members".
+    /// </summary>
+    internal static string ResolveNodeKind(CodeGraph graph, string value)
+    {
+        var trimmed = (value ?? string.Empty).Trim();
+
+        if (Enum.TryParse<NodeType>(trimmed, ignoreCase: true, out var known) && known != NodeType.Unknown)
+            return known.ToString();
+
+        // Matched against what is in THIS graph, and returned in the graph's own
+        // casing: the caller gets back the string that reports display.
+        var foreign = graph.ForeignNodeKinds
+            .FirstOrDefault(k => string.Equals(k, trimmed, StringComparison.OrdinalIgnoreCase));
+        if (foreign is not null) return foreign;
+
+        var alsoAvailable = graph.ForeignNodeKinds.Count > 0
+            ? $" This graph also carries foreign kinds, selectable by name: {string.Join(", ", graph.ForeignNodeKinds)}."
+            : " This graph carries no foreign node kinds.";
+
+        throw new McpException($"Unknown node type '{value}'. Valid types: {NodeTypeList}.{alsoAvailable}");
+    }
+
     internal static TraversalDirection ParseDirection(string? value) =>
         string.IsNullOrWhiteSpace(value)
             ? TraversalDirection.Outgoing

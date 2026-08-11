@@ -26,6 +26,23 @@ public sealed class CodeGraph
     /// </summary>
     public SortedSet<string> ForeignFormatVersions { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Node kinds present in this graph that this build has no
+    /// <see cref="NodeType"/> for. What a caller may select by name but will not
+    /// find in the enum — so an error message can name them instead of implying
+    /// they do not exist.
+    /// </summary>
+    public IReadOnlyList<string> ForeignNodeKinds => DistinctKinds(_nodes.Values.Select(n => n.ForeignType));
+
+    /// <summary>Edge kinds present that this build has no <see cref="EdgeType"/> for.</summary>
+    public IReadOnlyList<string> ForeignEdgeKinds => DistinctKinds(_edges.Select(e => e.ForeignType));
+
+    private static IReadOnlyList<string> DistinctKinds(IEnumerable<string?> kinds) =>
+        kinds.Where(k => k is not null).Select(k => k!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
     public void AddNode(GraphNode node)
     {
         ArgumentNullException.ThrowIfNull(node);

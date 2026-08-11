@@ -29,6 +29,25 @@ public sealed class GraphQuery
     }
 
     /// <summary>
+    /// Find nodes by kind NAME rather than by enum member, so a kind this build
+    /// has no <see cref="NodeType"/> for is still selectable — a graph written by
+    /// a newer version or a third-party extractor stays queryable by whoever is
+    /// holding it, without waiting for a build that knows the kind.
+    /// </summary>
+    /// <remarks>
+    /// Matching is on <see cref="GraphNode.DisplayType"/>, which is the same
+    /// string every report and tool response shows, so a kind a caller read out
+    /// of a result is a kind they can paste straight back in.
+    /// </remarks>
+    public IEnumerable<GraphNode> FindNodes(string kind, string? nameContains = null)
+    {
+        var query = _graph.Nodes.Where(n => string.Equals(n.DisplayType, kind, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(nameContains))
+            query = query.Where(n => n.Name.Contains(nameContains, StringComparison.OrdinalIgnoreCase));
+        return query;
+    }
+
+    /// <summary>
     /// Get all direct neighbors of a node via outgoing edges of given types.
     /// </summary>
     public IEnumerable<(GraphEdge Edge, GraphNode Target)> GetNeighbors(

@@ -36,6 +36,78 @@ public class GraphQueryTests
         return graph;
     }
 
+    /// <summary>
+    /// A graph carrying vocabulary this build has no enum member for, as a
+    /// third-party or newer-version extractor would produce it.
+    /// </summary>
+    private static CodeGraph BuildForeignKindGraph()
+    {
+        var graph = new CodeGraph();
+        graph.AddNode(new GraphNode { Id = "mod:game.init", Type = NodeType.Unknown, ForeignType = "luaModule", Name = "game.init" });
+        graph.AddNode(new GraphNode { Id = "mod:game.util", Type = NodeType.Unknown, ForeignType = "luaModule", Name = "game.util" });
+        graph.AddNode(new GraphNode { Id = "fn:boot", Type = NodeType.Method, Name = "boot" });
+        // A genuinely unclassified node: Unknown, but not foreign.
+        graph.AddNode(new GraphNode { Id = "x:mystery", Type = NodeType.Unknown, Name = "mystery" });
+        graph.AddEdge(new GraphEdge { FromId = "mod:game.init", ToId = "mod:game.util", Type = EdgeType.Unknown, ForeignType = "requires" });
+        return graph;
+    }
+
+    [Fact]
+    public void FindNodes_ByForeignKindName_ReturnsThem()
+    {
+        // The point of the whole tolerance chain: a graph from an extractor this
+        // build predates is still queryable by whoever is holding it.
+        var found = new GraphQuery(BuildForeignKindGraph()).FindNodes("luaModule").ToList();
+
+        Assert.Equal(2, found.Count);
+        Assert.All(found, n => Assert.Equal("luaModule", n.ForeignType));
+    }
+
+    [Fact]
+    public void FindNodes_ByForeignKindName_IsCaseInsensitive()
+    {
+        // A caller retyping a kind from a report should not have to match casing.
+        Assert.Equal(2, new GraphQuery(BuildForeignKindGraph()).FindNodes("LUAMODULE").Count());
+    }
+
+    [Fact]
+    public void FindNodes_ByKindName_StillMatchesKnownKinds()
+    {
+        // One selection path for both vocabularies, or callers need to know which
+        // kind of kind they are holding before they can ask.
+        Assert.Single(new GraphQuery(BuildForeignKindGraph()).FindNodes("Method"));
+    }
+
+    [Fact]
+    public void FindNodes_ByKindName_DoesNotConflateForeignWithUnclassified()
+    {
+        // "Unknown" must not sweep up foreign nodes, or the distinction the
+        // ForeignType field exists to preserve is lost at query time.
+        var found = new GraphQuery(BuildForeignKindGraph()).FindNodes("Unknown").ToList();
+
+        Assert.Equal("x:mystery", Assert.Single(found).Id);
+    }
+
+    [Fact]
+    public void FindNodes_ByKindName_HonoursNameFilter()
+    {
+        var found = new GraphQuery(BuildForeignKindGraph()).FindNodes("luaModule", "util").ToList();
+
+        Assert.Equal("mod:game.util", Assert.Single(found).Id);
+    }
+
+    [Fact]
+    public void ForeignKinds_ListWhatIsActuallyPresent()
+    {
+        // Feeds the error message that names alternatives instead of returning
+        // an empty result a caller cannot interpret.
+        var graph = BuildForeignKindGraph();
+
+        Assert.Equal(new[] { "luaModule" }, graph.ForeignNodeKinds);
+        Assert.Equal(new[] { "requires" }, graph.ForeignEdgeKinds);
+        Assert.Empty(BuildSampleGraph().ForeignNodeKinds);
+    }
+
     /// <summary>A hand-built escape graph: one depth-0 self-escape at Main, one depth-2 chain into an event handler.</summary>
     private static CodeGraph BuildEscapeGraph()
     {

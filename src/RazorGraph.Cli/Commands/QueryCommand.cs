@@ -124,8 +124,12 @@ internal static class QueryCommand
             if (options.Uncovered) return RunUncovered(query, options.Project);
             if (options.Deep > 0) return RunDeepListing(query, options.Deep, options.Project);
             if (options.Id != null) return RunNodeReport(query, options.Id, options);
-            if (options.Type != null && Enum.TryParse<NodeType>(options.Type, true, out var type))
-                return RunTypeListing(query, type, options.Name, options.Project);
+            // Any kind the graph actually holds, foreign ones included. An
+            // unparseable --type used to fall through to the generic "Graph
+            // loaded" banner and exit 0, so a typo reported success and no
+            // results -- the caller could not tell a bad argument from an empty
+            // graph.
+            if (options.Type != null) return RunTypeListing(query, graph, options.Type, options.Name, options.Project);
         }
         catch (InvalidOperationException ex)
         {
@@ -291,15 +295,42 @@ internal static class QueryCommand
         return 0;
     }
 
-    private static int RunTypeListing(GraphQuery query, NodeType type, string? name, string? project)
+    private static int RunTypeListing(GraphQuery query, CodeGraph graph, string requestedType, string? name, string? project)
     {
-        var nodes = query.FindNodes(type, name)
+        var kind = ResolveKind(graph, requestedType);
+        if (kind == null) return 1;
+
+        var nodes = query.FindNodes(kind, name)
             .Where(n => project == null ||
                         string.Equals(n.GetProperty<string>("project"), project, StringComparison.OrdinalIgnoreCase))
             .ToList();
-        Console.WriteLine($"Found {nodes.Count} nodes of type {type}:");
+        Console.WriteLine($"Found {nodes.Count} nodes of type {kind}:");
         foreach (var n in nodes)
             Console.WriteLine($"  [{n.Id}] {n.Name} ({n.FilePath})");
         return 0;
+    }
+
+    /// <summary>
+    /// Resolve a requested kind against this build's vocabulary and the foreign
+    /// kinds the graph actually holds, or report what it could have been. Null
+    /// means the caller was told; do not also print results.
+    /// </summary>
+    private static string? ResolveKind(CodeGraph graph, string requested)
+    {
+        var trimmed = requested.Trim();
+
+        if (Enum.TryParse<NodeType>(trimmed, ignoreCase: true, out var known) && known != NodeType.Unknown)
+            return known.ToString();
+
+        var foreign = graph.ForeignNodeKinds
+            .FirstOrDefault(k => string.Equals(k, trimmed, StringComparison.OrdinalIgnoreCase));
+        if (foreign != null) return foreign;
+
+        Console.Error.WriteLine($"error: unknown node type '{requested}'.");
+        Console.Error.WriteLine($"  known types: {string.Join(", ", Enum.GetNames<NodeType>().Where(n => n != nameof(NodeType.Unknown)))}");
+        Console.Error.WriteLine(graph.ForeignNodeKinds.Count > 0
+            ? $"  foreign kinds in this graph: {string.Join(", ", graph.ForeignNodeKinds)}"
+            : "  this graph carries no foreign node kinds.");
+        return null;
     }
 }
