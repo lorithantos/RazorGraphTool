@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Roslyn-shaped Lua syntax trees. Confined to this project on purpose: it is a
+         pre-1.0 single-maintainer package, and the blast radius of replacing it must
+         stay inside RazorGraph.Lua. Core never sees a Loretta type. -->
+    <PackageReference Include="Loretta.CodeAnalysis.Lua" Version="0.2.13" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Core ONLY. Not RazorGraph.Extractor: a Lua graph that needs nothing from the
+         Roslyn pipeline is what demonstrates the any-language claim structurally. -->
+    <ProjectReference Include="..\RazorGraph.Core\RazorGraph.Core.csproj" />
+  </ItemGroup>
+
+</Project>

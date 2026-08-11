@@ -7,6 +7,7 @@
   <Project Path="src/RazorGraph.Cli/RazorGraph.Cli.csproj" />
   <Project Path="src/RazorGraph.Core/RazorGraph.Core.csproj" />
   <Project Path="src/RazorGraph.Extractor/RazorGraph.Extractor.csproj" />
+  <Project Path="src/RazorGraph.Lua/RazorGraph.Lua.csproj" />
   <Project Path="src/RazorGraph.Mcp/RazorGraph.Mcp.csproj" />
   <Project Path="src/RazorGraph.Tests/RazorGraph.Tests.csproj" />
 </Solution>

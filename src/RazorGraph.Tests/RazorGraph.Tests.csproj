@@ -18,6 +18,7 @@
   <ItemGroup>
     <ProjectReference Include="..\RazorGraph.Core\RazorGraph.Core.csproj" />
     <ProjectReference Include="..\RazorGraph.Extractor\RazorGraph.Extractor.csproj" />
+    <ProjectReference Include="..\RazorGraph.Lua\RazorGraph.Lua.csproj" />
     <!-- The MCP server is an exe; referenced here so GraphStore's registry semantics are testable. -->
     <ProjectReference Include="..\RazorGraph.Mcp\RazorGraph.Mcp.csproj" />
   </ItemGroup>

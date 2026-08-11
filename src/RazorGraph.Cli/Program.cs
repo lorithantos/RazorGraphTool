@@ -9,6 +9,7 @@ using RazorGraph.Cli;
 var root = new RootCommand("RazorGraph — queryable code graph of ASP.NET Core Razor apps");
 root.Add(BuildCommands.Build());
 root.Add(BuildCommands.BuildSolution());
+root.Add(LuaCommands.BuildLua());
 root.Add(QueryCommand.Query());
 root.Add(BodyCommands.Body());
 root.Add(BodyCommands.BodyDiff());
