@@ -1,5 +1,7 @@
 namespace RazorGraph.Extractor.Roslyn;
 
+using RazorGraph.Extractor.Binding;
+
 using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -226,6 +228,27 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 .SelectMany(typeDecl => CallSiteScanner.InitializerCallSites(typeDecl, model, inScope)))
             {
                 yield return site;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The views each controller action renders, with the name worked out from
+    /// the semantic model; see ViewCallScanner. Names are not resolved to files
+    /// here — that needs the Razor layer, which is built later.
+    /// </summary>
+    public IEnumerable<ViewCall> ExtractViewCalls()
+    {
+        if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
+
+        foreach (var (root, model) in _loaded.SelectMany(
+                     l => l.Compilation.SyntaxTrees.Select(t => (t.GetRoot(), l.Compilation.GetSemanticModel(t)))))
+        {
+            foreach (var call in root.DescendantNodes()
+                .OfType<BaseMethodDeclarationSyntax>()
+                .SelectMany(decl => ViewCallScanner.ViewCalls(decl, model)))
+            {
+                yield return call;
             }
         }
     }

@@ -293,7 +293,7 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
     /// all, because idScope is null. Everything in the graph is then the one
     /// project, so scoping is skipped rather than narrowed to nothing.
     /// </summary>
-    internal void AddBindingEdges()
+    internal void AddBindingEdges(IReadOnlyList<ViewCall>? viewCalls = null)
     {
         var visibleProjects = BuildProjectVisibility();
 
@@ -306,6 +306,68 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
 
             AddPartialEdges(info, candidates);
         }
+
+        foreach (var call in viewCalls ?? [])
+        {
+            AddViewCallEdge(call, visibleProjects);
+        }
+    }
+
+    /// <summary>
+    /// Link a controller action to the view it renders.
+    ///
+    /// Reuses ReturnsView, which already means "this code renders that view" for
+    /// the Razor Pages pairing — an action returning a view is the same relation.
+    /// A dynamic name records itself on the action rather than guessing a target,
+    /// because inventing an edge here would be worse than having none.
+    /// </summary>
+    private void AddViewCallEdge(ViewCall call, Dictionary<string, HashSet<string>> visibleProjects)
+    {
+        var action = graph.GetNode(call.MethodId);
+        if (action is null) return;
+
+        if (call.Name is null)
+        {
+            var unresolved = action.GetProperty<List<string>>("unresolvedViews") ?? [];
+            unresolved.Add($"line {call.Line}: {call.Reason}");
+            action.SetProperty("unresolvedViews", unresolved);
+            return;
+        }
+
+        var project = action.GetProperty<string>("project");
+        var candidates = _pendingBindings
+            .Where(c => IsVisible(project, c.Project, visibleProjects))
+            .Select(c => c.Info)
+            .ToList();
+
+        var byPath = new Dictionary<string, RazorPageInfo>(StringComparer.OrdinalIgnoreCase);
+        foreach (var page in candidates)
+        {
+            var key = page.RelativePath.Replace('\\', '/').TrimStart('/');
+            if (!byPath.ContainsKey(key)) byPath[key] = page;
+        }
+
+        var best = ViewNameResolver.ResolveForController(call.Name, call.Controller, byPath.Keys).FirstOrDefault();
+        if (best is null || !byPath.TryGetValue(best, out var view))
+        {
+            // Named a view that no template serves. Recorded on the action: at
+            // runtime this is a 500, and it is exactly what this pass is for.
+            var missing = action.GetProperty<List<string>>("missingViews") ?? [];
+            missing.Add($"line {call.Line}: {call.Name}");
+            action.SetProperty("missingViews", missing);
+            return;
+        }
+
+        var edge = new GraphEdge
+        {
+            FromId = call.MethodId,
+            ToId = view.Id,
+            Type = EdgeType.ReturnsView
+        };
+        edge.Properties["viewName"] = call.Name;
+        edge.Properties["nameSource"] = call.Source.ToString();
+        edge.Properties["line"] = call.Line;
+        graph.AddEdge(edge);
     }
 
     /// <summary>

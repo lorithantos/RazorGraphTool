@@ -108,7 +108,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         BuildRoslynLayer();
         _razorLayer.BuildRazorLayer(projectDir, idScope: null, _roslyn.Compilation, _symbols, IncludeVendorAssets);
         _razorLayer.AddGeneratedClassLinks(_symbols);
-        _razorLayer.AddBindingEdges();
+        _razorLayer.AddBindingEdges(_roslyn.ExtractViewCalls().ToList());
         return _graph;
     }
 
@@ -131,7 +131,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         // project and the ones it references, which needs the project nodes and
         // their DependsOn edges to already exist.
         _projects.AddProjectNodes(_roslyn.LoadedProjects, _roslyn.Solution);
-        _razorLayer.AddBindingEdges();
+        _razorLayer.AddBindingEdges(_roslyn.ExtractViewCalls().ToList());
 
         _coverage.AddCoverageEdges();
         return _graph;

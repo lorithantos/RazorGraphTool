@@ -2,6 +2,7 @@ namespace RazorGraph.Extractor.Binding;
 
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using RazorGraph.Extractor.Roslyn;
 
 /// <summary>
 /// One view a controller action renders.
@@ -16,6 +17,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 /// <param name="Source">How the name was arrived at, kept so a reader can weigh it.</param>
 /// <param name="Reason">Why the name is unknown, when it is.</param>
 public sealed record ViewCall(
+    string MethodId,
     string? Name,
     string Controller,
     ViewNameSource Source,
@@ -62,6 +64,7 @@ public static class ViewCallScanner
     {
         if (model.GetDeclaredSymbol(decl) is not IMethodSymbol action) yield break;
 
+        var methodId = SymbolIds.MethodId(action);
         var controller = ControllerNameOf(action.ContainingType);
         if (controller is null) yield break;
 
@@ -77,7 +80,7 @@ public static class ViewCallScanner
             // would turn every View(model) call into a view called "model".
             if (model.GetSymbolInfo(invocation).Symbol is not IMethodSymbol target)
             {
-                yield return new ViewCall(null, controller, ViewNameSource.Dynamic, line,
+                yield return new ViewCall(methodId, null, controller, ViewNameSource.Dynamic, line,
                     "overload could not be resolved");
                 continue;
             }
@@ -86,7 +89,7 @@ public static class ViewCallScanner
             if (nameArgument is null)
             {
                 // No name parameter bound: ASP.NET falls back to the action name.
-                yield return new ViewCall(action.Name, controller, ViewNameSource.ActionName, line);
+                yield return new ViewCall(methodId, action.Name, controller, ViewNameSource.ActionName, line);
                 continue;
             }
 
@@ -95,11 +98,11 @@ public static class ViewCallScanner
             var constant = model.GetConstantValue(nameArgument);
             if (constant is { HasValue: true, Value: string name } && name.Length > 0)
             {
-                yield return new ViewCall(name, controller, ViewNameSource.Constant, line);
+                yield return new ViewCall(methodId, name, controller, ViewNameSource.Constant, line);
                 continue;
             }
 
-            yield return new ViewCall(null, controller, ViewNameSource.Dynamic, line,
+            yield return new ViewCall(methodId, null, controller, ViewNameSource.Dynamic, line,
                 $"view name is not a compile-time constant: {nameArgument}");
         }
     }
@@ -110,8 +113,13 @@ public static class ViewCallScanner
     /// </summary>
     private static ExpressionSyntax? NameArgument(InvocationExpressionSyntax invocation, IMethodSymbol target)
     {
-        var index = target.Parameters.IndexOf(
-            target.Parameters.FirstOrDefault(p => p.Type.SpecialType == SpecialType.System_String));
+        var index = -1;
+        for (var i = 0; i < target.Parameters.Length; i++)
+        {
+            if (target.Parameters[i].Type.SpecialType != SpecialType.System_String) continue;
+            index = i;
+            break;
+        }
         if (index < 0) return null;
 
         var arguments = invocation.ArgumentList.Arguments;

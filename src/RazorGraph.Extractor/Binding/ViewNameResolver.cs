@@ -86,6 +86,41 @@ public static class ViewNameResolver
     public static string? ResolveOne(string name, string? fromRelativePath, IEnumerable<string> candidates) =>
         Resolve(name, fromRelativePath, candidates).FirstOrDefault();
 
+    /// <summary>
+    /// Candidates for a view rendered by a controller action, most specific first.
+    ///
+    /// `Views/{Controller}/{name}.cshtml` is tried before anything else, and that
+    /// ordering is load-bearing rather than a nicety: OrchardCore has 34 templates
+    /// named Edit, and the controller folder is the only thing separating
+    /// MenuController.Edit from NodeController.Edit. Without it they collapse to
+    /// one arbitrary winner.
+    /// </summary>
+    /// <param name="controller">Controller name without its suffix — "Menu", not "MenuController".</param>
+    public static IReadOnlyList<string> ResolveForController(
+        string name, string controller, IEnumerable<string> candidates)
+    {
+        var all = candidates.Select(Normalize).ToList();
+        var wanted = Normalize(name);
+
+        // An explicit path ignores the controller entirely, as it does everywhere else.
+        if (IsExplicitPath(wanted)) return Resolve(name, null, all);
+
+        var stem = StripExtension(wanted);
+        var ordered = new List<string>();
+
+        // Views/{Controller}/{name}.cshtml, wherever that Views folder sits.
+        AddIfPresent(ordered, all, p => p.EndsWith($"/Views/{controller}/{stem}.cshtml", StringComparison.OrdinalIgnoreCase)
+                                        || p.Equals($"Views/{controller}/{stem}.cshtml", StringComparison.OrdinalIgnoreCase));
+
+        // Then the ordinary shared search, which the base overload already knows.
+        foreach (var shared in Resolve(name, $"Views/{controller}/_.cshtml", all))
+        {
+            if (!ordered.Contains(shared, StringComparer.OrdinalIgnoreCase)) ordered.Add(shared);
+        }
+
+        return ordered;
+    }
+
     private static bool IsExplicitPath(string name) =>
         name.StartsWith('~') || name.StartsWith('/') || name.EndsWith(".cshtml", StringComparison.OrdinalIgnoreCase);
 
