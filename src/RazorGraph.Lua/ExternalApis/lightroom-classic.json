@@ -8,6 +8,8 @@
     "INCOMPLETE BY CONSTRUCTION: only catalogedVersions were read, and Adobe has shipped beyond them. A module missing here may simply be newer, so an unrecognised import must be reported as unknown-to-this-catalogue, never as nonexistent.",
     "UNDOCUMENTED MODULES: undocumentedModules holds namespaces imported by Adobe's own sample plug-ins that appear on no API Reference page. They are real and usable, but no published documentation describes them, so anything built on them is built on observation. Read from the sample sources, not from the SDK guide PDFs, whose extracted text runs words together and would poison this list with fragments.",
     "seenIn on an undocumented module is the earliest CATALOGUED version whose samples import it, not the release that introduced it. With gaps between catalogued versions the two can be far apart: LrController and LrTableUtils have no trace at all in 3.0 or 8.0 and appear in 15.3, so all that can be said is that they arrived somewhere in between -- possibly documented at the time and undocumented since.",
+    "PARAMETER VALUES: paramValues on a function lists the values a parameter accepts, read ONLY where the reference introduces them with an enumeration lead-in (\"The following keys are recognized\", \"These valid keys return these values\", \"Valid values are\", \"one of the following strings\"). Absence means the docs do not enumerate that parameter -- NEVER that anything is accepted, and never that a value is wrong. Deliberately narrow: the reference holds 112 bulleted name lists and most describe the shape of a RETURN value (\"A table with these fields\", 26 of them), so harvesting them all would reject correct code.",
+    "CARRIED FORWARD: guide-derived manifest keys cannot be regenerated without -GuideTextDir, whose input lives outside this repository. A run without it PRESERVES the previous answer for those keys rather than deleting them, and reports how many it carried. So a guide-sourced entry may predate the newest run; re-run with -GuideTextDir to refresh it.",
     "MANIFEST KEYS: manifestKeys lists what an Info.lua may declare. source=samples means observed in Adobe's example plug-ins and therefore exact but only as complete as their usage; source=guide means read from the SDK guide's manifest table, which also supplies type and whether the key is required. Guide-derived entries depend on pre-extracted text being supplied, so their absence means nobody supplied it, not that the guide lists nothing.",
     "PROVENANCE: sourced only from SDK packages downloaded from Adobe's Developer Console (https://developer.adobe.com/console/73617/servicesandapis), which requires an Adobe ID. Each entry in provenance is the version line the package states about ITSELF, checked against the folder it was read from. Third-party mirrors and legacy download hosts are not acceptable sources: a catalogue claiming to be authoritative about Adobe's API surface is worth nothing if its contents came from somewhere unverifiable."
   ],
@@ -2595,7 +2597,165 @@
           "since": "1.3",
           "params": [
             "key:string"
-          ]
+          ],
+          "paramValues": {
+            "key": {
+              "keywordTags": {},
+              "keywordTagsForExport": {},
+              "fileName": {},
+              "preservedFileName": {},
+              "copyName": {},
+              "folderName": {},
+              "fileSize": {},
+              "fileType": {},
+              "rating": {},
+              "label": {},
+              "title": {},
+              "caption": {},
+              "dimensions": {},
+              "croppedDimensions": {},
+              "exposure": {},
+              "shutterSpeed": {},
+              "aperture": {},
+              "brightnessValue": {},
+              "exposureBias": {},
+              "flash": {},
+              "exposureProgram": {},
+              "meteringMode": {},
+              "isoSpeedRating": {},
+              "focalLength": {},
+              "focalLength35mm": {},
+              "lens": {},
+              "subjectDistance": {},
+              "dateTimeOriginal": {},
+              "dateTimeDigitized": {},
+              "dateTime": {},
+              "cameraMake": {},
+              "cameraModel": {},
+              "cameraSerialNumber": {},
+              "artist": {},
+              "software": {},
+              "gps": {},
+              "gpsAltitude": {},
+              "creator": {},
+              "creatorJobTitle": {},
+              "creatorAddress": {},
+              "creatorCity": {},
+              "creatorStateProvince": {},
+              "creatorPostalCode": {},
+              "creatorCountry": {},
+              "creatorPhone": {},
+              "creatorEmail": {},
+              "creatorUrl": {},
+              "headline": {},
+              "iptcSubjectCode": {},
+              "descriptionWriter": {},
+              "iptcCategory": {},
+              "iptcOtherCategories": {},
+              "dateCreated": {},
+              "intellectualGenre": {},
+              "scene": {},
+              "location": {},
+              "city": {},
+              "stateProvince": {},
+              "country": {},
+              "isoCountryCode": {},
+              "jobIdentifier": {},
+              "instructions": {},
+              "provider": {},
+              "source": {},
+              "copyright": {},
+              "copyrightState": {},
+              "rightsUsageTerms": {},
+              "personShown": {
+                "since": "3.0"
+              },
+              "locationCreated": {
+                "since": "3.0"
+              },
+              "locationShown": {
+                "since": "3.0"
+              },
+              "nameOfOrgShown": {
+                "since": "3.0"
+              },
+              "codeOfOrgShown": {
+                "since": "3.0"
+              },
+              "event": {
+                "since": "3.0"
+              },
+              "artworksShown": {
+                "since": "3.0"
+              },
+              "additionalModelInfo": {
+                "since": "3.0"
+              },
+              "modelAge": {
+                "since": "3.0"
+              },
+              "minorModelAge": {
+                "since": "3.0"
+              },
+              "modelReleaseStatus": {
+                "since": "3.0"
+              },
+              "modelReleaseID": {
+                "since": "3.0"
+              },
+              "imageSupplier": {
+                "since": "3.0"
+              },
+              "imageSupplierImageId": {
+                "since": "3.0"
+              },
+              "registryId": {
+                "since": "3.0"
+              },
+              "maxAvailWidth": {
+                "since": "3.0"
+              },
+              "maxAvailHeight": {
+                "since": "3.0"
+              },
+              "sourceType": {
+                "since": "3.0"
+              },
+              "imageCreator": {
+                "since": "3.0"
+              },
+              "copyrightOwner": {
+                "since": "3.0"
+              },
+              "licensor": {
+                "since": "3.0"
+              },
+              "propertyReleaseID": {
+                "since": "3.0"
+              },
+              "propertyReleaseStatus": {
+                "since": "3.0"
+              },
+              "digImageGUID": {
+                "since": "3.0"
+              },
+              "plusVersion": {
+                "since": "3.0"
+              },
+              "gpsImgDirection": {
+                "since": "6.0"
+              },
+              "duration": {},
+              "trimmedDuration": {},
+              "frameRate": {},
+              "altTextAccessibility": {
+                "since": "13.2"
+              },
+              "extDescrAccessibility": {
+                "since": "13.2"
+              }
+            }
+          }
         },
         "photo:getNameViaPreset": {
           "since": "3.0",
@@ -2618,7 +2778,122 @@
           "since": "1.3",
           "params": [
             "key:string"
-          ]
+          ],
+          "paramValues": {
+            "key": {
+              "fileSize": {},
+              "rating": {},
+              "dimensions": {},
+              "croppedDimensions": {},
+              "shutterSpeed": {},
+              "aperture": {},
+              "exposureBias": {},
+              "flash": {},
+              "isoSpeedRating": {},
+              "focalLength": {},
+              "focalLength35mm": {},
+              "dateTimeOriginal": {},
+              "dateTimeDigitized": {},
+              "dateTime": {},
+              "gps": {},
+              "gpsAltitude": {},
+              "countVirtualCopies": {},
+              "virtualCopies": {},
+              "masterPhoto": {},
+              "isVirtualCopy": {},
+              "countStackInFolderMembers": {},
+              "stackInFolderMembers": {},
+              "isInStackInFolder": {},
+              "stackInFolderIsCollapsed": {},
+              "stackPositionInFolder": {},
+              "topOfStackInFolderContainingPhoto": {},
+              "colorNameForLabel": {},
+              "fileFormat": {
+                "since": "2.0"
+              },
+              "width": {
+                "since": "2.0"
+              },
+              "height": {
+                "since": "2.0"
+              },
+              "aspectRatio": {
+                "since": "2.0"
+              },
+              "isCropped": {
+                "since": "2.0"
+              },
+              "dateTimeOriginalISO8601": {
+                "since": "2.0"
+              },
+              "dateTimeDigitizedISO8601": {
+                "since": "2.0"
+              },
+              "dateTimeISO8601": {
+                "since": "2.0"
+              },
+              "lastEditTime": {
+                "since": "2.0"
+              },
+              "editCount": {
+                "since": "2.0"
+              },
+              "copyrightState": {
+                "since": "2.0"
+              },
+              "uuid": {
+                "since": "3.0"
+              },
+              "path": {
+                "since": "3.0"
+              },
+              "isVideo": {
+                "since": "3.0"
+              },
+              "durationInSeconds": {
+                "since": "3.0"
+              },
+              "keywords": {
+                "since": "3.0"
+              },
+              "customMetadata": {
+                "since": "3.0"
+              },
+              "pickStatus": {
+                "since": "4.0"
+              },
+              "trimmedDurationInSeconds": {
+                "since": "4.1"
+              },
+              "durationRatio": {
+                "since": "4.1"
+              },
+              "trimmedDurationRatio": {
+                "since": "4.1"
+              },
+              "locationIsPrivate": {
+                "since": "4.1"
+              },
+              "smartPreviewInfo": {
+                "since": "5.0"
+              },
+              "gpsImgDirection": {
+                "since": "6.0"
+              },
+              "bitDepth": {
+                "since": "12.1"
+              },
+              "altTextAccessibility": {
+                "since": "13.2"
+              },
+              "extDescrAccessibility": {
+                "since": "13.2"
+              },
+              "isExported": {
+                "since": "13.3"
+              }
+            }
+          }
         },
         "photo:isAvailableForEditing": {
           "since": "15.3"
@@ -2710,7 +2985,134 @@
           "params": [
             "key:string",
             "value:any"
-          ]
+          ],
+          "paramValues": {
+            "key": {
+              "rating": {},
+              "label": {},
+              "title": {},
+              "caption": {},
+              "copyName": {},
+              "creator": {},
+              "creatorJobTitle": {},
+              "creatorAddress": {},
+              "creatorCity": {},
+              "creatorStateProvince": {},
+              "creatorPostalCode": {},
+              "creatorCountry": {},
+              "creatorPhone": {},
+              "creatorEmail": {},
+              "creatorUrl": {},
+              "headline": {},
+              "iptcSubjectCode": {},
+              "descriptionWriter": {},
+              "iptcCategory": {},
+              "iptcOtherCategories": {},
+              "dateCreated": {},
+              "intellectualGenre": {},
+              "scene": {},
+              "location": {},
+              "city": {},
+              "stateProvince": {},
+              "country": {},
+              "isoCountryCode": {},
+              "jobIdentifier": {},
+              "instructions": {},
+              "provider": {},
+              "source": {},
+              "copyright": {},
+              "copyrightState": {},
+              "rightsUsageTerms": {},
+              "colorNameForLabel": {},
+              "personShown": {
+                "since": "3.0"
+              },
+              "locationCreated": {
+                "since": "3.0"
+              },
+              "locationShown": {
+                "since": "3.0"
+              },
+              "nameOfOrgShown": {
+                "since": "3.0"
+              },
+              "codeOfOrgShown": {
+                "since": "3.0"
+              },
+              "event": {
+                "since": "3.0"
+              },
+              "artworksShown": {
+                "since": "3.0"
+              },
+              "additionalModelInfo": {
+                "since": "3.0"
+              },
+              "modelAge": {
+                "since": "3.0"
+              },
+              "minorModelAge": {
+                "since": "3.0"
+              },
+              "modelReleaseStatus": {
+                "since": "3.0"
+              },
+              "modelReleaseID": {
+                "since": "3.0"
+              },
+              "imageSupplier": {
+                "since": "3.0"
+              },
+              "imageSupplierImageId": {
+                "since": "3.0"
+              },
+              "registryId": {
+                "since": "3.0"
+              },
+              "maxAvailWidth": {
+                "since": "3.0"
+              },
+              "maxAvailHeight": {
+                "since": "3.0"
+              },
+              "sourceType": {
+                "since": "3.0"
+              },
+              "imageCreator": {
+                "since": "3.0"
+              },
+              "copyrightOwner": {
+                "since": "3.0"
+              },
+              "licensor": {
+                "since": "3.0"
+              },
+              "propertyReleaseID": {
+                "since": "3.0"
+              },
+              "propertyReleaseStatus": {
+                "since": "3.0"
+              },
+              "gps": {
+                "since": "4.0"
+              },
+              "gpsAltitude": {
+                "since": "4.0"
+              },
+              "pickStatus": {
+                "since": "4.0"
+              },
+              "gpsImgDirection": {
+                "since": "6.0"
+              },
+              "altTextAccessibility": {
+                "since": "13.2"
+              },
+              "extDescrAccessibility": {
+                "since": "13.2"
+              }
+            }
+          }
         },
         "photo:type": {
           "since": "4.1"
