@@ -19,7 +19,29 @@ using System.Text.Json.Serialization;
 /// inferred from which packages happen to be on disk.
 /// </param>
 /// <param name="Params">Declared parameters as "name:type", type as the docs give it.</param>
-public sealed record ApiFunction(string? Since = null, List<string>? Params = null);
+/// <param name="ParamValues">
+/// Per parameter name, the values the docs enumerate for it, each with the version
+/// that introduced it where one is stated. Present only where the documentation
+/// actually enumerates — three functions carry it today, the metadata accessors.
+///
+/// ABSENCE IS NOT PERMISSION. A parameter with no entry means the docs did not
+/// list its values, never that any value is acceptable, so nothing may call a
+/// value wrong on the strength of a missing entry.
+/// </param>
+public sealed record ApiFunction(
+    string? Since = null,
+    List<string>? Params = null,
+    Dictionary<string, Dictionary<string, ApiParamValue>>? ParamValues = null);
+
+/// <summary>One enumerated value a parameter accepts.</summary>
+/// <param name="Since">
+/// The release that added this value, where the docs continue a list with "first
+/// supported in version X". Null for the base list, which is as old as the
+/// function itself. The version rides on the VALUE rather than the parameter
+/// because that is where it varies: setRawMetadata has accepted a key since 2.0
+/// and gained others in 3.0, 4.0, 6.0 and 13.2.
+/// </param>
+public sealed record ApiParamValue(string? Since = null);
 
 /// <summary>One module in a catalogued external API surface.</summary>
 /// <param name="FirstCataloguedIn">
@@ -256,6 +278,37 @@ public sealed class ExternalApiCatalog
         Modules.TryGetValue(moduleName, out var module)
         && module.Functions is not null
         && module.Functions.ContainsKey(functionName);
+
+    /// <summary>
+    /// The values the docs enumerate for a function's parameter at a position, or
+    /// null when they enumerate none.
+    /// </summary>
+    /// <remarks>
+    /// Null and empty mean different things and callers must keep them apart. Null
+    /// is "the documentation does not enumerate this parameter", which licenses no
+    /// judgement about any value. Only a non-null set makes a value checkable, and
+    /// even then only a value the caller can actually see.
+    ///
+    /// Positional because a call site is positional. The catalogue keys values by
+    /// parameter NAME, and the bridge between the two is Params, which is ordered
+    /// as the documentation lists them.
+    /// </remarks>
+    public IReadOnlyDictionary<string, ApiParamValue>? ValuesForParameter(
+        string moduleName, string functionName, int position)
+    {
+        if (!Modules.TryGetValue(moduleName, out var module)) return null;
+        if (module.Functions is null) return null;
+        if (!module.Functions.TryGetValue(functionName, out var function)) return null;
+        if (function.ParamValues is null || function.Params is null) return null;
+        if (position < 0 || position >= function.Params.Count) return null;
+
+        // Params entries are "name:type"; the name is what ParamValues is keyed by.
+        var declared = function.Params[position];
+        var cut = declared.IndexOf(':', StringComparison.Ordinal);
+        var name = cut > 0 ? declared[..cut] : declared;
+
+        return function.ParamValues.TryGetValue(name, out var values) ? values : null;
+    }
 
     /// <summary>
     /// The latest of a set of version strings, compared as versions. Ordinal

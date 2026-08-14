@@ -33,10 +33,51 @@ public sealed class LightroomHost : ILuaHost
     /// every host and are not listed here.
     /// </summary>
     public IEnumerable<Checks.ILuaRule> Rules =>
-        [new LightroomSdkRule(), new LightroomManifestRule(), new LightroomReachabilityRule()];
+    [
+        new LightroomSdkRule(),
+        new LightroomArgumentRule(),
+        new LightroomManifestRule(),
+        new LightroomReachabilityRule()
+    ];
 
     /// <summary>The Lightroom SDK is Lua 5.1.</summary>
     public LuaDialect Dialect => LuaDialect.Lua51;
+
+    /// <summary>
+    /// Method names distinctive enough to identify their owner without knowing the
+    /// receiver's type. A curated list, not a computed one.
+    /// </summary>
+    /// <remarks>
+    /// The obvious rule -- resolve any method name that is unique in the catalogue
+    /// -- was tried and is WRONG. It is unique across the SDK for 232 of 264 names,
+    /// which sounds convincing and measures the wrong thing: the competition is not
+    /// other SDK types, it is Lua's own handles and the user's own objects. Run
+    /// against a real plug-in it resolved <c>file:close()</c> -- an io handle from
+    /// <c>io.open</c> -- to <c>LrSocket.socket:close</c>, in a plug-in that never
+    /// imports LrSocket. A checker that then judged its arguments would report a
+    /// fault in correct code, which is worse than reporting nothing.
+    ///
+    /// The guard that would normally save this does not apply here: requiring the
+    /// owning module to be imported works for most types and fails for exactly this
+    /// one, since nobody imports LrPhoto -- photos arrive from
+    /// <c>catalog:getTargetPhotos()</c>.
+    ///
+    /// So the list is short and each entry earns its place by being a name nothing
+    /// else would plausibly use. "setRawMetadata" is not a method anyone gives their
+    /// own table; "close", "name" and "row" are. Adding an entry means asking that
+    /// question, not counting occurrences.
+    /// </remarks>
+    private static readonly Dictionary<string, (string Module, string Function)> ResolvableMethods =
+        new(StringComparer.Ordinal)
+        {
+            ["setRawMetadata"] = ("LrPhoto", "photo:setRawMetadata"),
+            ["getRawMetadata"] = ("LrPhoto", "photo:getRawMetadata"),
+            ["getFormattedMetadata"] = ("LrPhoto", "photo:getFormattedMetadata")
+        };
+
+    /// <inheritdoc />
+    public (string Module, string Function)? OwnerOfInstanceMethod(string methodName) =>
+        ResolvableMethods.TryGetValue(methodName, out var owner) ? owner : null;
 
     public ModuleReferenceSupport ReferenceSupport => ModuleReferenceSupport.Static;
 
@@ -249,7 +290,68 @@ public sealed class LightroomHost : ILuaHost
             .ToList();
 
         if (uncatalogued.Count > 0) node.SetProperty("sdkCallsNotInCatalogue", uncatalogued);
+
+        AnnotateArgumentValues(node, sdkCalls, required);
     }
+
+    /// <summary>
+    /// Literal arguments measured against the values the SDK documents for them.
+    /// </summary>
+    /// <remarks>
+    /// Computed here rather than in the rule for the same reason
+    /// <c>sdkCallsNotInCatalogue</c> is: the rule sees the graph, and the graph
+    /// keeps node properties, while the arguments exist only on the ExternalCall
+    /// objects this method is handed. Persisting call sites structurally would
+    /// change the graph format for one consumer; a pair of string lists says the
+    /// same thing in the vocabulary the file already has.
+    ///
+    /// Two lists, not one, because they are two different faults with two
+    /// different fixes: a value the docs never list is probably a typo, and a
+    /// value that exists but postdates the plug-in's declared floor is a version
+    /// problem. Merging them would leave a reader guessing which they had.
+    /// </remarks>
+    private static void AnnotateArgumentValues(GraphNode node, List<ExternalCall> sdkCalls, string? floor)
+    {
+        var undocumented = new List<string>();
+        var tooNew = new List<string>();
+
+        foreach (var call in sdkCalls)
+        {
+            if (call.Arguments is null) continue;
+
+            for (var position = 0; position < call.Arguments.Count; position++)
+            {
+                // Null is an expression rather than a literal, and an expression
+                // cannot be judged from here. Silence is the honest answer.
+                if (call.Arguments[position] is not { } literal) continue;
+
+                var allowed = Catalog.ValuesForParameter(call.Module, call.Function, position);
+
+                // The docs enumerate nothing for this parameter. That licenses no
+                // opinion at all -- absence of a list is not a list of one.
+                if (allowed is null) continue;
+
+                if (!allowed.TryGetValue(literal, out var value))
+                {
+                    undocumented.Add($"{call.Module}.{call.Function} '{literal}' (line {call.Line})");
+                    continue;
+                }
+
+                if (value.Since is { } since && floor is not null && IsNewer(since, floor))
+                {
+                    tooNew.Add($"{call.Module}.{call.Function} '{literal}' needs {since} (line {call.Line})");
+                }
+            }
+        }
+
+        if (undocumented.Count > 0) node.SetProperty("sdkArgumentsNotDocumented", undocumented);
+        if (tooNew.Count > 0) node.SetProperty("sdkArgumentsNewerThanFloor", tooNew);
+    }
+
+    private static bool IsNewer(string candidate, string current) =>
+        Version.TryParse(candidate, out var left)
+        && Version.TryParse(current, out var right)
+        && left > right;
 
     /// <summary>The module name out of a driver line: "LrView (1.3, called)" -> "LrView".</summary>
     private static string ModuleOfDriver(string driver)

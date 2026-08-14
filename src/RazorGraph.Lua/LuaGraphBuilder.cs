@@ -402,7 +402,7 @@ public sealed class LuaGraphBuilder
 
                     if (binding.ExternalName is { } externalModule)
                     {
-                        RecordExternal(fromId, new ExternalCall(externalModule, member, call.Line));
+                        RecordExternal(fromId, new ExternalCall(externalModule, member, call.Line, call.Arguments));
                         externalCalls++;
                         continue;
                     }
@@ -422,6 +422,27 @@ public sealed class LuaGraphBuilder
                 }
 
                 if (IsStandardLibrary(call)) { stdlib++; continue; }
+
+                // obj:f() where obj is a value, not a module. Lua has no types, so
+                // the receiver is unidentifiable -- but the host may recognise the
+                // METHOD, and answers only when the name admits one answer. This is
+                // the only route by which Lightroom's metadata accessors are ever
+                // seen: their receivers are table elements and loop variables, so
+                // without it every one of them dies here as "unresolved".
+                //
+                // Not applied when this module declares the name itself: a local
+                // function that happens to share a name with a host method belongs
+                // to the local one, and attributing it outward would be a finding
+                // about somebody's own code.
+                if (call.Form == "method"
+                    && call.Member is { } method
+                    && (localFunctions is null || !localFunctions.ContainsKey(call.Callee))
+                    && host.OwnerOfInstanceMethod(method) is { } owner)
+                {
+                    RecordExternal(fromId, new ExternalCall(owner.Module, owner.Function, call.Line, call.Arguments));
+                    externalCalls++;
+                    continue;
+                }
 
                 unresolved++;
             }

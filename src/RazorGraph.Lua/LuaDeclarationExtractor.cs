@@ -28,6 +28,17 @@ public sealed record LuaReference(string Mechanism, string? Target, int Line, st
 /// (<c>obj:f()</c>), or <c>chain</c> (<c>a.b.c()</c>, where the middle is not
 /// tracked and only the root and final name survive).
 /// </param>
+/// <param name="Arguments">
+/// The call's arguments, positionally, with a literal string's value where it has
+/// one and null where it does not. Null entries are the point as much as the
+/// values: a checker must be able to tell "this argument is the string 'caption'"
+/// from "this argument is an expression nobody can evaluate here", and treat only
+/// the first as something it may judge.
+///
+/// Empty for a call with no arguments, and for argument shapes that carry no
+/// literal at all — a table constructor, <c>f{...}</c>, is a single argument that
+/// is never a string.
+/// </param>
 public sealed record LuaCall(
     string? EnclosingFunction,
     int? EnclosingLine,
@@ -35,7 +46,8 @@ public sealed record LuaCall(
     string Root,
     string? Member,
     string Form,
-    int Line);
+    int Line,
+    IReadOnlyList<string?> Arguments);
 
 /// <summary>
 /// A construct this host's Lua rejects that a later Lua accepts.
@@ -235,8 +247,19 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
                 // handles only the case above silently drops every method call,
                 // which in metatable-heavy Lua is most of them.
                 case MethodCallExpressionSyntax method:
-                    if (RootOf(method.Expression) is { } methodRoot)
-                        calls.Add(CallAt(method, methodRoot, method.Identifier.Text, "method", declaredAt));
+                    // A receiver that is not a simple name -- photoArray[name]:f(),
+                    // getPhotos()[1]:f() -- still records the call, with an empty
+                    // root meaning "the receiver is not a name this can follow".
+                    //
+                    // Requiring a resolvable root dropped these on the floor
+                    // entirely: not resolved, not unresolved, not counted. In
+                    // Lightroom plug-ins that is most of the interesting surface,
+                    // because photos arrive from catalog:getTargetPhotos() and are
+                    // then indexed out of a table -- so every metadata call was
+                    // invisible, and the call census quietly understated itself.
+                    calls.Add(CallAt(
+                        method, RootOf(method.Expression) ?? string.Empty,
+                        method.Identifier.Text, "method", declaredAt));
                     break;
             }
         }
@@ -416,11 +439,53 @@ public sealed class LuaDeclarationExtractor(ILuaHost host)
             if (declaredAt.TryGetValue(ancestor, out var found)) { enclosing = found; break; }
         }
 
+        // An empty root is a receiver this cannot name, so the callee is the method
+        // alone. Writing ":f" instead would invent a spelling no source contains,
+        // and it is the callee that later gets matched against declared functions.
         var separator = form == "method" ? ":" : ".";
-        var callee = member is null ? root : $"{root}{separator}{member}";
+        var callee = member is null
+            ? root
+            : root.Length == 0 ? member : $"{root}{separator}{member}";
 
-        return new LuaCall(enclosing?.Name, enclosing?.LineStart, callee, root, member, form, LineOf(site));
+        // Both call spellings carry their arguments, but on DIFFERENT node types --
+        // the same split that makes obj:f() a separate case above. Reading only
+        // FunctionCallExpressionSyntax would leave every method call argument-less,
+        // and method calls are where the metadata keys are.
+        var argument = site switch
+        {
+            FunctionCallExpressionSyntax call => call.Argument,
+            MethodCallExpressionSyntax method => method.Argument,
+            _ => null
+        };
+
+        return new LuaCall(
+            enclosing?.Name, enclosing?.LineStart, callee, root, member, form, LineOf(site),
+            LiteralArguments(argument));
     }
+
+    /// <summary>
+    /// A call's arguments positionally: the value of each literal string, null for
+    /// anything else.
+    /// </summary>
+    /// <remarks>
+    /// The single-argument sibling of this, <see cref="LiteralArgument"/>, answers
+    /// "what module is being imported". This answers "what was passed", which is a
+    /// different question: position matters, and an argument that is not a literal
+    /// must come back as null rather than being skipped. Dropping it would shift
+    /// every argument after it left, and a checker reading argument 1 would find
+    /// argument 2.
+    /// </remarks>
+    private static IReadOnlyList<string?> LiteralArguments(FunctionArgumentSyntax? argument) => argument switch
+    {
+        // f "x" and f [[x]] — one argument, always a string.
+        StringFunctionArgumentSyntax s => [s.Expression.Token.Value as string],
+
+        ExpressionListFunctionArgumentSyntax list =>
+            [.. list.Expressions.Select(e => (e as LiteralExpressionSyntax)?.Token.Value as string)],
+
+        // f{...} — a table constructor. One argument, never a literal string.
+        _ => []
+    };
 
     /// <summary>
     /// The callee split into the name it starts from and the member being

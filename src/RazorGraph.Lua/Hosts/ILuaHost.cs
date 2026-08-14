@@ -178,6 +178,24 @@ public interface ILuaHost
     /// rules, which run for everyone.
     /// </summary>
     IEnumerable<ILuaRule> Rules => [];
+
+    /// <summary>
+    /// The host API function an <c>obj:method()</c> call reaches, when the method
+    /// name alone identifies it. Null when it does not, which is the default.
+    /// </summary>
+    /// <remarks>
+    /// Lua has no types, so the receiver of a method call is usually unidentifiable
+    /// statically: <c>photoArray[name]:setRawMetadata(...)</c> is an index into a
+    /// local table. Every one of Lightroom's metadata accessors is reached that
+    /// way, so a resolver keyed only on imported module names sees none of them --
+    /// they fall into "unresolved" with locals and dynamic dispatch.
+    ///
+    /// A host that knows its own surface can do better than nothing WITHOUT
+    /// guessing, by answering only for names that admit one answer. It must refuse
+    /// ambiguity rather than pick: a wrong attribution here becomes a wrong finding
+    /// about code that is correct.
+    /// </remarks>
+    (string Module, string Function)? OwnerOfInstanceMethod(string methodName) => null;
 }
 
 /// <summary>
@@ -186,4 +204,17 @@ public interface ILuaHost
 /// </summary>
 /// <param name="Module">The external module, as the source named it.</param>
 /// <param name="Function">The function called on it, unqualified.</param>
-public sealed record ExternalCall(string Module, string Function, int Line);
+/// <param name="Arguments">
+/// The arguments as written, positionally: a literal string's value, or null where
+/// the argument is an expression this cannot evaluate. A host that knows a
+/// function's accepted values can check the ones it can see and must stay silent
+/// about the rest — the nulls are what keep it honest about which is which.
+///
+/// Defaulted so a host or test that only cares about who-calls-what can build one
+/// without inventing an argument list.
+/// </param>
+public sealed record ExternalCall(
+    string Module,
+    string Function,
+    int Line,
+    IReadOnlyList<string?>? Arguments = null);

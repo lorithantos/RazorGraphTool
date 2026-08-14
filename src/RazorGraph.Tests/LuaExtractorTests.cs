@@ -609,6 +609,85 @@ public class LuaExtractorTests
         Assert.Equal("lightroom.manifest", finding.RuleId);
     }
 
+    /// <summary>A plug-in whose only content is one metadata call on an indexed receiver.</summary>
+    /// <remarks>
+    /// Indexed on purpose. photoArray[name]:setRawMetadata(...) is how every real
+    /// plug-in reaches a photo, and a receiver that is not a plain name was not
+    /// recorded at all until it was fixed -- so a test that wrote photo:f() would
+    /// pass while the case that exists in the wild stayed invisible.
+    /// </remarks>
+    private static void WriteMetadataCall(TempTree tree, string call)
+    {
+        WriteManifest(tree, """
+              LrSdkVersion = 15.0,
+              LrToolkitIdentifier = 'com.example.p',
+              LrExportMenuItems = { { title = 'go', file = 'Work.lua' } },
+            """);
+        tree.Write("p.lrdevplugin/Work.lua", $"local photos = {{}}\n{call}\n");
+    }
+
+    [Fact]
+    public void SdkArgument_AValueTheReferenceDoesNotList_IsAnError()
+    {
+        // The check the signature cannot make: setRawMetadata takes a string, and
+        // "capshun" is a string. Only the enumerated key list separates it from
+        // "caption", and without that this fails inside Lightroom or not at all.
+        using var tree = new TempTree();
+        WriteMetadataCall(tree, "photos[1]:setRawMetadata('capshun', 1)");
+
+        var (_, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        var finding = Assert.Single(report.Findings, f => f.RuleId == "lightroom.sdk-argument");
+        Assert.Equal(Lua.Checks.LuaSeverity.Error, finding.Severity);
+        Assert.Contains("capshun", finding.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SdkArgument_ADocumentedValue_SaysNothing()
+    {
+        using var tree = new TempTree();
+        WriteMetadataCall(tree, "photos[1]:setRawMetadata('caption', 'x')");
+
+        var (_, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        Assert.DoesNotContain(report.Findings, f => f.RuleId == "lightroom.sdk-argument");
+    }
+
+    [Fact]
+    public void SdkArgument_AnArgumentThatIsNotALiteral_SaysNothing()
+    {
+        // A variable cannot be judged from here, and guessing would produce a
+        // confident finding about code that is very likely correct.
+        using var tree = new TempTree();
+        WriteMetadataCall(tree, "local k = 'caption'\nphotos[1]:setRawMetadata(k, 'x')");
+
+        var (_, report) = new LuaGraphBuilder().Build(tree.Root);
+
+        Assert.DoesNotContain(report.Findings, f => f.RuleId == "lightroom.sdk-argument");
+    }
+
+    [Fact]
+    public void SdkArgument_AMethodNameSharedWithLuaItself_IsNotAttributedToTheSdk()
+    {
+        // The regression this rule was nearly shipped with. Resolving any method
+        // name unique in the catalogue attributed file:close() -- an io handle --
+        // to LrSocket.socket:close, in a plug-in that never imports LrSocket. The
+        // competition for a method name is not other SDK types; it is Lua's own
+        // handles and the user's own objects.
+        using var tree = new TempTree();
+        WriteMetadataCall(tree, "local file = io.open('x')\nfile:close()");
+
+        var (graph, _) = new LuaGraphBuilder().Build(tree.Root);
+
+        var sdkCalls = graph.Nodes
+            .Select(n => n.GetProperty<List<string>>("sdkCalls"))
+            .Where(calls => calls is not null)
+            .SelectMany(calls => calls!)
+            .ToList();
+
+        Assert.DoesNotContain(sdkCalls, call => call.Contains("LrSocket", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void Manifest_DeclaringAnSdkOlderThanTheCodeNeeds_IsAnError()
     {
