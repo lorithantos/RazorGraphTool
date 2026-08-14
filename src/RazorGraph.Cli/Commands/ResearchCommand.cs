@@ -32,8 +32,8 @@ internal static class ResearchCommand
         };
         var outputOpt = new Option<string>("--output", "-o")
         {
-            Description = "Output research JSON file",
-            DefaultValueFactory = _ => "research.json"
+            Description = $"Output research JSON file (default: inside {GraphFiles.OutputDirectory}\\)",
+            DefaultValueFactory = _ => GraphFiles.DefaultOutput("research.json")
         };
 
         var cmd = new Command("research", "Export a relevance-scored subgraph around focus nodes for LLM consumption");
@@ -76,13 +76,13 @@ internal static class ResearchCommand
         }
 
         var json = GraphSerializer.ToResearchDocument(graph, relevance, queryText, threshold);
-        var outputDir = Path.GetDirectoryName(Path.GetFullPath(outputPath));
-        if (!string.IsNullOrEmpty(outputDir)) Directory.CreateDirectory(outputDir);
+        GraphFiles.PrepareOutput(outputPath);
         await File.WriteAllTextAsync(outputPath, json, ct);
 
         var included = relevance.Count(kv => kv.Value >= threshold);
         Console.WriteLine($"Research document: {included} of {relevance.Count} reached nodes at threshold {threshold}");
         Console.WriteLine($"Output written to {outputPath}");
+        GraphFiles.ReportGitAdvice(outputPath);
         return 0;
     }
 }

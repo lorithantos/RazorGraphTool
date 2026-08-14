@@ -10,19 +10,40 @@ using RazorGraph.Core.Serialization;
 /// </summary>
 internal static class GraphFiles
 {
+    /// <summary>The directory every default output goes in. See <see cref="GraphOutput"/>.</summary>
+    internal const string OutputDirectory = GraphOutput.Directory;
+
+    /// <summary>A default output path inside <see cref="OutputDirectory"/>.</summary>
+    internal static string DefaultOutput(string fileName) => GraphOutput.Default(fileName);
+
     internal static bool IsSolutionFile(FileInfo path) =>
         path.Extension.Equals(".sln", StringComparison.OrdinalIgnoreCase)
         || path.Extension.Equals(".slnx", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>Creates the output directory. See <see cref="GraphOutput.Prepare"/>.</summary>
+    internal static void PrepareOutput(string outputPath) => GraphOutput.Prepare(outputPath);
+
+    /// <summary>
+    /// Prints the git advice for a path just written, if there is any.
+    /// </summary>
+    /// <remarks>
+    /// stderr, because it is a note about the caller's repository rather than part of the
+    /// result, and a command whose stdout is piped somewhere should not have this in the pipe.
+    /// </remarks>
+    internal static void ReportGitAdvice(string outputPath)
+    {
+        if (GraphOutput.GitAdvice(outputPath) is { } advice) Console.Error.WriteLine(advice);
+    }
+
     internal static async Task WriteGraphAsync(CodeGraph graph, string outputPath, CancellationToken ct)
     {
         var json = GraphSerializer.ToJson(graph);
-        var outputDir = Path.GetDirectoryName(Path.GetFullPath(outputPath));
-        if (!string.IsNullOrEmpty(outputDir)) Directory.CreateDirectory(outputDir);
+        PrepareOutput(outputPath);
         await File.WriteAllTextAsync(outputPath, json, ct);
 
         Console.WriteLine($"Graph built: {graph.Nodes.Count} nodes, {graph.Edges.Count} edges");
         Console.WriteLine($"Output written to {outputPath}");
+        ReportGitAdvice(outputPath);
     }
 
     internal static async Task<CodeGraph?> LoadGraphAsync(FileInfo graphFile, CancellationToken ct)

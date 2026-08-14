@@ -16,8 +16,8 @@ internal static class BuildCommands
         var pathArg = new Argument<FileInfo>("path") { Description = "Path to a .csproj or .sln file" };
         var outputOpt = new Option<string>("--output", "-o")
         {
-            Description = "Output graph JSON file",
-            DefaultValueFactory = _ => "graph.json"
+            Description = $"Output graph JSON file (default: inside {GraphFiles.OutputDirectory}\\)",
+            DefaultValueFactory = _ => GraphFiles.DefaultOutput("graph.json")
         };
         var projectOpt = new Option<string?>("--project")
         {
@@ -85,8 +85,8 @@ internal static class BuildCommands
         var pathArg = new Argument<FileInfo>("path") { Description = "Path to a .sln or .slnx file" };
         var outputOpt = new Option<string>("--output", "-o")
         {
-            Description = "Output graph JSON file",
-            DefaultValueFactory = _ => "solution-graph.json"
+            Description = $"Output graph JSON file (default: inside {GraphFiles.OutputDirectory}\\)",
+            DefaultValueFactory = _ => GraphFiles.DefaultOutput("solution-graph.json")
         };
 
         var includeVendorOpt = new Option<bool>("--include-vendor")

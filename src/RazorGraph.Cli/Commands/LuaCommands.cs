@@ -18,8 +18,8 @@ internal static class LuaCommands
         };
         var outputOpt = new Option<string>("--output", "-o")
         {
-            Description = "Output graph JSON file",
-            DefaultValueFactory = _ => "lua-graph.json"
+            Description = $"Output graph JSON file (default: inside {GraphFiles.OutputDirectory}\\)",
+            DefaultValueFactory = _ => GraphFiles.DefaultOutput("lua-graph.json")
         };
         var showUnresolvedOpt = new Option<int>("--show-unresolved")
         {

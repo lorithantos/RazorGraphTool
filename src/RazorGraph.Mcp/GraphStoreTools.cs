@@ -138,10 +138,19 @@ public sealed class GraphStoreTools(GraphStore store)
     {
         var entry = store.Require(graphId);
         var full = Path.GetFullPath(outputPath);
-        var dir = Path.GetDirectoryName(full);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        GraphOutput.Prepare(full);
         await File.WriteAllTextAsync(full, GraphSerializer.ToJson(entry.Graph), ct);
-        return ToolResponses.ToJson(new { saved = full, graphId = entry.Id, nodes = entry.Graph.Nodes.Count, edges = entry.Graph.Edges.Count });
+
+        // Present only when there is something to act on, so its presence IS the signal. An
+        // always-there field reading "nothing to do" is one the reader learns to skip.
+        return ToolResponses.ToJson(new
+        {
+            saved = full,
+            graphId = entry.Id,
+            nodes = entry.Graph.Nodes.Count,
+            edges = entry.Graph.Edges.Count,
+            gitAdvice = GraphOutput.GitAdvice(full),
+        });
     }
 
     [McpServerTool(Name = "list_graphs")]
