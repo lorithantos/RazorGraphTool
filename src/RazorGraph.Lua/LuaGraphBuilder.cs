@@ -51,6 +51,23 @@ public sealed class LuaGraphBuilder
     public const string ModuleKind = "luaModule";
     public const string RequiresKind = "requires";
 
+    /// <summary>
+    /// A function outside the graph that code here calls: the host's own API, or a
+    /// library this unit does not contain.
+    /// </summary>
+    /// <remarks>
+    /// A node rather than a string on a property, so "who calls this" is a graph
+    /// traversal like every other. The same fact already lived in the externalCalls
+    /// and sdkCalls lists, but only as text a reader had to search -- there was no
+    /// way to ask which call sites reach LrPhoto's metadata accessors without
+    /// grepping node properties, which is the failure the graph exists to end.
+    ///
+    /// Host-agnostic on purpose: the node says a call leaves the graph and where it
+    /// lands. Whether that destination is catalogued, dated, or retired is host
+    /// knowledge, and stays on the module properties the host already annotates.
+    /// </remarks>
+    public const string ExternalFunctionKind = "luaExternalFunction";
+
     private readonly CodeGraph _graph = new();
 
     /// <summary>
@@ -362,6 +379,28 @@ public sealed class LuaGraphBuilder
             if (!externalByNode.TryGetValue(nodeId, out var list))
                 externalByNode[nodeId] = list = new List<ExternalCall>();
             list.Add(call);
+
+            // One node per external function, created on first sight, and one edge
+            // per call SITE -- not per function. Collapsing repeat calls would lose
+            // the lines, and the line is what a reader needs to act on a finding.
+            var targetId = $"ext:{call.Module}.{call.Function}";
+            if (_graph.GetNode(targetId) is null)
+            {
+                var target = new GraphNode
+                {
+                    Id = targetId,
+                    Type = NodeType.Unknown,
+                    ForeignType = ExternalFunctionKind,
+                    Name = call.Function
+                };
+                target.SetProperty("module", call.Module);
+                _graph.AddNode(target);
+            }
+
+            var edge = new GraphEdge { FromId = nodeId, ToId = targetId, Type = EdgeType.Calls };
+            edge.Properties["line"] = call.Line;
+            edge.Properties["callee"] = $"{call.Module}.{call.Function}";
+            _graph.AddEdge(edge);
         }
 
         foreach (var decl in declarations)
