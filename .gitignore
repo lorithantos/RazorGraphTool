@@ -369,3 +369,13 @@ FodyWeavers.xsd
 # and run freely; re-publish only when you want the server to pick up changes.
 # Not matched by the [Bb]in/ rule above, hence its own entry.
 .mcp-bin/
+
+# RazorGraph code graphs. Volatile derived data: a graph is a representation of source
+# that this repository already contains, it is wrong the moment anything is edited, and
+# git would keep every stale copy forever. Regenerate instead of committing.
+# solution-graph.json is named explicitly because it is RazorGraph.Cli build-solution's
+# default output, so it lands in whatever directory you happened to run from.
+*.graph.json
+solution-graph.json
+graphs/
+.graph/
