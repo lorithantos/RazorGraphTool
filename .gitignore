@@ -370,39 +370,15 @@ FodyWeavers.xsd
 # Not matched by the [Bb]in/ rule above, hence its own entry.
 .mcp-bin/
 
-# ---------------------------------------------------------------------------
-# RazorGraph code graphs -- AND A WARNING, because these patterns are broad.
+# Janet.Plumbline -- generated code graphs.
 #
-# WHY: a code graph is volatile derived data. It represents source this
-# repository already contains, it is wrong the moment anything is edited, and
-# git keeps every stale copy forever once one is committed. Same category as
-# obj\. There is no version worth storing -- only a note of when one was taken
-# and by what tool, which belongs in the document that cites it.
+# Derived data: regenerable from the source in this repository, wrong the moment anything
+# is edited, and kept by git forever once committed. The graph tooling writes here by
+# default, and tells you after writing if an output landed somewhere git can still see.
 #
-# WARNING: "graphs" and ".graph.json" are ordinary names, and these rules do
-# not know the difference between a generated code graph and real content you
-# authored. If you keep chart data, diagrams, plotting output or anything else
-# under a graphs\ directory or ending in .graph.json, GIT WILL IGNORE IT
-# SILENTLY -- it will simply never appear in git status, and nothing will tell
-# you why. That is this rule doing its job, not a bug.
-#
-# If a file you expected is missing from git status, ask git which line is
-# responsible:
-#
-#     git check-ignore -v path\to\your\file
-#
-# To keep something that matches anyway, either force it in once with
-#     git add -f path\to\your\file
-# or, better, add a negation BELOW these lines so it survives the next clone:
-#     !docs/diagrams/*.graph.json
-#
-# Files already tracked are unaffected: gitignore only governs untracked ones.
-#
-# solution-graph.json is named explicitly because it is the default output of
-# RazorGraph.Cli build-solution, so it lands in whatever directory the tool
-# was run from rather than anywhere deliberate.
-# ---------------------------------------------------------------------------
-*.graph.json
-solution-graph.json
-graphs/
-.graph/
+# ONE directory, deliberately, in place of the broad patterns this replaced
+# (*.graph.json, solution-graph.json, graphs/, .graph/). Those needed a warning attached,
+# because they could not tell a generated graph from a directory of charts someone
+# authored and would swallow it silently. A name nobody would choose by accident needs
+# no such warning.
+Janet.Plumbline/
