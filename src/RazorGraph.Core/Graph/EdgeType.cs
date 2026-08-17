@@ -64,6 +64,26 @@ public enum EdgeType
     Produces,
     BoundBy,
 
+    // Annotation. Emitted from a decorated node -- type, method, property, field, parameter or
+    // project -- to the attribute's type, carrying the arguments as written, the line, and which
+    // target the attribute actually hit. One edge per USAGE, not per attribute type: [Theory]
+    // with twenty [InlineData] is twenty-one edges, and without the line they would be
+    // indistinguishable from one another. The target matters because a record's primary
+    // constructor parameter is a parameter and a property at once, and an attribute on it
+    // reaches only one of them.
+    DecoratedBy,
+
+    // Registration. Emitted from a decorated node to a type an attribute names -- typeof(...)
+    // or a generic attribute's type argument -- because the framework will construct or consult
+    // that type on account of the annotation, with no call site anywhere.
+    //
+    // Deliberately NOT folded into References. That edge answers exactly one question today,
+    // "which member declarations mention this type", and its value is that an empty incoming
+    // set proves nothing declares one. Mixing registrations in would end that proof while every
+    // existing traversal silently absorbed the new edges. Kept apart, it also earns its place:
+    // a type reachable only this way has no caller and would otherwise read as dead.
+    Registers,
+
     // Extension surface. Emitted from an extension method to the in-solution
     // type it extends: the method is part of that type's working surface even
     // though containment says it lives on a static class elsewhere.

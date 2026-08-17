@@ -102,6 +102,28 @@ public sealed class CodeGraph
     }
 
     /// <summary>
+    /// Edges an unfiltered traversal declines to follow, because they describe a node rather
+    /// than lead anywhere from it.
+    /// </summary>
+    /// <remarks>
+    /// An attribute's type is a hub: every [Fact] in a solution points at one node, 321 of them
+    /// in this repository alone. Followed blindly, that puts any two test methods two hops
+    /// apart, and find_path -- whose whole question is "are these two related at all" -- starts
+    /// answering yes for every pair in the solution, while a relevance sweep fans out through
+    /// the hub and returns everything.
+    ///
+    /// So "no filter" means every NAVIGATIONAL edge, not every edge. Asking for an annotation
+    /// edge by name still works and still answers; what changes is that nobody arrives at one
+    /// by accident. Callers that want the old behaviour pass the edge type explicitly, which is
+    /// the difference between looking something up and travelling through it.
+    /// </remarks>
+    public static readonly IReadOnlySet<EdgeType> AnnotationEdges =
+        new HashSet<EdgeType> { EdgeType.DecoratedBy };
+
+    private static bool Follows(EdgeType type, IReadOnlySet<EdgeType>? edgeFilter) =>
+        edgeFilter != null ? edgeFilter.Contains(type) : !AnnotationEdges.Contains(type);
+
+    /// <summary>
     /// Follow edges of given types from a starting node, up to maxDepth.
     /// </summary>
     /// <param name="transparentEdges">
@@ -128,7 +150,7 @@ public sealed class CodeGraph
 
             foreach (var (edge, neighborId) in Adjacent(currentId, direction))
             {
-                if (edgeFilter != null && !edgeFilter.Contains(edge.Type)) continue;
+                if (!Follows(edge.Type, edgeFilter)) continue;
 
                 var isTransparent = transparentEdges != null && transparentEdges.Contains(edge.Type);
                 // Depth is checked per-edge rather than per-node so a transparent
@@ -163,7 +185,7 @@ public sealed class CodeGraph
 
         foreach (var (edge, neighborId) in Adjacent(fromId, direction))
         {
-            if (edgeFilter != null && !edgeFilter.Contains(edge.Type)) continue;
+            if (!Follows(edge.Type, edgeFilter)) continue;
             queue.Enqueue((new List<GraphEdge> { edge }, neighborId));
         }
 
@@ -174,9 +196,16 @@ public sealed class CodeGraph
             if (head == toId) return path;
             if (!visited.Add(head)) continue;
 
+            // An edge may name an id this graph does not define -- AddEdge accepts one, and a
+            // graph written elsewhere can arrive holding some. Reaching THROUGH such an id
+            // would report a route across a node nobody can look at, which is a worse answer
+            // than no route. The target itself is checked above, so a path that ENDS at a
+            // node-less id is still returned: the caller asked for it by name.
+            if (GetNode(head) == null) continue;
+
             foreach (var (next, neighborId) in Adjacent(head, direction))
             {
-                if (edgeFilter != null && !edgeFilter.Contains(next.Type)) continue;
+                if (!Follows(next.Type, edgeFilter)) continue;
                 queue.Enqueue((new List<GraphEdge>(path) { next }, neighborId));
             }
         }
