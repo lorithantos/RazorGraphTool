@@ -76,8 +76,28 @@ internal static class BuildCommands
         foreach (var shape in builder.UnboundShapes)
             Console.Error.WriteLine($"warning: unbound shape: {shape} — no template, Liquid file or code binding serves this name; OrchardCore throws at render time.");
 
+        ReportUnresolvedAttributes(builder);
+
         GraphReports.PrintSummary(graph);
         return 0;
+    }
+
+    /// <summary>
+    /// C# binds attribute types at compile time, so an unbound one means the
+    /// compilation had errors — which makes every other answer in this graph less
+    /// trustworthy, not just the attribute edges. Rides the build output for the
+    /// same reason unbound shapes do: a finding that has to be queried for is a
+    /// secret.
+    /// </summary>
+    private static void ReportUnresolvedAttributes(GraphBuilder builder)
+    {
+        if (builder.UnresolvedAttributes.Count == 0) return;
+
+        Console.Error.WriteLine(
+            $"warning: {builder.UnresolvedAttributes.Count} attribute(s) did not resolve — the solution did not compile cleanly, " +
+            "so this graph is missing edges it cannot know about:");
+        foreach (var unresolved in builder.UnresolvedAttributes)
+            Console.Error.WriteLine($"  {unresolved}");
     }
 
     public static Command BuildSolution()
@@ -149,6 +169,8 @@ internal static class BuildCommands
             Console.WriteLine($"Test projects skipped: {string.Join(", ", builder.SkippedTestProjects)}");
         foreach (var shape in builder.UnboundShapes)
             Console.Error.WriteLine($"warning: unbound shape: {shape} — no template, Liquid file or code binding serves this name; OrchardCore throws at render time.");
+
+        ReportUnresolvedAttributes(builder);
 
         GraphReports.PrintSummary(graph);
         GraphReports.PrintEdgeSummary(graph);

@@ -54,7 +54,45 @@ public sealed class SymbolInfo
 
     /// <summary>Properties and fields promoted to their own graph nodes; see SymbolClassifier.ExtractMemberNodes.</summary>
     public List<MemberDetail> MemberNodes { get; init; } = new();
+
+    /// <summary>Attributes written on the type itself; see SymbolClassifier.ExtractAttributes.</summary>
+    public List<AttributeUsage> Attributes { get; init; } = new();
 }
+
+/// <summary>
+/// One attribute as written at one site — not one attribute type. [Theory] with
+/// twenty [InlineData] is twenty-one of these, and the line is what tells them
+/// apart.
+/// </summary>
+/// <param name="FullName">
+/// The attribute class's original definition, so a generic attribute
+/// (RegisterDependency&lt;IFoo&gt;) names the same type as every other
+/// instantiation of it rather than minting one per type argument — the trap
+/// <see cref="SymbolIds.MethodId"/> already documents for methods.
+/// </param>
+/// <param name="Assembly">
+/// Declaring assembly, which is what decides whether this resolves to a type the
+/// solution declares or to an external one.
+/// </param>
+/// <param name="Target">
+/// What the attribute actually landed on. Carried because it is not always the
+/// obvious thing: [return: MarshalAs] sits on a method's declaration and applies
+/// to its return value, and a record's primary-constructor parameter is a
+/// parameter and a property at once.
+/// </param>
+/// <param name="UnresolvedReason">
+/// Set only when the attribute class could not be bound. In compiling C# that
+/// cannot happen — attribute arguments and types are resolved at compile time —
+/// so its presence means the compilation had errors, which is a finding about the
+/// build rather than about the code.
+/// </param>
+public sealed record AttributeUsage(
+    string FullName,
+    string Name,
+    string? Assembly,
+    string Target,
+    int? Line,
+    string? UnresolvedReason = null);
 
 /// <summary>
 /// A property or field as a graph node: identity, location, declared type, and
@@ -82,6 +120,9 @@ public sealed record MemberDetail
     public bool IsReadOnly { get; init; }
     public bool IsConst { get; init; }
     public bool HasBindProperty { get; init; }
+
+    /// <summary>Attributes written on this member.</summary>
+    public List<AttributeUsage> Attributes { get; init; } = new();
 }
 
 /// <summary>
@@ -152,6 +193,9 @@ public sealed class MethodDetail
 
     public string? FilePath { get; init; }
     public int? LineStart { get; init; }
+
+    /// <summary>Attributes written on this method, including its return value.</summary>
+    public List<AttributeUsage> Attributes { get; init; } = new();
 }
 
 /// <summary>

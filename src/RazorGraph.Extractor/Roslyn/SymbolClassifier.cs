@@ -26,6 +26,7 @@ internal static class SymbolClassifier
             {
                 Id = $"pm:{symbol.ToDisplayString()}",
                 Project = projectName,
+                Attributes = ExtractAttributes(symbol, "type"),
                 Type = NodeType.PageModel,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
@@ -48,6 +49,7 @@ internal static class SymbolClassifier
             {
                 Id = $"ctrl:{symbol.ToDisplayString()}",
                 Project = projectName,
+                Attributes = ExtractAttributes(symbol, "type"),
                 Type = NodeType.ApiController,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
@@ -69,6 +71,7 @@ internal static class SymbolClassifier
             {
                 Id = $"svc:{symbol.ToDisplayString()}",
                 Project = projectName,
+                Attributes = ExtractAttributes(symbol, "type"),
                 Type = symbol.TypeKind == TypeKind.Interface ? NodeType.ServiceInterface : NodeType.ServiceImplementation,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
@@ -89,6 +92,7 @@ internal static class SymbolClassifier
             {
                 Id = $"vm:{symbol.ToDisplayString()}",
                 Project = projectName,
+                Attributes = ExtractAttributes(symbol, "type"),
                 Type = NodeType.ViewModel,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
@@ -111,6 +115,7 @@ internal static class SymbolClassifier
         {
             Id = $"type:{symbol.ToDisplayString()}",
             Project = projectName,
+            Attributes = ExtractAttributes(symbol, "type"),
             Type = NodeType.Class,
             Name = symbol.Name,
             FullName = symbol.ToDisplayString(),
@@ -193,7 +198,8 @@ internal static class SymbolClassifier
                     IsPublic = p.DeclaredAccessibility == Accessibility.Public,
                     IsStatic = p.IsStatic,
                     IsReadOnly = p.IsReadOnly,
-                    HasBindProperty = p.GetAttributes().Any(a => a.AttributeClass?.Name == "BindPropertyAttribute")
+                    HasBindProperty = p.GetAttributes().Any(a => a.AttributeClass?.Name == "BindPropertyAttribute"),
+                    Attributes = ExtractAttributes(p, "property")
                 },
                 // A field fronted by a property (event backing, fixed-size
                 // buffers) belongs to its AssociatedSymbol's story, not here.
@@ -207,7 +213,8 @@ internal static class SymbolClassifier
                     IsPublic = f.DeclaredAccessibility == Accessibility.Public,
                     IsStatic = f.IsStatic,
                     IsReadOnly = f.IsReadOnly,
-                    IsConst = f.IsConst
+                    IsConst = f.IsConst,
+                    Attributes = ExtractAttributes(f, "field")
                 },
                 _ => null
             };
@@ -371,10 +378,80 @@ internal static class SymbolClassifier
                     BoundaryCatches = boundaryCatches,
                     BoundaryCatchesFiltered = boundaryFiltered,
                     FilePath = mapped?.Path ?? m.Locations.FirstOrDefault()?.SourceTree?.FilePath,
-                    LineStart = mapped?.StartLinePosition.Line + 1
+                    LineStart = mapped?.StartLinePosition.Line + 1,
+                    Attributes = ExtractMethodAttributes(m)
                 };
             })
             .ToList();
+    }
+
+    /// <summary>
+    /// Attributes written at one site, recorded as usages rather than reduced to
+    /// a yes/no.
+    /// </summary>
+    /// <remarks>
+    /// Four predicates in this extractor already read attributes — test,
+    /// lifecycle, controller, bind-property — and every one of them consumes the
+    /// fact and discards it. [Fact] decides a node is a test method, and then
+    /// that [Fact] was ever there is unrecoverable. This keeps it.
+    ///
+    /// One entry per SITE, not per attribute type: [Theory] with twenty
+    /// [InlineData] is twenty-one entries, and collapsing them would lose the
+    /// lines that tell them apart.
+    /// </remarks>
+    private static List<AttributeUsage> ExtractAttributes(ISymbol symbol, string target) =>
+        symbol.GetAttributes().Select(a => Describe(a, target)).ToList();
+
+    /// <summary>
+    /// A method's own attributes plus its return value's.
+    /// </summary>
+    /// <remarks>
+    /// Return-value attributes live on a separate Roslyn collection, so asking
+    /// only for GetAttributes drops [return: MarshalAs] silently — twelve of them
+    /// in DriveSurvey's interop layer, which is precisely where a reader needs to
+    /// see the marshalling declared.
+    /// </remarks>
+    private static List<AttributeUsage> ExtractMethodAttributes(IMethodSymbol method)
+    {
+        var attributes = ExtractAttributes(method, "method");
+        attributes.AddRange(method.GetReturnTypeAttributes().Select(a => Describe(a, "return")));
+        return attributes;
+    }
+
+    /// <summary>
+    /// One attribute usage, resolved through the attribute class's original
+    /// definition so RegisterDependency&lt;IFoo&gt; and RegisterDependency&lt;IBar&gt;
+    /// name one type rather than two — the trap SymbolIds.MethodId already
+    /// documents for generic methods.
+    /// </summary>
+    /// <remarks>
+    /// An attribute whose class did not bind is kept, with the reason, rather
+    /// than skipped. C# resolves attribute types at compile time, so this cannot
+    /// happen while the compilation is clean; its presence is evidence the build
+    /// had errors. Dropping it would turn a broken compile into a quietly smaller
+    /// graph, which is the failure mode that costs the most to notice.
+    /// </remarks>
+    private static AttributeUsage Describe(AttributeData data, string target)
+    {
+        var line = data.ApplicationSyntaxReference is { } reference
+            ? reference.GetSyntax().GetLocation().GetLineSpan().StartLinePosition.Line + 1
+            : (int?)null;
+
+        if (data.AttributeClass is not { } attributeClass || attributeClass.TypeKind == TypeKind.Error)
+        {
+            var written = data.AttributeClass?.ToDisplayString() ?? "<unresolved>";
+            return new AttributeUsage(written, data.AttributeClass?.Name ?? "<unresolved>",
+                Assembly: null, Target: target, Line: line,
+                UnresolvedReason: "attribute class did not bind — the compilation has errors");
+        }
+
+        var definition = attributeClass.OriginalDefinition;
+        return new AttributeUsage(
+            definition.ToDisplayString(),
+            definition.Name,
+            definition.ContainingAssembly?.Name,
+            target,
+            line);
     }
 
     /// <summary>

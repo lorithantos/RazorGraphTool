@@ -40,6 +40,23 @@ public static class SymbolIds
     }
 
     /// <summary>
+    /// Id for a type the compilation referenced but does not contain.
+    /// </summary>
+    /// <remarks>
+    /// ext: rather than a kind-specific prefix because the concept is wider than
+    /// the first thing to need it: an attribute from xUnit today, an out-of-solution
+    /// base type or interface later, all of them the same fact — a name the graph
+    /// can see used and cannot open. No assembly in the id, matching the plain
+    /// type: ids, which carry the identical theoretical collision and ignore it.
+    ///
+    /// Only for types the solution does NOT declare. One it does declare already
+    /// has a node, and reusing that is what lets a single node answer both what an
+    /// attribute decorates and who calls it.
+    /// </remarks>
+    public static string ExternalTypeId(INamedTypeSymbol type) =>
+        $"ext:{type.OriginalDefinition.ToDisplayString()}";
+
+    /// <summary>
     /// MethodId for a call target, or null when the target is declared outside
     /// the loaded projects — an edge to String.Format is noise, not navigation.
     /// </summary>

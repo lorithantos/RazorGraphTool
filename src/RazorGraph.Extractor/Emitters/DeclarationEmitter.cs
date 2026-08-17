@@ -26,8 +26,21 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
     /// <summary>Symbol ids whose member References edges are already emitted; see AddMemberTypeReferences.</summary>
     private readonly HashSet<string> _memberRefsEmitted = new(StringComparer.Ordinal);
 
+    /// <summary>Attribute usages already emitted; see AddAttributeEdges for why the line is in the key.</summary>
+    private readonly HashSet<(string From, string Attribute, int? Line, string Target)> _attributeEdges = new();
+
+    /// <summary>Attributes whose class did not bind, one line each; see UnresolvedAttributes.</summary>
+    private readonly List<string> _unresolvedAttributes = new();
+
     /// <summary>What each method can throw, keyed by method id — input to the escape sweep.</summary>
     internal IReadOnlyDictionary<string, IReadOnlyList<ThrownType>> MethodThrows => _methodThrows;
+
+    /// <summary>
+    /// Attribute sites whose class could not be resolved — reported by the build
+    /// rather than kept, because each one means the compilation had errors and
+    /// every other answer from this graph is correspondingly less trustworthy.
+    /// </summary>
+    internal IReadOnlyList<string> UnresolvedAttributes => _unresolvedAttributes;
 
     internal void AddSymbolNode(SymbolInfo sym)
     {
@@ -272,6 +285,76 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
                     Type = EdgeType.Extends
                 });
             }
+    }
+
+    /// <summary>
+    /// Emits DecoratedBy edges from every decorated node to the attribute's type,
+    /// minting an ExternalType node for attributes the solution does not declare.
+    /// </summary>
+    /// <remarks>
+    /// Runs after every symbol is a node, for the same reason AddExtensionEdges
+    /// does: an attribute declared in this solution must resolve to the node it
+    /// already has, and that node may belong to a project loaded later.
+    /// </remarks>
+    internal void AddAttributeEdges(SymbolInfo sym)
+    {
+        AddAttributeEdges(sym.Id, sym.Attributes);
+        foreach (var method in sym.MethodNodes) AddAttributeEdges(method.Id, method.Attributes);
+        foreach (var member in sym.MemberNodes) AddAttributeEdges(member.Id, member.Attributes);
+    }
+
+    private void AddAttributeEdges(string fromId, IReadOnlyList<AttributeUsage> usages)
+    {
+        // A node the classifier skipped has nothing to decorate, the same guard
+        // every other edge pass applies.
+        if (usages.Count == 0 || !graph.HasNode(fromId)) return;
+
+        foreach (var usage in usages)
+        {
+            if (usage.UnresolvedReason is { } reason)
+            {
+                _unresolvedAttributes.Add($"{fromId} line {usage.Line?.ToString() ?? "?"} — {reason}");
+                continue;
+            }
+
+            // A partial class is classified once per declaration, so the same
+            // decorated member arrives twice. Keying the dedup on the LINE as
+            // well as the pair is what separates that from a genuine repeat:
+            // twenty [InlineData] on one method are twenty different lines and
+            // must all survive, while the partial's duplicate is the same line
+            // twice.
+            if (!_attributeEdges.Add((fromId, usage.FullName, usage.Line, usage.Target))) continue;
+
+            var toId = ResolveAttributeType(usage);
+            var edge = new GraphEdge { FromId = fromId, ToId = toId, Type = EdgeType.DecoratedBy };
+            if (usage.Line is { } line) edge.Properties["line"] = line;
+
+            // Only when it is not the obvious one. An attribute on a method node
+            // is a method attribute unless it says otherwise, and [return: ...]
+            // is the case that has to say so.
+            if (usage.Target == "return") edge.Properties["target"] = usage.Target;
+
+            graph.AddEdge(edge);
+        }
+    }
+
+    /// <summary>
+    /// The node an attribute's type resolves to: the one the solution already
+    /// declares, or an ExternalType minted on first sight.
+    /// </summary>
+    private string ResolveAttributeType(AttributeUsage usage)
+    {
+        if (_typeIdByFullName.TryGetValue(usage.FullName, out var declared)) return declared;
+
+        var id = $"ext:{usage.FullName}";
+        if (graph.HasNode(id)) return id;
+
+        var node = new GraphNode { Id = id, Type = NodeType.ExternalType, Name = usage.Name };
+        node.SetProperty("fullName", usage.FullName);
+        if (usage.Assembly != null) node.SetProperty("assembly", usage.Assembly);
+        node.SetProperty("external", true);
+        graph.AddNode(node);
+        return id;
     }
 
     internal void AddInjectionEdges(SymbolInfo sym)

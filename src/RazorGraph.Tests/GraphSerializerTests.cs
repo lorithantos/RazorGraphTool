@@ -69,6 +69,35 @@ public class GraphSerializerTests
         Assert.True(edge.GetProperty<bool>("isTagHelper"));
     }
 
+    /// <summary>
+    /// The same regression one level down: objects were the one JSON kind
+    /// NormalizeValue did not rebuild, so a nested value was a Dictionary on the
+    /// graph that built it and a raw JsonElement on the graph that read it back,
+    /// from identical bytes and under an identical formatVersion.
+    /// </summary>
+    [Fact]
+    public void RoundTrip_PreservesTypedAccessThroughNestedObjects()
+    {
+        var graph = new CodeGraph();
+        graph.AddNode(new GraphNode { Id = "m:A()", Type = NodeType.Method, Name = "A" });
+        graph.AddNode(new GraphNode { Id = "ext:X", Type = NodeType.ExternalType, Name = "X" });
+
+        var edge = new GraphEdge { FromId = "m:A()", ToId = "ext:X", Type = EdgeType.DecoratedBy };
+        edge.Properties["named"] = new Dictionary<string, object>
+        {
+            ["Skip"] = "flaky on CI",
+            ["Timeout"] = 500
+        };
+        graph.AddEdge(edge);
+
+        var restored = GraphSerializer.FromJson(GraphSerializer.ToJson(graph));
+        var named = restored.Outgoing("m:A()").Single().GetProperty<Dictionary<string, object>>("named");
+
+        Assert.NotNull(named);
+        Assert.Equal("flaky on CI", named!["Skip"]);
+        Assert.Equal(500, named["Timeout"]);
+    }
+
     // The escape data is exactly the shape the serializer round-trips
     // generically (string lists); this pins that no bespoke handling is needed.
     [Fact]

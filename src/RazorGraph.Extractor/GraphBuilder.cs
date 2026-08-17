@@ -63,6 +63,14 @@ public sealed class GraphBuilder : IAsyncDisposable
     public IReadOnlyList<string> UnboundShapes => _razorLayer.UnboundShapes;
 
     /// <summary>
+    /// Attribute sites whose class did not bind. C# resolves attribute types at
+    /// compile time, so a non-empty list means the compilation had errors — a
+    /// finding about the build, and one that devalues every other answer the
+    /// graph gives. Reported for the same reason unbound shapes are.
+    /// </summary>
+    public IReadOnlyList<string> UnresolvedAttributes => _declarations.UnresolvedAttributes;
+
+    /// <summary>
     /// Skip test projects when building from a solution — no test Method
     /// nodes, no Covers edges, roughly a fifth of the edges on a well-tested
     /// solution. Off by default: the default graph must be able to answer
@@ -179,6 +187,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         foreach (var sym in symbols)
         {
             _declarations.AddInjectionEdges(sym);
+            _declarations.AddAttributeEdges(sym);
         }
 
         _usage.AddCallEdges(_roslyn.ExtractCallSites());

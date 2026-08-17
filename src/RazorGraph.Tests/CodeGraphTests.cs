@@ -122,6 +122,85 @@ public class CodeGraphTests
         Assert.Null(graph.FindPath("a", "b"));
     }
 
+    // ---- Annotation edges are a lookup, not a route ---------------------------
+
+    /// <summary>
+    /// Two test methods decorated with the same attribute are two hops apart
+    /// through it. Following that by default makes find_path -- whose question is
+    /// whether two things are related at all -- answer yes for every pair in a
+    /// solution, because one attribute node collects hundreds of them.
+    /// </summary>
+    [Fact]
+    public void FindPath_Unfiltered_WillNotRouteThroughAnAttribute()
+    {
+        var graph = new CodeGraph();
+        foreach (var id in new[] { "m:One", "m:Two" }) graph.AddNode(Node(id, NodeType.Method));
+        graph.AddNode(Node("ext:Xunit.FactAttribute", NodeType.ExternalType));
+        graph.AddEdge(Edge("m:One", "ext:Xunit.FactAttribute", EdgeType.DecoratedBy));
+        graph.AddEdge(Edge("m:Two", "ext:Xunit.FactAttribute", EdgeType.DecoratedBy));
+
+        Assert.Null(graph.FindPath("m:One", "m:Two", edgeFilter: null, TraversalDirection.Both));
+    }
+
+    [Fact]
+    public void Traverse_Unfiltered_DoesNotReachTheAttribute()
+    {
+        var graph = new CodeGraph();
+        graph.AddNode(Node("m:One", NodeType.Method));
+        graph.AddNode(Node("ext:Xunit.FactAttribute", NodeType.ExternalType));
+        graph.AddEdge(Edge("m:One", "ext:Xunit.FactAttribute", EdgeType.DecoratedBy));
+
+        Assert.Empty(graph.Traverse("m:One"));
+    }
+
+    /// <summary>Asking for it by name is the whole point of keeping the edge.</summary>
+    [Fact]
+    public void Traverse_AskedForByName_StillFollowsTheAttribute()
+    {
+        var graph = new CodeGraph();
+        graph.AddNode(Node("m:One", NodeType.Method));
+        graph.AddNode(Node("ext:Xunit.FactAttribute", NodeType.ExternalType));
+        graph.AddEdge(Edge("m:One", "ext:Xunit.FactAttribute", EdgeType.DecoratedBy));
+
+        var reached = graph
+            .Traverse("m:One", new HashSet<EdgeType> { EdgeType.DecoratedBy })
+            .Select(t => t.Node.Id)
+            .ToList();
+
+        Assert.Equal(new[] { "ext:Xunit.FactAttribute" }, reached);
+    }
+
+    /// <summary>
+    /// AddEdge accepts an endpoint with no node, so a graph written elsewhere can
+    /// arrive holding one. Reporting a route across a node nobody can open is a
+    /// worse answer than reporting none.
+    /// </summary>
+    [Fact]
+    public void FindPath_WillNotRouteThroughAnIdThatHasNoNode()
+    {
+        var graph = new CodeGraph();
+        graph.AddNode(Node("a"));
+        graph.AddNode(Node("c"));
+        graph.AddEdge(Edge("a", "ghost"));
+        graph.AddEdge(Edge("ghost", "c"));
+
+        Assert.Null(graph.FindPath("a", "c"));
+    }
+
+    /// <summary>But a path that ENDS at one is still a path: the caller named it.</summary>
+    [Fact]
+    public void FindPath_ToAnIdThatHasNoNode_StillAnswers()
+    {
+        var graph = new CodeGraph();
+        graph.AddNode(Node("a"));
+        graph.AddEdge(Edge("a", "ghost"));
+
+        var path = graph.FindPath("a", "ghost");
+
+        Assert.NotNull(path);
+        Assert.Single(path!);
+    }
+
     // ---- Direction ----------------------------------------------------------
 
     [Fact]

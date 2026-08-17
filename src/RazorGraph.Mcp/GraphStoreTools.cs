@@ -38,7 +38,8 @@ public sealed class GraphStoreTools(GraphStore store)
             ? await builder.BuildFromSolutionAsync(full, projectName!, ct)
             : await builder.BuildFromProjectAsync(full, ct);
 
-        return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries, unboundShapes: builder.UnboundShapes);
+        return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries,
+            unboundShapes: builder.UnboundShapes, unresolvedAttributes: builder.UnresolvedAttributes);
     }
 
     [McpServerTool(Name = "build_solution")]
@@ -62,7 +63,8 @@ public sealed class GraphStoreTools(GraphStore store)
         };
         var graph = await builder.BuildFromSolutionAllAsync(full, ct);
 
-        return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries, builder.SkippedTestProjects, builder.UnboundShapes);
+        return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries, builder.SkippedTestProjects,
+            builder.UnboundShapes, unresolvedAttributes: builder.UnresolvedAttributes);
     }
 
     [McpServerTool(Name = "build_lua")]
@@ -185,7 +187,8 @@ public sealed class GraphStoreTools(GraphStore store)
         IReadOnlyList<string>? vendorSkips = null,
         IReadOnlyList<string>? testProjectSkips = null,
         IReadOnlyList<string>? unboundShapes = null,
-        GraphFormatAssessment? format = null)
+        GraphFormatAssessment? format = null,
+        IReadOnlyList<string>? unresolvedAttributes = null)
     {
         var graph = entry.Graph;
         // Grouped by display kind, so a foreign vocabulary is censused under its
@@ -224,7 +227,11 @@ public sealed class GraphStoreTools(GraphStore store)
             // to no binding, so each is a runtime failure on whatever path
             // produces it -- a finding, and findings ride the build response
             // rather than waiting to be queried for.
-            unboundShapes = unboundShapes is { Count: > 0 } ? unboundShapes : null
+            unboundShapes = unboundShapes is { Count: > 0 } ? unboundShapes : null,
+            // Attribute types C# could not bind. It resolves them at compile time,
+            // so this is only ever non-empty when the compilation had errors --
+            // which devalues every answer in the graph, not only these edges.
+            unresolvedAttributes = unresolvedAttributes is { Count: > 0 } ? unresolvedAttributes : null
         });
     }
 }
