@@ -98,6 +98,33 @@ public class GraphSerializerTests
         Assert.Equal(500, named["Timeout"]);
     }
 
+    /// <summary>
+    /// A null slot in an argument list must come back as null. Attribute args
+    /// keep one slot per argument so indices never shift, and a failed or
+    /// genuinely-null slot holds null — which deserialized as a JsonElement of
+    /// kind Null before this, reading as "some value present".
+    /// </summary>
+    [Fact]
+    public void RoundTrip_PreservesNullSlotsInsideLists()
+    {
+        var graph = new CodeGraph();
+        graph.AddNode(new GraphNode { Id = "m:A()", Type = NodeType.Method, Name = "A" });
+        graph.AddNode(new GraphNode { Id = "ext:X", Type = NodeType.ExternalType, Name = "X" });
+
+        var edge = new GraphEdge { FromId = "m:A()", ToId = "ext:X", Type = EdgeType.DecoratedBy };
+        edge.Properties["args"] = new List<object?> { "first", null, 3 };
+        graph.AddEdge(edge);
+
+        var restored = GraphSerializer.FromJson(GraphSerializer.ToJson(graph));
+        var args = restored.Outgoing("m:A()").Single().GetProperty<List<object>>("args");
+
+        Assert.NotNull(args);
+        Assert.Equal(3, args!.Count);
+        Assert.Equal("first", args[0]);
+        Assert.Null(args[1]);
+        Assert.Equal(3, args[2]);
+    }
+
     // The escape data is exactly the shape the serializer round-trips
     // generically (string lists); this pins that no bespoke handling is needed.
     [Fact]

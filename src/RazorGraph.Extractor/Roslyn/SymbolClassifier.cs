@@ -446,13 +446,139 @@ internal static class SymbolClassifier
         }
 
         var definition = attributeClass.OriginalDefinition;
+        var (args, named, unresolvedArgs) = ExtractArguments(data);
+
+        // The generic instantiation's type arguments, from the class as USED —
+        // the definition above deliberately erased them so the node stays one
+        // per attribute type.
+        List<string>? typeArgs = attributeClass.TypeArguments.Length > 0
+            ? attributeClass.TypeArguments.Select(t => t.ToDisplayString()).ToList()
+            : null;
+
+        // As written, without the enclosing parens. From syntax rather than
+        // reconstructed, so what a reader sees is what the author typed.
+        string? source = null;
+        if (data.ApplicationSyntaxReference?.GetSyntax() is AttributeSyntax { ArgumentList.Arguments.Count: > 0 } syntax)
+            source = syntax.ArgumentList!.Arguments.ToString();
+
         return new AttributeUsage(
             definition.ToDisplayString(),
             definition.Name,
             definition.ContainingAssembly?.Name,
             target,
-            line);
+            line)
+        {
+            Args = args,
+            Named = named,
+            TypeArgs = typeArgs,
+            Source = source,
+            UnresolvedArgs = unresolvedArgs
+        };
     }
+
+    /// <summary>
+    /// Argument values from the SEMANTIC layer, not the syntax. TypedConstant
+    /// hands over what the compiler already resolved: new[]{...} and the C# 12
+    /// [...] form are one Array case, an enum member arrives as its value with
+    /// its type, and there is no such thing as an unevaluable constant in
+    /// compiling C# — the only Error case is a compilation that did not build,
+    /// which the caller reports as exactly that.
+    /// </summary>
+    private static (List<object?>? Args, Dictionary<string, object?>? Named, List<string>? Unresolved)
+        ExtractArguments(AttributeData data)
+    {
+        List<string>? unresolved = null;
+
+        List<object?>? args = null;
+        if (data.ConstructorArguments.Length > 0)
+        {
+            args = new List<object?>(data.ConstructorArguments.Length);
+            for (var i = 0; i < data.ConstructorArguments.Length; i++)
+            {
+                var constant = data.ConstructorArguments[i];
+                if (constant.Kind == TypedConstantKind.Error)
+                {
+                    (unresolved ??= new()).Add(i.ToString());
+                    args.Add(null); // the slot survives so later indices keep their positions
+                    continue;
+                }
+                args.Add(Render(constant));
+            }
+        }
+
+        Dictionary<string, object?>? named = null;
+        if (data.NamedArguments.Length > 0)
+        {
+            named = new Dictionary<string, object?>(StringComparer.Ordinal);
+            foreach (var (name, constant) in data.NamedArguments)
+            {
+                if (constant.Kind == TypedConstantKind.Error)
+                {
+                    (unresolved ??= new()).Add(name);
+                    named[name] = null;
+                    continue;
+                }
+                named[name] = Render(constant);
+            }
+        }
+
+        return (args, named, unresolved);
+    }
+
+    /// <summary>
+    /// One constant, rendered into the value set the serializer round-trips
+    /// identically. An Error nested INSIDE an array becomes a bare null slot —
+    /// the index path is not reported, only top-level failures are, which is a
+    /// known simplification rather than an oversight.
+    /// </summary>
+    private static object? Render(TypedConstant constant) => constant.Kind switch
+    {
+        TypedConstantKind.Array => constant.Values
+            .Select(v => v.Kind == TypedConstantKind.Error ? null : Render(v))
+            .ToList(),
+        // typeof(X) keeps its typeof spelling so a reader cannot mistake it for
+        // the string "X". The navigable form (a Registers edge) comes separately.
+        TypedConstantKind.Type => $"typeof({(constant.Value as ITypeSymbol)?.ToDisplayString() ?? "?"})",
+        TypedConstantKind.Enum => RenderEnum(constant),
+        _ => Scalar(constant.Value)
+    };
+
+    /// <summary>
+    /// An enum constant as the member the author named, when one field carries
+    /// exactly that value; the raw number otherwise (flags combinations, or a
+    /// value outside the declared members). The member name is what was written
+    /// and what a reader can grep for; the number is neither.
+    /// </summary>
+    private static object? RenderEnum(TypedConstant constant)
+    {
+        if (constant.Type is INamedTypeSymbol enumType && constant.Value is { } value)
+        {
+            var member = enumType.GetMembers().OfType<IFieldSymbol>()
+                .FirstOrDefault(f => f.HasConstantValue && Equals(f.ConstantValue, value));
+            if (member != null) return $"{enumType.Name}.{member.Name}";
+        }
+        return Scalar(constant.Value);
+    }
+
+    /// <summary>
+    /// Narrow a constant to the shapes GraphSerializer.NormalizeValue rebuilds
+    /// on load — string, bool, int, long, double — so a value means the same
+    /// thing after a save as before one. char becomes a one-character string
+    /// and the small integers widen to int for the same reason: what comes back
+    /// from JSON is what went in.
+    /// </summary>
+    private static object? Scalar(object? value) => value switch
+    {
+        null => null,
+        string or bool or int or long or double => value,
+        char c => c.ToString(),
+        sbyte or byte or short or ushort => Convert.ToInt32(value),
+        uint u => (long)u,
+        float f => (double)f,
+        decimal m => (double)m,
+        ulong ul => (double)ul,
+        _ => value.ToString()
+    };
 
     /// <summary>
     /// Ids of in-solution interface methods this method implements — the join

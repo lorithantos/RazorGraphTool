@@ -144,6 +144,50 @@ public class GraphBuilderIntegrationTests : IAsyncLifetime
         Assert.Contains(symbolNodes, n => n.LineStart > 1);
     }
 
+    // ---- Attribute extraction ----------------------------------------------
+
+    [Fact]
+    public void Builds_DecoratedByEdge_WithTheArgumentAsWritten()
+    {
+        // [Route("api/greetings")] on GreetingsController.
+        var controller = _graph!.Nodes.Single(n => n.Type == NodeType.ApiController && n.Name == "GreetingsController");
+        var route = _graph.Outgoing(controller.Id)
+            .Single(e => e.Type == EdgeType.DecoratedBy && e.ToId == "ext:Microsoft.AspNetCore.Mvc.RouteAttribute");
+
+        Assert.Equal(new List<object?> { "api/greetings" }, route.GetProperty<List<object?>>("args"));
+        Assert.Equal("\"api/greetings\"", route.GetProperty<string>("source"));
+        Assert.True(route.GetProperty<int>("line") > 0);
+    }
+
+    [Fact]
+    public void Builds_DecoratedByEdge_OnMethodsAndProperties()
+    {
+        // [HttpGet("{name}")] on the action; [BindProperty] on the page model property.
+        var get = _graph!.Outgoing("m:SampleApp.Api.GreetingsController.Get(string)")
+            .Single(e => e.Type == EdgeType.DecoratedBy && e.ToId == "ext:Microsoft.AspNetCore.Mvc.HttpGetAttribute");
+        Assert.Equal(new List<object?> { "{name}" }, get.GetProperty<List<object?>>("args"));
+
+        var bind = _graph.Outgoing("prop:SampleApp.Pages.IndexModel.Name")
+            .Single(e => e.Type == EdgeType.DecoratedBy);
+        Assert.Equal("ext:Microsoft.AspNetCore.Mvc.BindPropertyAttribute", bind.ToId);
+    }
+
+    /// <summary>
+    /// Absence of args must mean "no arguments", which only holds if an
+    /// argument-less usage carries neither args nor source.
+    /// </summary>
+    [Fact]
+    public void Builds_DecoratedByEdge_WithoutArgs_CarriesNoArgPayload()
+    {
+        var controller = _graph!.Nodes.Single(n => n.Type == NodeType.ApiController && n.Name == "GreetingsController");
+        var apiController = _graph.Outgoing(controller.Id)
+            .Single(e => e.Type == EdgeType.DecoratedBy && e.ToId == "ext:Microsoft.AspNetCore.Mvc.ApiControllerAttribute");
+
+        Assert.False(apiController.Properties.ContainsKey("args"));
+        Assert.False(apiController.Properties.ContainsKey("source"));
+        Assert.False(apiController.Properties.ContainsKey("unresolvedArgs"));
+    }
+
     // ---- Method-level extraction -------------------------------------------
 
     [Fact]

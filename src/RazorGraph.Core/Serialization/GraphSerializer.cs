@@ -196,6 +196,11 @@ public static class GraphSerializer
             JsonValueKind.False => false,
             JsonValueKind.Array => NormalizeArray(je),
             JsonValueKind.Object => NormalizeObject(je),
+            // A null slot must come back as null, not as a JsonElement of kind
+            // Null masquerading as a value. Attribute argument lists keep a null
+            // per failed or genuinely-null slot so indices never shift; a
+            // JsonElement there would read as "some value present".
+            JsonValueKind.Null => null!,
             _ => value
         };
     }

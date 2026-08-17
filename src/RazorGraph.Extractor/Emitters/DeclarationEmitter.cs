@@ -26,8 +26,8 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
     /// <summary>Symbol ids whose member References edges are already emitted; see AddMemberTypeReferences.</summary>
     private readonly HashSet<string> _memberRefsEmitted = new(StringComparer.Ordinal);
 
-    /// <summary>Attribute usages already emitted; see AddAttributeEdges for why the line is in the key.</summary>
-    private readonly HashSet<(string From, string Attribute, int? Line, string Target)> _attributeEdges = new();
+    /// <summary>Attribute usages already emitted; see AddAttributeEdges for why the line and source are in the key.</summary>
+    private readonly HashSet<(string From, string Attribute, int? Line, string Target, string? Source)> _attributeEdges = new();
 
     /// <summary>Attributes whose class did not bind, one line each; see UnresolvedAttributes.</summary>
     private readonly List<string> _unresolvedAttributes = new();
@@ -318,12 +318,13 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
             }
 
             // A partial class is classified once per declaration, so the same
-            // decorated member arrives twice. Keying the dedup on the LINE as
-            // well as the pair is what separates that from a genuine repeat:
-            // twenty [InlineData] on one method are twenty different lines and
-            // must all survive, while the partial's duplicate is the same line
-            // twice.
-            if (!_attributeEdges.Add((fromId, usage.FullName, usage.Line, usage.Target))) continue;
+            // decorated member arrives twice. Keying the dedup on the LINE and
+            // the SOURCE as well as the pair is what separates that from a
+            // genuine repeat: twenty [InlineData] on one method are twenty
+            // different lines — or, combined as [InlineData(1), InlineData(2)],
+            // one line with different arguments — and must all survive, while
+            // the partial's duplicate is identical in every part of the key.
+            if (!_attributeEdges.Add((fromId, usage.FullName, usage.Line, usage.Target, usage.Source))) continue;
 
             var toId = ResolveAttributeType(usage);
             var edge = new GraphEdge { FromId = fromId, ToId = toId, Type = EdgeType.DecoratedBy };
@@ -333,6 +334,21 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
             // is a method attribute unless it says otherwise, and [return: ...]
             // is the case that has to say so.
             if (usage.Target == "return") edge.Properties["target"] = usage.Target;
+
+            if (usage.Args is { Count: > 0 }) edge.Properties["args"] = usage.Args;
+            if (usage.Named is { Count: > 0 }) edge.Properties["named"] = usage.Named;
+            if (usage.TypeArgs is { Count: > 0 }) edge.Properties["typeArgs"] = usage.TypeArgs;
+            if (usage.Source is { } source) edge.Properties["source"] = source;
+            if (usage.UnresolvedArgs is { Count: > 0 } failed)
+            {
+                // The failure signal is this property's PRESENCE — the value
+                // slots hold null, never a sentinel, because any sentinel could
+                // be a real string someone wrote.
+                edge.Properties["unresolvedArgs"] = failed;
+                _unresolvedAttributes.Add(
+                    $"{fromId} line {usage.Line?.ToString() ?? "?"} — [{usage.Name}] argument(s) "
+                    + $"{string.Join(", ", failed)} did not evaluate — the compilation has errors");
+            }
 
             graph.AddEdge(edge);
         }

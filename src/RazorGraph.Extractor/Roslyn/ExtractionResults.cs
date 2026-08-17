@@ -92,7 +92,46 @@ public sealed record AttributeUsage(
     string? Assembly,
     string Target,
     int? Line,
-    string? UnresolvedReason = null);
+    string? UnresolvedReason = null)
+{
+    /// <summary>
+    /// Positional arguments in declaration order, one slot per argument, never
+    /// compacted — a slot that failed to evaluate holds null AND is named in
+    /// <see cref="UnresolvedArgs"/>, because removing it would shift every later
+    /// index. Values are already the shapes the serializer round-trips
+    /// identically (string, int, long, double, bool, null, nested lists), read
+    /// from TypedConstant rather than syntax so enum members and collection
+    /// expressions arrive resolved instead of re-parsed.
+    /// </summary>
+    public List<object?>? Args { get; init; }
+
+    /// <summary>Named arguments (Name = value). A map, because their order is not semantic.</summary>
+    public Dictionary<string, object?>? Named { get; init; }
+
+    /// <summary>
+    /// Type arguments of a generic attribute (RegisterDependency&lt;IFoo&gt;), as
+    /// display strings. On the usage rather than the node: the node is the open
+    /// generic, one per attribute type, and the instantiation belongs to the
+    /// site that wrote it.
+    /// </summary>
+    public List<string>? TypeArgs { get; init; }
+
+    /// <summary>
+    /// The argument list exactly as written, present whenever there are
+    /// arguments — uniform, so its absence means exactly "no arguments". One
+    /// string per usage rather than per argument: most arguments are string
+    /// literals whose parsed and written forms differ only by quotes.
+    /// </summary>
+    public string? Source { get; init; }
+
+    /// <summary>
+    /// Positional indices and named-argument names that failed to evaluate.
+    /// Compile-time-constant rules mean this only happens when the compilation
+    /// has errors, so presence here is a finding about the build. No sentinel in
+    /// the value slots — any sentinel could be a real string.
+    /// </summary>
+    public List<string>? UnresolvedArgs { get; init; }
+}
 
 /// <summary>
 /// A property or field as a graph node: identity, location, declared type, and
