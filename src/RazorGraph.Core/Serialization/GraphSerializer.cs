@@ -195,8 +195,27 @@ public static class GraphSerializer
             JsonValueKind.True => true,
             JsonValueKind.False => false,
             JsonValueKind.Array => NormalizeArray(je),
+            JsonValueKind.Object => NormalizeObject(je),
             _ => value
         };
+    }
+
+    /// <summary>
+    /// Objects become dictionaries rather than surviving as JsonElement.
+    /// </summary>
+    /// <remarks>
+    /// Without this a nested property value behaves differently either side of a save: typed on
+    /// the graph that built it, a raw JsonElement on the graph that read it back. Nothing stored
+    /// an object-valued property before attribute arguments did, so the gap was unexercised
+    /// rather than harmless -- and it is the drift formatVersion exists to catch, slipping under
+    /// it because the version is identical on both sides.
+    /// </remarks>
+    private static Dictionary<string, object> NormalizeObject(JsonElement je)
+    {
+        var map = new Dictionary<string, object>(StringComparer.Ordinal);
+        foreach (var property in je.EnumerateObject())
+            map[property.Name] = NormalizeValue(property.Value);
+        return map;
     }
 
     private static object NormalizeArray(JsonElement je)
