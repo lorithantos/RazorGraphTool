@@ -12,5 +12,5 @@ public class GreetingsController : ControllerBase
     public GreetingsController(IGreetingService greetings) => _greetings = greetings;
 
     [HttpGet("{name}")]
-    public IActionResult Get(string name) => Ok(_greetings.Greet(name));
+    public IActionResult Get([FromRoute] string name) => Ok(_greetings.Greet(name));
 }

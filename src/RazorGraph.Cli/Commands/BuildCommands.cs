@@ -3,6 +3,7 @@ namespace RazorGraph.Cli;
 using System.CommandLine;
 using RazorGraph.Core.Graph;
 using RazorGraph.Extractor;
+using RazorGraph.Extractor.Attributes;
 using RazorGraph.Extractor.Roslyn;
 
 /// <summary>
@@ -27,25 +28,51 @@ internal static class BuildCommands
         {
             Description = "Also graph vendor/minified client assets (dropped by default); their nodes carry vendor=true"
         };
+        var policyOpt = AttributePolicyOption();
 
         var cmd = new Command("build", "Build graph from a project or solution and output JSON");
         cmd.Add(pathArg);
         cmd.Add(outputOpt);
         cmd.Add(projectOpt);
         cmd.Add(includeVendorOpt);
+        cmd.Add(policyOpt);
 
         cmd.SetAction((parseResult, ct) => RunBuildAsync(
             parseResult.GetValue(pathArg)!,
             parseResult.GetValue(outputOpt)!,
             parseResult.GetValue(projectOpt),
             parseResult.GetValue(includeVendorOpt),
+            parseResult.GetValue(policyOpt),
             ct));
 
         return cmd;
     }
 
+    private static Option<FileInfo?> AttributePolicyOption() => new("--attribute-policy")
+    {
+        Description = "Attribute policy JSON overriding the embedded default (classification name sets, "
+            + "argument-payload suppression, registration vocabulary). Sections the file omits are inherited."
+    };
+
+    /// <summary>
+    /// Resolve the policy for this run — the disk override, or the embedded
+    /// default. A named file that does not exist is an error, not a fallback:
+    /// silently building with the default would answer with the wrong policy.
+    /// </summary>
+    private static AttributePolicy? LoadPolicyOrReport(FileInfo? policyFile)
+    {
+        if (policyFile == null) return AttributePolicy.Default;
+        if (!policyFile.Exists)
+        {
+            Console.Error.WriteLine($"Attribute policy file not found: {policyFile.FullName}");
+            return null;
+        }
+        return AttributePolicy.LoadFile(policyFile.FullName);
+    }
+
     private static async Task<int> RunBuildAsync(
-        FileInfo path, string outputPath, string? projectName, bool includeVendor, CancellationToken ct)
+        FileInfo path, string outputPath, string? projectName, bool includeVendor, FileInfo? policyFile,
+        CancellationToken ct)
     {
         if (!path.Exists)
         {
@@ -60,11 +87,13 @@ internal static class BuildCommands
             return 1;
         }
 
+        if (LoadPolicyOrReport(policyFile) is not { } policy) return 1;
+
         RoslynExtractor.EnsureMsBuildRegistered();
 
         Console.WriteLine($"Building graph from {path.FullName}...");
 
-        await using var builder = new GraphBuilder { IncludeVendorAssets = includeVendor };
+        await using var builder = new GraphBuilder { IncludeVendorAssets = includeVendor, AttributePolicy = policy };
         var graph = isSolution
             ? await builder.BuildFromSolutionAsync(path.FullName, projectName!, ct)
             : await builder.BuildFromProjectAsync(path.FullName, ct);
@@ -117,6 +146,7 @@ internal static class BuildCommands
         {
             Description = "Skip test projects: no test Method nodes, no Covers edges. Coverage queries against the resulting graph refuse to answer rather than reporting everything uncovered."
         };
+        var policyOpt = AttributePolicyOption();
 
         var cmd = new Command("build-solution",
             "Build ONE graph spanning every project in a solution, with edges that cross project boundaries");
@@ -124,19 +154,22 @@ internal static class BuildCommands
         cmd.Add(outputOpt);
         cmd.Add(includeVendorOpt);
         cmd.Add(noTestsOpt);
+        cmd.Add(policyOpt);
 
         cmd.SetAction((parseResult, ct) => RunBuildSolutionAsync(
             parseResult.GetValue(pathArg)!,
             parseResult.GetValue(outputOpt)!,
             parseResult.GetValue(includeVendorOpt),
             parseResult.GetValue(noTestsOpt),
+            parseResult.GetValue(policyOpt),
             ct));
 
         return cmd;
     }
 
     private static async Task<int> RunBuildSolutionAsync(
-        FileInfo path, string outputPath, bool includeVendor, bool noTests, CancellationToken ct)
+        FileInfo path, string outputPath, bool includeVendor, bool noTests, FileInfo? policyFile,
+        CancellationToken ct)
     {
         if (!path.Exists)
         {
@@ -150,13 +183,16 @@ internal static class BuildCommands
             return 1;
         }
 
+        if (LoadPolicyOrReport(policyFile) is not { } policy) return 1;
+
         RoslynExtractor.EnsureMsBuildRegistered();
         Console.WriteLine($"Building solution graph from {path.FullName}...");
 
         await using var builder = new GraphBuilder
         {
             IncludeVendorAssets = includeVendor,
-            ExcludeTestProjects = noTests
+            ExcludeTestProjects = noTests,
+            AttributePolicy = policy
         };
         var graph = await builder.BuildFromSolutionAllAsync(path.FullName, ct);
 

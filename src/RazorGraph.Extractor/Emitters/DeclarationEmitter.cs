@@ -26,11 +26,14 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
     /// <summary>Symbol ids whose member References edges are already emitted; see AddMemberTypeReferences.</summary>
     private readonly HashSet<string> _memberRefsEmitted = new(StringComparer.Ordinal);
 
-    /// <summary>Attribute usages already emitted; see AddAttributeEdges for why the line and source are in the key.</summary>
-    private readonly HashSet<(string From, string Attribute, int? Line, string Target, string? Source)> _attributeEdges = new();
+    /// <summary>Attribute usages already emitted; see AddAttributeEdges for why the line, source and type arguments are in the key.</summary>
+    private readonly HashSet<(string From, string Attribute, int? Line, string Target, string? Source, string? TypeArgs)> _attributeEdges = new();
 
     /// <summary>Attributes whose class did not bind, one line each; see UnresolvedAttributes.</summary>
     private readonly List<string> _unresolvedAttributes = new();
+
+    /// <summary>The policy deciding which attributes' argument payloads are withheld; see AddAttributeEdges.</summary>
+    internal Attributes.AttributePolicy Policy { get; set; } = Attributes.AttributePolicy.Default;
 
     /// <summary>What each method can throw, keyed by method id — input to the escape sweep.</summary>
     internal IReadOnlyDictionary<string, IReadOnlyList<ThrownType>> MethodThrows => _methodThrows;
@@ -126,6 +129,35 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
                 ToId = method.Id,
                 Type = EdgeType.Contains
             });
+
+            // Decorated parameters only — a param: node exists because it is
+            // decorated, so absence means undecorated, never unmodelled.
+            // Inside the first-declaration-wins guard above, or a partial
+            // class would double its parameter nodes.
+            foreach (var parameter in method.Parameters)
+            {
+                var parameterNode = new GraphNode
+                {
+                    Id = parameter.Id,
+                    Type = NodeType.Parameter,
+                    Name = parameter.Name,
+                    FilePath = method.FilePath ?? sym.FilePath,
+                    LineStart = parameter.Line ?? method.LineStart
+                };
+                parameterNode.SetProperty("ordinal", parameter.Ordinal);
+                parameterNode.SetProperty("parameterType", parameter.ParameterType);
+                if (sym.Project != null) parameterNode.SetProperty("project", sym.Project);
+                StampGenerated(parameterNode);
+
+                graph.AddNode(parameterNode);
+
+                graph.AddEdge(new GraphEdge
+                {
+                    FromId = method.Id,
+                    ToId = parameter.Id,
+                    Type = EdgeType.Contains
+                });
+            }
         }
     }
 
@@ -299,9 +331,22 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
     internal void AddAttributeEdges(SymbolInfo sym)
     {
         AddAttributeEdges(sym.Id, sym.Attributes);
-        foreach (var method in sym.MethodNodes) AddAttributeEdges(method.Id, method.Attributes);
+        foreach (var method in sym.MethodNodes)
+        {
+            AddAttributeEdges(method.Id, method.Attributes);
+            foreach (var parameter in method.Parameters) AddAttributeEdges(parameter.Id, parameter.Attributes);
+        }
         foreach (var member in sym.MemberNodes) AddAttributeEdges(member.Id, member.Attributes);
     }
+
+    /// <summary>
+    /// DecoratedBy edges for assembly/module attributes, hung off the proj:
+    /// node — the assembly and the project are the same grain in this graph.
+    /// Solution builds only, because only those have Project nodes; the shared
+    /// HasNode guard makes a single-project call a no-op rather than an error.
+    /// </summary>
+    internal void AddProjectAttributeEdges(string projectId, IReadOnlyList<AttributeUsage> usages) =>
+        AddAttributeEdges(projectId, usages);
 
     private void AddAttributeEdges(string fromId, IReadOnlyList<AttributeUsage> usages)
     {
@@ -324,7 +369,12 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
             // different lines — or, combined as [InlineData(1), InlineData(2)],
             // one line with different arguments — and must all survive, while
             // the partial's duplicate is identical in every part of the key.
-            if (!_attributeEdges.Add((fromId, usage.FullName, usage.Line, usage.Target, usage.Source))) continue;
+            // Type arguments are in the key too, because a combined
+            // [Reg<IFoo>, Reg<IBar>] list is one line, one original-definition
+            // name, and no argument list — the instantiation is all that
+            // distinguishes the two usages.
+            var typeArgsKey = usage.TypeArgs is { Count: > 0 } ta ? string.Join(",", ta) : null;
+            if (!_attributeEdges.Add((fromId, usage.FullName, usage.Line, usage.Target, usage.Source, typeArgsKey))) continue;
 
             var toId = ResolveAttributeType(usage);
             var edge = new GraphEdge { FromId = fromId, ToId = toId, Type = EdgeType.DecoratedBy };
@@ -332,13 +382,21 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
 
             // Only when it is not the obvious one. An attribute on a method node
             // is a method attribute unless it says otherwise, and [return: ...]
-            // is the case that has to say so.
-            if (usage.Target == "return") edge.Properties["target"] = usage.Target;
+            // is the case that has to say so; a Project node hosts both
+            // assembly and module attributes, so those always say which.
+            if (usage.Target is "return" or "assembly" or "module")
+                edge.Properties["target"] = usage.Target;
 
-            if (usage.Args is { Count: > 0 }) edge.Properties["args"] = usage.Args;
-            if (usage.Named is { Count: > 0 }) edge.Properties["named"] = usage.Named;
+            // Policy can withhold an attribute's argument payload ([InlineData]
+            // test data is the measured case) — the edge, its line, and its
+            // type arguments stay, and so does unresolvedArgs below: a build
+            // error must never be configurable into silence.
+            var withholdPayload = Policy.SuppressArgumentsFor.Contains(usage.FullName);
+
+            if (!withholdPayload && usage.Args is { Count: > 0 }) edge.Properties["args"] = usage.Args;
+            if (!withholdPayload && usage.Named is { Count: > 0 }) edge.Properties["named"] = usage.Named;
             if (usage.TypeArgs is { Count: > 0 }) edge.Properties["typeArgs"] = usage.TypeArgs;
-            if (usage.Source is { } source) edge.Properties["source"] = source;
+            if (!withholdPayload && usage.Source is { } source) edge.Properties["source"] = source;
             if (usage.UnresolvedArgs is { Count: > 0 } failed)
             {
                 // The failure signal is this property's PRESENCE — the value
@@ -350,6 +408,38 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
                     + $"{string.Join(", ", failed)} did not evaluate — the compilation has errors");
             }
 
+            graph.AddEdge(edge);
+            AddRegistersEdges(fromId, usage, toId);
+        }
+    }
+
+    /// <summary>
+    /// Emits Registers edges from the decorated node to each in-solution type
+    /// the usage names via typeof(...) or a generic type argument — the types a
+    /// framework constructs or consults with no call site anywhere, which would
+    /// otherwise read as dead code.
+    /// </summary>
+    /// <remarks>
+    /// From the DECORATED node, never from the attribute node: that node is one
+    /// per attribute type by construction, and hanging registrations off it
+    /// would collapse every registration in the solution onto one hub, losing
+    /// which decorated node each serves. The attribute node id and line ride
+    /// the edge so it joins its DecoratedBy sibling on (from, attribute, line).
+    /// A typeof pointing outside the solution gets no edge — the fact already
+    /// rides the DecoratedBy payload, and an edge to a node that cannot say
+    /// what it is would add reachability without meaning.
+    /// </remarks>
+    private void AddRegistersEdges(string fromId, AttributeUsage usage, string attributeId)
+    {
+        if (usage.RegisteredTypeFullNames is not { Count: > 0 } names) return;
+
+        foreach (var name in names)
+        {
+            if (!_typeIdByFullName.TryGetValue(name, out var targetId)) continue;
+
+            var edge = new GraphEdge { FromId = fromId, ToId = targetId, Type = EdgeType.Registers };
+            edge.Properties["attribute"] = attributeId;
+            if (usage.Line is { } line) edge.Properties["line"] = line;
             graph.AddEdge(edge);
         }
     }

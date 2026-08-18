@@ -3,6 +3,7 @@ namespace RazorGraph.Extractor.Roslyn;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using RazorGraph.Core.Graph;
+using RazorGraph.Extractor.Attributes;
 
 /// <summary>
 /// Turns a declared type symbol into the SymbolInfo record its graph nodes are
@@ -13,7 +14,8 @@ using RazorGraph.Core.Graph;
 internal static class SymbolClassifier
 {
     internal static SymbolInfo? ClassifySymbol(
-        INamedTypeSymbol symbol, string projectName, Compilation compilation, IReadOnlySet<string> inScope)
+        INamedTypeSymbol symbol, string projectName, Compilation compilation, IReadOnlySet<string> inScope,
+        AttributePolicy policy)
     {
         var baseType = symbol.BaseType?.ToDisplayString() ?? "";
         var interfaces = symbol.AllInterfaces.Select(i => i.ToDisplayString()).ToList();
@@ -26,7 +28,7 @@ internal static class SymbolClassifier
             {
                 Id = $"pm:{symbol.ToDisplayString()}",
                 Project = projectName,
-                Attributes = ExtractAttributes(symbol, "type"),
+                Attributes = ExtractAttributes(symbol, "type", inScope),
                 Type = NodeType.PageModel,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
@@ -34,22 +36,23 @@ internal static class SymbolClassifier
                 LineStart = lineStart,
                 LineEnd = lineEnd,
                 BaseType = baseType,
-                Properties = ExtractProperties(symbol),
+                Properties = ExtractProperties(symbol, policy),
                 Methods = ExtractMethods(symbol),
-                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope),
-                MemberNodes = ExtractMemberNodes(symbol, inScope),
+                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
+                MemberNodes = ExtractMemberNodes(symbol, inScope, policy),
                 InjectedServices = ExtractInjectedServices(symbol)
             };
         }
 
-        // Controller detection
-        if (baseType.Contains("Controller") || symbol.GetAttributes().Any(a => a.AttributeClass?.Name == "ApiControllerAttribute"))
+        // Controller detection — the shared predicate, so this branch and the
+        // entry-point classifier can never disagree.
+        if (MethodRoles.IsControllerType(symbol, policy))
         {
             return new SymbolInfo
             {
                 Id = $"ctrl:{symbol.ToDisplayString()}",
                 Project = projectName,
-                Attributes = ExtractAttributes(symbol, "type"),
+                Attributes = ExtractAttributes(symbol, "type", inScope),
                 Type = NodeType.ApiController,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
@@ -58,8 +61,8 @@ internal static class SymbolClassifier
                 LineEnd = lineEnd,
                 BaseType = baseType,
                 Methods = ExtractControllerActions(symbol),
-                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope),
-                MemberNodes = ExtractMemberNodes(symbol, inScope),
+                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
+                MemberNodes = ExtractMemberNodes(symbol, inScope, policy),
                 InjectedServices = ExtractInjectedServices(symbol)
             };
         }
@@ -71,7 +74,7 @@ internal static class SymbolClassifier
             {
                 Id = $"svc:{symbol.ToDisplayString()}",
                 Project = projectName,
-                Attributes = ExtractAttributes(symbol, "type"),
+                Attributes = ExtractAttributes(symbol, "type", inScope),
                 Type = symbol.TypeKind == TypeKind.Interface ? NodeType.ServiceInterface : NodeType.ServiceImplementation,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
@@ -80,8 +83,8 @@ internal static class SymbolClassifier
                 LineEnd = lineEnd,
                 ImplementedInterfaces = interfaces.Where(i => i.EndsWith("Service")).ToList(),
                 Methods = ExtractMethods(symbol),
-                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope),
-                MemberNodes = ExtractMemberNodes(symbol, inScope)
+                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
+                MemberNodes = ExtractMemberNodes(symbol, inScope, policy)
             };
         }
 
@@ -92,16 +95,16 @@ internal static class SymbolClassifier
             {
                 Id = $"vm:{symbol.ToDisplayString()}",
                 Project = projectName,
-                Attributes = ExtractAttributes(symbol, "type"),
+                Attributes = ExtractAttributes(symbol, "type", inScope),
                 Type = NodeType.ViewModel,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
                 FilePath = filePath,
                 LineStart = lineStart,
                 LineEnd = lineEnd,
-                Properties = ExtractProperties(symbol),
-                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope),
-                MemberNodes = ExtractMemberNodes(symbol, inScope)
+                Properties = ExtractProperties(symbol, policy),
+                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
+                MemberNodes = ExtractMemberNodes(symbol, inScope, policy)
             };
         }
 
@@ -115,7 +118,7 @@ internal static class SymbolClassifier
         {
             Id = $"type:{symbol.ToDisplayString()}",
             Project = projectName,
-            Attributes = ExtractAttributes(symbol, "type"),
+            Attributes = ExtractAttributes(symbol, "type", inScope),
             Type = NodeType.Class,
             Name = symbol.Name,
             FullName = symbol.ToDisplayString(),
@@ -124,10 +127,10 @@ internal static class SymbolClassifier
             LineEnd = lineEnd,
             BaseType = baseType,
             ImplementedInterfaces = interfaces,
-            Properties = ExtractProperties(symbol),
+            Properties = ExtractProperties(symbol, policy),
             Methods = ExtractMethods(symbol),
-            MethodNodes = ExtractMethodNodes(symbol, compilation, inScope),
-            MemberNodes = ExtractMemberNodes(symbol, inScope),
+            MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
+            MemberNodes = ExtractMemberNodes(symbol, inScope, policy),
             InjectedServices = ExtractInjectedServices(symbol)
         };
     }
@@ -153,16 +156,20 @@ internal static class SymbolClassifier
         return (span.Path, span.StartLinePosition.Line + 1, span.EndLinePosition.Line + 1);
     }
 
-    private static List<PropertyInfo> ExtractProperties(INamedTypeSymbol symbol) =>
+    private static List<PropertyInfo> ExtractProperties(INamedTypeSymbol symbol, AttributePolicy policy) =>
         symbol.GetMembers().OfType<IPropertySymbol>()
             .Select(p => new PropertyInfo
             {
                 Name = p.Name,
                 Type = p.Type.ToDisplayString(),
                 IsPublic = p.DeclaredAccessibility == Accessibility.Public,
-                HasBindProperty = p.GetAttributes().Any(a => a.AttributeClass?.Name == "BindPropertyAttribute")
+                HasBindProperty = HasBindProperty(p, policy)
             })
             .ToList();
+
+    private static bool HasBindProperty(IPropertySymbol property, AttributePolicy policy) =>
+        property.GetAttributes().Any(a =>
+            a.AttributeClass != null && policy.BindPropertyAttributeNames.Contains(a.AttributeClass.Name));
 
     /// <summary>
     /// Every property and field of the type as a candidate graph node,
@@ -173,7 +180,8 @@ internal static class SymbolClassifier
     /// <see cref="ExtractProperties"/>, which keeps feeding the class-level
     /// name list existing consumers read.
     /// </summary>
-    private static List<MemberDetail> ExtractMemberNodes(INamedTypeSymbol symbol, IReadOnlySet<string> inScope)
+    private static List<MemberDetail> ExtractMemberNodes(
+        INamedTypeSymbol symbol, IReadOnlySet<string> inScope, AttributePolicy policy)
     {
         var members = new List<MemberDetail>();
         foreach (var member in symbol.GetMembers())
@@ -198,8 +206,8 @@ internal static class SymbolClassifier
                     IsPublic = p.DeclaredAccessibility == Accessibility.Public,
                     IsStatic = p.IsStatic,
                     IsReadOnly = p.IsReadOnly,
-                    HasBindProperty = p.GetAttributes().Any(a => a.AttributeClass?.Name == "BindPropertyAttribute"),
-                    Attributes = ExtractAttributes(p, "property")
+                    HasBindProperty = HasBindProperty(p, policy),
+                    Attributes = ExtractAttributes(p, "property", inScope)
                 },
                 // A field fronted by a property (event backing, fixed-size
                 // buffers) belongs to its AssociatedSymbol's story, not here.
@@ -214,7 +222,7 @@ internal static class SymbolClassifier
                     IsStatic = f.IsStatic,
                     IsReadOnly = f.IsReadOnly,
                     IsConst = f.IsConst,
-                    Attributes = ExtractAttributes(f, "field")
+                    Attributes = ExtractAttributes(f, "field", inScope)
                 },
                 _ => null
             };
@@ -311,7 +319,7 @@ internal static class SymbolClassifier
     /// syntactic call site can ever reach one.
     /// </summary>
     private static List<MethodDetail> ExtractMethodNodes(
-        INamedTypeSymbol symbol, Compilation compilation, IReadOnlySet<string> inScope)
+        INamedTypeSymbol symbol, Compilation compilation, IReadOnlySet<string> inScope, AttributePolicy policy)
     {
         var hasInitializers = TypeInitializers.HasInstanceInitializers(symbol);
 
@@ -326,7 +334,7 @@ internal static class SymbolClassifier
 
         // Lifecycle hooks only count as such on a type that actually has tests;
         // otherwise every IDisposable.Dispose in production code would be flagged.
-        var hasTests = members.Any(MethodRoles.IsTestMethod);
+        var hasTests = members.Any(m => MethodRoles.IsTestMethod(m, policy));
 
         return members
             .Select(m =>
@@ -359,18 +367,18 @@ internal static class SymbolClassifier
                     IsAsync = m.IsAsync,
                     IsPublic = m.DeclaredAccessibility == Accessibility.Public,
                     IsStatic = m.IsStatic,
-                    IsTest = MethodRoles.IsTestMethod(m),
+                    IsTest = MethodRoles.IsTestMethod(m, policy),
                     // A test class's ctor is xUnit's primary setup hook — the
                     // framework runs it before every test, no test calls it.
                     IsTestLifecycle = hasTests
-                        && (MethodRoles.IsLifecycleMethod(m) || m.MethodKind == MethodKind.Constructor),
+                        && (MethodRoles.IsLifecycleMethod(m, policy) || m.MethodKind == MethodKind.Constructor),
                     // Interface members and abstract methods have no body. They are
                     // still nodes worth having (calls bind to them), but they are not
                     // code that a test could execute.
                     IsAbstract = m.IsAbstract,
                     NestingDepth = declSyntax == null ? 0 : BodyGraphExtractor.NestingDepth(declSyntax),
                     Throws = throws,
-                    EntryPointKind = MethodRoles.ClassifyEntryPoint(m, inScope),
+                    EntryPointKind = MethodRoles.ClassifyEntryPoint(m, inScope, policy),
                     ExtendsTypeFullName = m.IsExtensionMethod
                         ? m.Parameters[0].Type.OriginalDefinition.ToDisplayString()
                         : null,
@@ -379,10 +387,40 @@ internal static class SymbolClassifier
                     BoundaryCatchesFiltered = boundaryFiltered,
                     FilePath = mapped?.Path ?? m.Locations.FirstOrDefault()?.SourceTree?.FilePath,
                     LineStart = mapped?.StartLinePosition.Line + 1,
-                    Attributes = ExtractMethodAttributes(m)
+                    Attributes = ExtractMethodAttributes(m, inScope),
+                    Parameters = ExtractParameterNodes(m, inScope)
                 };
             })
             .ToList();
+    }
+
+    /// <summary>
+    /// The method's DECORATED parameters — the only ones that become nodes; see
+    /// ParameterDetail. Enumerated from the unreduced original definition so
+    /// names and ordinals match the form MethodId is built from: a reduced
+    /// extension method has folded its this parameter away, and reading the
+    /// reduced list would shift every ordinal by one.
+    /// </summary>
+    private static List<ParameterDetail> ExtractParameterNodes(IMethodSymbol method, IReadOnlySet<string> inScope)
+    {
+        var def = (method.ReducedFrom ?? method).OriginalDefinition;
+
+        var result = new List<ParameterDetail>();
+        foreach (var p in def.Parameters)
+        {
+            if (p.GetAttributes().Length == 0) continue;
+
+            result.Add(new ParameterDetail(
+                SymbolIds.ParameterId(method, p),
+                p.Name,
+                p.Ordinal,
+                p.Type.ToDisplayString(),
+                p.Locations.FirstOrDefault()?.GetMappedLineSpan().StartLinePosition.Line + 1)
+            {
+                Attributes = ExtractAttributes(p, "parameter", inScope)
+            });
+        }
+        return result;
     }
 
     /// <summary>
@@ -399,8 +437,28 @@ internal static class SymbolClassifier
     /// [InlineData] is twenty-one entries, and collapsing them would lose the
     /// lines that tell them apart.
     /// </remarks>
-    private static List<AttributeUsage> ExtractAttributes(ISymbol symbol, string target) =>
-        symbol.GetAttributes().Select(a => Describe(a, target)).ToList();
+    private static List<AttributeUsage> ExtractAttributes(ISymbol symbol, string target, IReadOnlySet<string> inScope) =>
+        symbol.GetAttributes().Select(a => Describe(a, target, inScope)).ToList();
+
+    /// <summary>
+    /// Attributes written on the assembly and module themselves — the ones that
+    /// hang off the Project node, since assembly and project are the same grain
+    /// here. Generated sites are excluded: the SDK writes ~10 AssemblyInfo
+    /// attributes per project into obj\, and emitting those would bury the
+    /// hand-written manifest attributes (OrchardCore's [assembly: Module] and
+    /// [assembly: Feature] are the measured case) under uniform build noise.
+    /// </summary>
+    internal static List<AttributeUsage> ExtractAssemblyAttributes(Compilation compilation, IReadOnlySet<string> inScope)
+    {
+        var usages = compilation.Assembly.GetAttributes()
+            .Where(a => !GeneratedCodeMap.IsGeneratedSite(a))
+            .Select(a => Describe(a, "assembly", inScope))
+            .ToList();
+        usages.AddRange(compilation.SourceModule.GetAttributes()
+            .Where(a => !GeneratedCodeMap.IsGeneratedSite(a))
+            .Select(a => Describe(a, "module", inScope)));
+        return usages;
+    }
 
     /// <summary>
     /// A method's own attributes plus its return value's.
@@ -411,10 +469,10 @@ internal static class SymbolClassifier
     /// in DriveSurvey's interop layer, which is precisely where a reader needs to
     /// see the marshalling declared.
     /// </remarks>
-    private static List<AttributeUsage> ExtractMethodAttributes(IMethodSymbol method)
+    private static List<AttributeUsage> ExtractMethodAttributes(IMethodSymbol method, IReadOnlySet<string> inScope)
     {
-        var attributes = ExtractAttributes(method, "method");
-        attributes.AddRange(method.GetReturnTypeAttributes().Select(a => Describe(a, "return")));
+        var attributes = ExtractAttributes(method, "method", inScope);
+        attributes.AddRange(method.GetReturnTypeAttributes().Select(a => Describe(a, "return", inScope)));
         return attributes;
     }
 
@@ -431,7 +489,7 @@ internal static class SymbolClassifier
     /// had errors. Dropping it would turn a broken compile into a quietly smaller
     /// graph, which is the failure mode that costs the most to notice.
     /// </remarks>
-    private static AttributeUsage Describe(AttributeData data, string target)
+    private static AttributeUsage Describe(AttributeData data, string target, IReadOnlySet<string> inScope)
     {
         var line = data.ApplicationSyntaxReference is { } reference
             ? reference.GetSyntax().GetLocation().GetLineSpan().StartLinePosition.Line + 1
@@ -471,9 +529,44 @@ internal static class SymbolClassifier
             Args = args,
             Named = named,
             TypeArgs = typeArgs,
+            RegisteredTypeFullNames = RegisteredTypes(data, attributeClass, inScope),
             Source = source,
             UnresolvedArgs = unresolvedArgs
         };
+    }
+
+    /// <summary>
+    /// In-scope named types the usage names through typeof(...) arguments —
+    /// positional, named, or nested in arrays — and through the generic
+    /// instantiation's type arguments. These are the types a framework will
+    /// construct or consult because of the annotation, with no call site
+    /// anywhere; the Registers edge exists to make them navigable.
+    /// </summary>
+    private static List<string>? RegisteredTypes(
+        AttributeData data, INamedTypeSymbol attributeClass, IReadOnlySet<string> inScope)
+    {
+        var result = new List<string>();
+
+        foreach (var typeArg in attributeClass.TypeArguments)
+            result.AddRange(InScopeNamedTypes(typeArg, inScope));
+
+        foreach (var constant in data.ConstructorArguments) Collect(constant);
+        foreach (var (_, constant) in data.NamedArguments) Collect(constant);
+
+        return result.Count > 0 ? result.Distinct().ToList() : null;
+
+        void Collect(TypedConstant constant)
+        {
+            switch (constant.Kind)
+            {
+                case TypedConstantKind.Type when constant.Value is ITypeSymbol type:
+                    result.AddRange(InScopeNamedTypes(type, inScope));
+                    break;
+                case TypedConstantKind.Array when !constant.IsNull:
+                    foreach (var element in constant.Values) Collect(element);
+                    break;
+            }
+        }
     }
 
     /// <summary>
@@ -533,9 +626,14 @@ internal static class SymbolClassifier
     /// </summary>
     private static object? Render(TypedConstant constant) => constant.Kind switch
     {
-        TypedConstantKind.Array => constant.Values
-            .Select(v => v.Kind == TypedConstantKind.Error ? null : Render(v))
-            .ToList(),
+        // A null passed where an array is expected still has Kind Array, with
+        // Values unset — reading either Values or Value would throw, so the
+        // null has to be answered before touching them.
+        TypedConstantKind.Array => constant.IsNull
+            ? null
+            : constant.Values
+                .Select(v => v.Kind == TypedConstantKind.Error ? null : Render(v))
+                .ToList(),
         // typeof(X) keeps its typeof spelling so a reader cannot mistake it for
         // the string "X". The navigable form (a Registers edge) comes separately.
         TypedConstantKind.Type => $"typeof({(constant.Value as ITypeSymbol)?.ToDisplayString() ?? "?"})",

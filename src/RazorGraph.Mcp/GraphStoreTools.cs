@@ -22,6 +22,7 @@ public sealed class GraphStoreTools(GraphStore store)
         [Description("Project name inside the solution; required when path is a solution")] string? projectName = null,
         [Description("Id to file the result under. Defaults to the file name; reusing an id replaces that graph.")] string? graphId = null,
         [Description("Also graph vendor/minified client assets (dropped by default). Their nodes carry vendor=true and a vendorReason; useful when the bug lives inside a shipped bundle.")] bool includeVendor = false,
+        [Description("Absolute path to an attribute-policy JSON overriding the embedded default (classification name sets, argument-payload suppression, registration vocabulary). Sections the file omits are inherited.")] string? attributePolicy = null,
         CancellationToken ct = default)
     {
         var full = Path.GetFullPath(path);
@@ -33,7 +34,11 @@ public sealed class GraphStoreTools(GraphStore store)
                 "projectName is required when building a single project from a solution. " +
                 "To graph every project at once, call build_solution.");
 
-        await using var builder = new GraphBuilder { IncludeVendorAssets = includeVendor };
+        await using var builder = new GraphBuilder
+        {
+            IncludeVendorAssets = includeVendor,
+            AttributePolicy = LoadPolicy(attributePolicy)
+        };
         var graph = isSolution
             ? await builder.BuildFromSolutionAsync(full, projectName!, ct)
             : await builder.BuildFromProjectAsync(full, ct);
@@ -49,6 +54,7 @@ public sealed class GraphStoreTools(GraphStore store)
         [Description("Id to file the result under. Defaults to the solution file name.")] string? graphId = null,
         [Description("Also graph vendor/minified client assets (dropped by default). Their nodes carry vendor=true and a vendorReason; useful when the bug lives inside a shipped bundle.")] bool includeVendor = false,
         [Description("Skip test projects: no test Method nodes, no Covers edges — a leaner navigation graph. Coverage tools refuse to answer against it rather than reporting everything uncovered. Default false, so the default graph answers every question.")] bool excludeTests = false,
+        [Description("Absolute path to an attribute-policy JSON overriding the embedded default (classification name sets, argument-payload suppression, registration vocabulary). Sections the file omits are inherited.")] string? attributePolicy = null,
         CancellationToken ct = default)
     {
         var full = Path.GetFullPath(path);
@@ -59,12 +65,26 @@ public sealed class GraphStoreTools(GraphStore store)
         await using var builder = new GraphBuilder
         {
             IncludeVendorAssets = includeVendor,
-            ExcludeTestProjects = excludeTests
+            ExcludeTestProjects = excludeTests,
+            AttributePolicy = LoadPolicy(attributePolicy)
         };
         var graph = await builder.BuildFromSolutionAllAsync(full, ct);
 
         return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries, builder.SkippedTestProjects,
             builder.UnboundShapes, unresolvedAttributes: builder.UnresolvedAttributes);
+    }
+
+    /// <summary>
+    /// The policy for one build: the named override, or the embedded default. A
+    /// named file that does not exist is an error — silently building with the
+    /// default would answer with the wrong policy.
+    /// </summary>
+    private static RazorGraph.Extractor.Attributes.AttributePolicy LoadPolicy(string? attributePolicy)
+    {
+        if (attributePolicy == null) return RazorGraph.Extractor.Attributes.AttributePolicy.Default;
+        var full = Path.GetFullPath(attributePolicy);
+        if (!File.Exists(full)) throw new McpException($"Attribute policy file not found: {full}");
+        return RazorGraph.Extractor.Attributes.AttributePolicy.LoadFile(full);
     }
 
     [McpServerTool(Name = "build_lua")]

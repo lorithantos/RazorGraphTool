@@ -60,5 +60,6 @@ internal sealed class ProjectEmitter(CodeGraph graph)
         }
     }
 
-    private static string ProjectId(string projectName) => $"proj:{projectName}";
+    /// <summary>The proj: id a project node is registered under — shared with the assembly-attribute pass.</summary>
+    internal static string ProjectId(string projectName) => $"proj:{projectName}";
 }

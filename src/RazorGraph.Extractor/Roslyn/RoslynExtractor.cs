@@ -21,6 +21,14 @@ public sealed class RoslynExtractor : IAsyncDisposable
     private MSBuildWorkspace? _workspace;
     private readonly List<LoadedProject> _loaded = new();
 
+    /// <summary>
+    /// The attribute policy every classification pass consults — the embedded
+    /// default unless the build was pointed at an override file. Set before
+    /// extraction starts; per-instance rather than static so concurrent builds
+    /// cannot see each other's policy.
+    /// </summary>
+    public Attributes.AttributePolicy Policy { get; set; } = Attributes.AttributePolicy.Default;
+
     // Must run before any Microsoft.Build type is JITed; the ctor body is safe
     // because MSBuild types are first referenced inside LoadProjectAsync.
     public RoslynExtractor() => EnsureMsBuildRegistered();
@@ -203,7 +211,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 var symbol = model.GetDeclaredSymbol(typeDecl);
                 if (symbol == null) continue;
 
-                var info = SymbolClassifier.ClassifySymbol(symbol, loaded.Name, loaded.Compilation, inScope);
+                var info = SymbolClassifier.ClassifySymbol(symbol, loaded.Name, loaded.Compilation, inScope, Policy);
                 if (info == null) continue;
 
                 // A type still living in a .g.cs after mapping is generated
@@ -219,6 +227,21 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 yield return info;
             }
         }
+    }
+
+    /// <summary>
+    /// Hand-written assembly and module attributes, per loaded project — the
+    /// project layer's counterpart to a type's attribute list. See
+    /// SymbolClassifier.ExtractAssemblyAttributes for why generated sites are
+    /// excluded.
+    /// </summary>
+    public IEnumerable<(string ProjectName, List<AttributeUsage> Attributes)> ExtractAssemblyAttributes()
+    {
+        if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
+
+        var inScope = InScopeAssemblies();
+        foreach (var loaded in _loaded)
+            yield return (loaded.Name, SymbolClassifier.ExtractAssemblyAttributes(loaded.Compilation, inScope));
     }
 
     /// <summary>

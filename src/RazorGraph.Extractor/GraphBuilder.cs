@@ -82,6 +82,22 @@ public sealed class GraphBuilder : IAsyncDisposable
     /// <summary>Test projects the solution load skipped; empty unless ExcludeTestProjects.</summary>
     public IReadOnlyList<string> SkippedTestProjects => _roslyn.SkippedTestProjects;
 
+    /// <summary>
+    /// The attribute policy for this build — classification name sets and
+    /// argument-payload suppression as data. Defaults to the embedded shipped
+    /// policy; set it from AttributePolicy.LoadFile to override without a
+    /// rebuild, which is the property that makes it configuration.
+    /// </summary>
+    public Attributes.AttributePolicy AttributePolicy
+    {
+        get => _roslyn.Policy;
+        set
+        {
+            _roslyn.Policy = value;
+            _declarations.Policy = value;
+        }
+    }
+
     public async Task<CodeGraph> BuildFromProjectAsync(string projectPath, CancellationToken ct = default)
     {
         var projectDir = Path.GetDirectoryName(Path.GetFullPath(projectPath))
@@ -149,6 +165,13 @@ public sealed class GraphBuilder : IAsyncDisposable
         // project and the ones it references, which needs the project nodes and
         // their DependsOn edges to already exist.
         _projects.AddProjectNodes(_roslyn.LoadedProjects, _roslyn.Solution);
+
+        // After the Project nodes exist: assembly/module attributes hang off
+        // proj:, and the shared HasNode guard would drop them into silence if
+        // this ran a line earlier.
+        foreach (var (projectName, attributes) in _roslyn.ExtractAssemblyAttributes())
+            _declarations.AddProjectAttributeEdges(ProjectEmitter.ProjectId(projectName), attributes);
+
         _razorLayer.AddBindingEdges(
             _roslyn.ExtractViewCalls().ToList(),
             _roslyn.ExtractShapeNames().ToList(),

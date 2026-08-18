@@ -48,8 +48,13 @@ public sealed record GraphFormatAssessment(GraphFormatVersion? Version, bool Sup
 /// </summary>
 public static class GraphFormat
 {
-    /// <summary>The version this build writes.</summary>
-    public static readonly GraphFormatVersion Current = new(1, 0);
+    /// <summary>
+    /// The version this build writes. 1.1 added the attribute vocabulary —
+    /// ExternalType and Parameter nodes, DecoratedBy and Registers edges, and
+    /// the argument payloads riding them — all additive, so a 1.0 reader loads
+    /// a 1.1 graph with a caveat rather than a refusal.
+    /// </summary>
+    public static readonly GraphFormatVersion Current = new(1, 1);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

@@ -1,43 +1,25 @@
 namespace RazorGraph.Extractor.Roslyn;
 
 using Microsoft.CodeAnalysis;
+using RazorGraph.Extractor.Attributes;
 
 /// <summary>
 /// Recognizes the roles a framework can hand a method: test, lifecycle hook,
 /// and the entry-point kinds where the runtime calls into user code. The
-/// name-set catalogs each predicate consults live beside the predicate that
-/// reads them.
+/// attribute name sets each predicate consults are DATA — they live in the
+/// attribute policy (Attributes\attribute-policy.json), not here, so a codebase
+/// with its own vocabulary changes a file rather than this code.
 /// </summary>
 internal static class MethodRoles
 {
     /// <summary>
-    /// Attribute names that mark a method as a test across the three frameworks
-    /// in common use. Matched by simple name because the attribute may come from
-    /// any of several assemblies and the short names do not collide with
-    /// anything else in practice.
+    /// Matched by simple name because the attribute may come from any of
+    /// several assemblies and the short names do not collide with anything
+    /// else in practice.
     /// </summary>
-    private static readonly HashSet<string> TestAttributeNames = new(StringComparer.Ordinal)
-    {
-        "FactAttribute", "TheoryAttribute",                        // xUnit
-        "TestAttribute", "TestCaseAttribute", "TestCaseSourceAttribute", // NUnit
-        "TestMethodAttribute", "DataTestMethodAttribute"           // MSTest
-    };
-
-    internal static bool IsTestMethod(IMethodSymbol method) =>
+    internal static bool IsTestMethod(IMethodSymbol method, AttributePolicy policy) =>
         method.GetAttributes().Any(a =>
-            a.AttributeClass != null && TestAttributeNames.Contains(a.AttributeClass.Name));
-
-    /// <summary>
-    /// Setup/teardown attribute names for the frameworks that mark hooks with
-    /// attributes. xUnit is absent by design: its hooks are interface members.
-    /// </summary>
-    private static readonly HashSet<string> LifecycleAttributeNames = new(StringComparer.Ordinal)
-    {
-        "SetUpAttribute", "TearDownAttribute",
-        "OneTimeSetUpAttribute", "OneTimeTearDownAttribute",       // NUnit
-        "TestInitializeAttribute", "TestCleanupAttribute",
-        "ClassInitializeAttribute", "ClassCleanupAttribute"        // MSTest
-    };
+            a.AttributeClass != null && policy.TestAttributeNames.Contains(a.AttributeClass.Name));
 
     /// <summary>
     /// A hook the framework runs around each test rather than a method any test
@@ -47,10 +29,10 @@ internal static class MethodRoles
     /// predicate does not see. A base-class hook is still missed: it is extracted
     /// under the base type, which has no tests of its own.
     /// </summary>
-    internal static bool IsLifecycleMethod(IMethodSymbol method)
+    internal static bool IsLifecycleMethod(IMethodSymbol method, AttributePolicy policy)
     {
         if (method.GetAttributes().Any(a =>
-                a.AttributeClass != null && LifecycleAttributeNames.Contains(a.AttributeClass.Name)))
+                a.AttributeClass != null && policy.LifecycleAttributeNames.Contains(a.AttributeClass.Name)))
             return true;
 
         return method.Name is "InitializeAsync" or "DisposeAsync" or "Dispose"
@@ -70,14 +52,14 @@ internal static class MethodRoles
     /// and never becomes a node. Handlers registered as lambdas are another —
     /// there is no method symbol to stamp.
     /// </summary>
-    internal static string? ClassifyEntryPoint(IMethodSymbol m, IReadOnlySet<string> inScope)
+    internal static string? ClassifyEntryPoint(IMethodSymbol m, IReadOnlySet<string> inScope, AttributePolicy policy)
     {
         if (m.MethodKind != MethodKind.Ordinary) return null;
 
         // Test methods and their hooks are framework-invoked too, but the test
         // host catches everything they throw — that is its job — so calling
         // them escape surfaces would only manufacture noise.
-        if (IsTestMethod(m)) return null;
+        if (IsTestMethod(m, policy)) return null;
 
         if (m.IsStatic && m.Name == "Main") return "main";
 
@@ -86,7 +68,7 @@ internal static class MethodRoles
             && BaseChainHasName(m.ContainingType, "PageModel"))
             return "pageHandler";
 
-        if (!m.IsStatic && m.DeclaredAccessibility == Accessibility.Public && IsControllerType(m.ContainingType))
+        if (!m.IsStatic && m.DeclaredAccessibility == Accessibility.Public && IsControllerType(m.ContainingType, policy))
             return "controllerAction";
 
         if (IsEventHandlerShape(m)) return "eventHandler";
@@ -162,10 +144,14 @@ internal static class MethodRoles
         return false;
     }
 
-    /// <summary>Mirrors SymbolClassifier's controller heuristic so the two never disagree.</summary>
-    internal static bool IsControllerType(INamedTypeSymbol type) =>
+    /// <summary>
+    /// The controller heuristic, shared with SymbolClassifier's classification
+    /// branch so the two can never disagree.
+    /// </summary>
+    internal static bool IsControllerType(INamedTypeSymbol type, AttributePolicy policy) =>
         (type.BaseType?.ToDisplayString() ?? "").Contains("Controller")
-        || type.GetAttributes().Any(a => a.AttributeClass?.Name == "ApiControllerAttribute");
+        || type.GetAttributes().Any(a =>
+            a.AttributeClass != null && policy.ControllerAttributeNames.Contains(a.AttributeClass.Name));
 
     private static bool IsEventHandlerShape(IMethodSymbol m)
     {

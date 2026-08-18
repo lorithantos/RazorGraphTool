@@ -18,12 +18,31 @@ public static class SymbolIds
     /// form, and without this every call edge into an extension method was
     /// silently dropped on the id mismatch.
     /// </summary>
-    public static string MethodId(IMethodSymbol method)
+    public static string MethodId(IMethodSymbol method) => "m:" + MethodBody(method);
+
+    /// <summary>
+    /// Stable id for one of a method's parameters, keyed by NAME rather than
+    /// ordinal: the method id already embeds the parameter type list, so any
+    /// insert, delete or type change churns the whole id anyway. The one case
+    /// the schemes disagree on is reordering two same-typed parameters — the
+    /// method id is byte-identical, and under an ordinal key every attribute
+    /// edge would silently transfer to the wrong parameter, while under the
+    /// name key the ids swap correctly. Ordinal is a property, not identity.
+    /// </summary>
+    public static string ParameterId(IMethodSymbol method, IParameterSymbol parameter) =>
+        $"param:{MethodBody(method)}#{parameter.Name}";
+
+    /// <summary>
+    /// The shared body of MethodId and ParameterId — one place computes it, so
+    /// the two can never drift, and a parameter's parent method id is always
+    /// recoverable as "m:" + the text before the '#'.
+    /// </summary>
+    private static string MethodBody(IMethodSymbol method)
     {
         var def = (method.ReducedFrom ?? method).OriginalDefinition;
         var parameters = string.Join(",", def.Parameters.Select(p => p.Type.ToDisplayString()));
         var container = def.ContainingType?.ToDisplayString() ?? "global";
-        return $"m:{container}.{def.Name}({parameters})";
+        return $"{container}.{def.Name}({parameters})";
     }
 
     /// <summary>

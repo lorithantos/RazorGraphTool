@@ -109,6 +109,24 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void Builds_DecoratedBy_ForTheHandWrittenAssemblyAttribute_AndNoGeneratedOnes()
+    {
+        // The SDK writes ~10 assembly attributes per project into obj\
+        // (AssemblyInfo.cs, .NETCoreApp…AssemblyAttributes.cs); the fixture
+        // hand-writes exactly one. Exactly one edge is therefore both the
+        // positive case and the proof the generated-site gate held.
+        var fromProjects = _solutionGraph!.Edges
+            .Where(e => e.Type == EdgeType.DecoratedBy && e.FromId.StartsWith("proj:", StringComparison.Ordinal))
+            .ToList();
+
+        var edge = Assert.Single(fromProjects);
+        Assert.Equal("proj:SampleLib", edge.FromId);
+        Assert.Equal("ext:System.Reflection.AssemblyMetadataAttribute", edge.ToId);
+        Assert.Equal("assembly", edge.GetProperty<string>("target"));
+        Assert.Equal(new List<object?> { "fixture-marker", "sample-lib" }, edge.GetProperty<List<object?>>("args"));
+    }
+
+    [Fact]
     public void Builds_DependsOnEdges_BetweenProjects()
     {
         var edges = _solutionGraph!.Edges

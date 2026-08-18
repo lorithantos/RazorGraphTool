@@ -1,0 +1,75 @@
+{
+  ".comment": [
+    "The attribute policy: every name-set decision the extractor makes about attributes, as data.",
+    "This copy is embedded in RazorGraph.Extractor and is the shipped default. A build can point at",
+    "an override file (--attribute-policy on the CLI, attributePolicy over MCP) and change any of",
+    "these decisions WITHOUT a rebuild - that is the point: policy is configuration, and data is",
+    "more flexible than code.",
+    "An override file uses this same shape. A section it OMITS is inherited from this default, so a",
+    "file that only suppresses one attribute's payload does not have to restate the test frameworks.",
+    "A section it INCLUDES replaces that section whole.",
+    "testAttributes / lifecycleAttributes / controllerAttributes / bindPropertyAttributes match by",
+    "SIMPLE class name including the Attribute suffix (FactAttribute), exactly as the extractor",
+    "always has: the attribute may come from any of several assemblies, and the short names do not",
+    "collide with anything else in practice. suppressArgumentsFor matches by FULL name as the graph",
+    "prints it, with a generic attribute named by its original definition",
+    "(Ns.RegisterDependencyAttribute<TInterface>)."
+  ],
+  "testAttributes": {
+    ".comment": [
+      "Marks a method as a test. Feeds the isTest stamp, coverage seeding, and the rule that test",
+      "methods are never entry points."
+    ],
+    "names": [
+      "FactAttribute", "TheoryAttribute",
+      "TestAttribute", "TestCaseAttribute", "TestCaseSourceAttribute",
+      "TestMethodAttribute", "DataTestMethodAttribute"
+    ]
+  },
+  "lifecycleAttributes": {
+    ".comment": [
+      "Setup/teardown hooks for the frameworks that mark them with attributes. xUnit is absent by",
+      "design: its hooks are interface members and constructors, recognized in code by shape."
+    ],
+    "names": [
+      "SetUpAttribute", "TearDownAttribute",
+      "OneTimeSetUpAttribute", "OneTimeTearDownAttribute",
+      "TestInitializeAttribute", "TestCleanupAttribute",
+      "ClassInitializeAttribute", "ClassCleanupAttribute"
+    ]
+  },
+  "controllerAttributes": {
+    ".comment": ["A type carrying one of these is a controller even without a Controller base type."],
+    "names": ["ApiControllerAttribute"]
+  },
+  "bindPropertyAttributes": {
+    ".comment": ["Marks a property as request-bound; feeds the bindProperty stamp and BindsTo edges."],
+    "names": ["BindPropertyAttribute"]
+  },
+  "suppressArgumentsFor": {
+    ".comment": [
+      "DecoratedBy edges for these attributes are still emitted, with line and target, but the",
+      "args/named/source payload is withheld. unresolvedArgs is NOT suppressible - a build error",
+      "must never be configurable into silence. Default empty: uniform emission, so any narrowing",
+      "is a visible line in this file rather than a branch in the extractor. The measured candidate",
+      "is Xunit.InlineDataAttribute - 1,300 usages in OrchardCore, all of them test case data."
+    ],
+    "names": []
+  },
+  "registrations": {
+    ".comment": [
+      "Attributes that mean 'this type is registered with a container', and where to read the",
+      "registration from. .NET has no standard registration ATTRIBUTE - the vocabulary is",
+      "per-codebase (a RegisterDependencyAttribute<TInterface>, say) - so entries belong in",
+      "override files, declared as data and never hardcoded in the extractor.",
+      "Shape per entry: 'attribute' is the full name as the graph prints it; 'serviceTypeFrom'",
+      "says where the service type is written - 'typeArgument:0', 'argument:0', or",
+      "'named:ServiceType'; 'lifetimeFrom' optionally names the argument carrying the lifetime,",
+      "e.g. 'named:Lifetime'.",
+      "Parsed and carried today so override files can already declare their vocabulary; the",
+      "consumer - registration lookup plus the container's own constructor-selection rules - is",
+      "the DI work this feeds."
+    ],
+    "declarations": []
+  }
+}

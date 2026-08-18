@@ -117,6 +117,15 @@ public sealed record AttributeUsage(
     public List<string>? TypeArgs { get; init; }
 
     /// <summary>
+    /// In-scope named types this usage names through typeof(...) arguments and
+    /// generic type arguments, recursively (typeof(List&lt;MyDto&gt;) yields MyDto)
+    /// — the raw material for Registers edges. Only in-scope types: a typeof
+    /// pointing outside the solution gets no edge, but the fact is not lost,
+    /// because it still renders into <see cref="Args"/>.
+    /// </summary>
+    public List<string>? RegisteredTypeFullNames { get; init; }
+
+    /// <summary>
     /// The argument list exactly as written, present whenever there are
     /// arguments — uniform, so its absence means exactly "no arguments". One
     /// string per usage rather than per argument: most arguments are string
@@ -234,6 +243,27 @@ public sealed class MethodDetail
     public int? LineStart { get; init; }
 
     /// <summary>Attributes written on this method, including its return value.</summary>
+    public List<AttributeUsage> Attributes { get; init; } = new();
+
+    /// <summary>This method's decorated parameters; see ParameterDetail for why only those.</summary>
+    public List<ParameterDetail> Parameters { get; init; } = new();
+}
+
+/// <summary>
+/// A DECORATED parameter as a graph node. Only decorated parameters are
+/// extracted — a param: node exists because it is decorated, so an absent node
+/// means "undecorated", never "unmodelled". Widening that later is additive;
+/// narrowing it is not. Ordinal rides along as data, from the unreduced
+/// original definition so an extension method's this parameter keeps its slot.
+/// </summary>
+public sealed record ParameterDetail(
+    string Id,
+    string Name,
+    int Ordinal,
+    string ParameterType,
+    int? Line)
+{
+    /// <summary>Attributes written on this parameter — at least one, by construction.</summary>
     public List<AttributeUsage> Attributes { get; init; } = new();
 }
 

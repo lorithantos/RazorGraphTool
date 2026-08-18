@@ -46,6 +46,23 @@ internal static class GeneratedCodeMap
     }
 
     /// <summary>
+    /// Whether an attribute was written by the build rather than a person. The
+    /// SDK generates AssemblyInfo.cs and .NETCoreApp…AssemblyAttributes.cs into
+    /// obj\ as plain .cs files, so the .g.cs suffix alone misses them — the obj
+    /// path segment is the tell, the same rule the client-asset scan applies.
+    /// A site with no syntax reference at all is compiler-synthesized: also not
+    /// authored. Roughly ten assembly attributes per project ride on this test.
+    /// </summary>
+    internal static bool IsGeneratedSite(AttributeData attribute)
+    {
+        var path = attribute.ApplicationSyntaxReference?.SyntaxTree.FilePath;
+        if (path == null) return true;
+        if (path.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase)) return true;
+        return path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Any(segment => segment.Equals("obj", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
     /// Fallback source attribution: the file named by the MAJORITY of a
     /// generated tree's #line directives, not the first. The Razor generator
     /// inlines _ViewImports content at the top of every generated file, each

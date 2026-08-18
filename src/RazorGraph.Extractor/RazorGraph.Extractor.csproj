@@ -30,4 +30,11 @@
     <ProjectReference Include="..\RazorGraph.Core\RazorGraph.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The shipped attribute policy rides inside the assembly, same pattern as
+         RazorGraph.Lua's ExternalApis catalogues; a disk override replaces it
+         per build without recompiling. -->
+    <EmbeddedResource Include="Attributes\*.json" />
+  </ItemGroup>
+
 </Project>

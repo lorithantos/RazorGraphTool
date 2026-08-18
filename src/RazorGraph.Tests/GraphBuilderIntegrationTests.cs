@@ -188,6 +188,110 @@ public class GraphBuilderIntegrationTests : IAsyncLifetime
         Assert.False(apiController.Properties.ContainsKey("unresolvedArgs"));
     }
 
+    // ---- Registers edges ---------------------------------------------------
+
+    [Fact]
+    public void Builds_RegistersEdge_FromAGenericAttributeTypeArgument()
+    {
+        // [RegisterService<IGreetingService>] on GreetingService: the framework
+        // consults IGreetingService because of the annotation, no call site anywhere.
+        var service = _graph!.Nodes.Single(n => n.Type == NodeType.ServiceImplementation && n.Name == "GreetingService");
+        var registers = _graph.Outgoing(service.Id).Single(e => e.Type == EdgeType.Registers);
+
+        Assert.Equal("IGreetingService", _graph.GetNode(registers.ToId)!.Name);
+
+        // The attribute is declared in the fixture, so this must be its own
+        // type: node, not a minted external one — and the DecoratedBy sibling
+        // must join on (from, attribute, line).
+        var attributeId = registers.GetProperty<string>("attribute");
+        Assert.Equal("type:SampleApp.Infrastructure.RegisterServiceAttribute<TService>", attributeId);
+
+        var decorated = _graph.Outgoing(service.Id)
+            .Single(e => e.Type == EdgeType.DecoratedBy && e.ToId == attributeId);
+        Assert.Equal(decorated.GetProperty<int>("line"), registers.GetProperty<int>("line"));
+        Assert.Equal(new List<string> { "SampleApp.Services.IGreetingService" },
+            decorated.GetProperty<List<string>>("typeArgs"));
+    }
+
+    [Fact]
+    public void Builds_RegistersEdge_FromATypeofArgument()
+    {
+        // [ModelBinder(typeof(GreetingNameBinder))] on IndexViewModel.BoundName.
+        var registers = _graph!.Outgoing("prop:SampleApp.Models.IndexViewModel.BoundName")
+            .Single(e => e.Type == EdgeType.Registers);
+
+        Assert.Equal("type:SampleApp.Infrastructure.GreetingNameBinder", registers.ToId);
+        Assert.Equal("ext:Microsoft.AspNetCore.Mvc.ModelBinderAttribute", registers.GetProperty<string>("attribute"));
+
+        // The payload keeps the typeof spelling, so the edge and what a reader
+        // sees in the arguments name the same type.
+        var decorated = _graph.Outgoing("prop:SampleApp.Models.IndexViewModel.BoundName")
+            .Single(e => e.Type == EdgeType.DecoratedBy);
+        Assert.Equal(new List<object?> { "typeof(SampleApp.Infrastructure.GreetingNameBinder)" },
+            decorated.GetProperty<List<object?>>("args"));
+    }
+
+    [Fact]
+    public void Builds_NoRegistersEdge_ForATypeofPointingOutsideTheSolution()
+    {
+        // [TypeConverter(typeof(StringConverter))]: the fact survives in the
+        // DecoratedBy payload; an edge to a node that could not say what it is
+        // would add reachability without meaning.
+        var outgoing = _graph!.Outgoing("prop:SampleApp.Models.IndexViewModel.ConvertedTitle").ToList();
+
+        Assert.DoesNotContain(outgoing, e => e.Type == EdgeType.Registers);
+        var decorated = outgoing.Single(e => e.Type == EdgeType.DecoratedBy);
+        Assert.Equal(new List<object?> { "typeof(System.ComponentModel.StringConverter)" },
+            decorated.GetProperty<List<object?>>("args"));
+    }
+
+    [Fact]
+    public void Renders_ANullArrayArgument_AsAuthoredNull_NotAsAFailure()
+    {
+        // [RegisterService<GreetingNameBinder>(null)]: null where string[] is
+        // expected still has TypedConstantKind.Array, and reading its Values
+        // used to throw. An authored null is an argument, not a failure — the
+        // failure signal is unresolvedArgs, and it must stay absent.
+        var edge = _graph!.Outgoing("type:SampleApp.Infrastructure.GreetingNameBinder")
+            .Single(e => e.Type == EdgeType.DecoratedBy);
+
+        Assert.Equal(new List<object?> { null }, edge.GetProperty<List<object?>>("args"));
+        Assert.False(edge.Properties.ContainsKey("unresolvedArgs"));
+    }
+
+    // ---- Parameter nodes ---------------------------------------------------
+
+    [Fact]
+    public void Builds_AParameterNode_OnlyForTheDecoratedParameter()
+    {
+        // [FromRoute] on Get's name parameter is the fixture's only decorated
+        // parameter, so exactly one Parameter node may exist — the same
+        // assertion also proves every undecorated parameter (GreetingService
+        // .Greet's, the ctors') got none, which is what lets an absent param:
+        // node mean "undecorated" rather than "unmodelled".
+        var parameter = _graph!.Nodes.Single(n => n.Type == NodeType.Parameter);
+
+        Assert.Equal("param:SampleApp.Api.GreetingsController.Get(string)#name", parameter.Id);
+        Assert.Equal("name", parameter.Name);
+        Assert.Equal(0, parameter.GetProperty<int>("ordinal"));
+        Assert.Equal("string", parameter.GetProperty<string>("parameterType"));
+    }
+
+    [Fact]
+    public void Builds_ContainsAndDecoratedBy_ForTheParameterNode()
+    {
+        const string parameterId = "param:SampleApp.Api.GreetingsController.Get(string)#name";
+
+        // The parent method id is the text before the '#' — the shared
+        // MethodBody is what guarantees that surgery always works.
+        var contains = _graph!.Incoming(parameterId).Single(e => e.Type == EdgeType.Contains);
+        Assert.Equal("m:SampleApp.Api.GreetingsController.Get(string)", contains.FromId);
+
+        var decorated = _graph.Outgoing(parameterId).Single(e => e.Type == EdgeType.DecoratedBy);
+        Assert.Equal("ext:Microsoft.AspNetCore.Mvc.FromRouteAttribute", decorated.ToId);
+        Assert.True(decorated.GetProperty<int>("line") > 0);
+    }
+
     // ---- Method-level extraction -------------------------------------------
 
     [Fact]
