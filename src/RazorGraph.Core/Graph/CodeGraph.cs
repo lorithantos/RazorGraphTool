@@ -14,6 +14,18 @@ public sealed class CodeGraph
     public IReadOnlyCollection<GraphEdge> Edges => _edges.AsReadOnly();
 
     /// <summary>
+    /// When this graph was extracted, or null for one built before the stamp
+    /// existed. The baseline for per-node staleness: a consumer can ask whether
+    /// the file behind an answer has been written since.
+    ///
+    /// Carried on the graph rather than taken from the file's timestamp because
+    /// a graph the server built with build_solution never touches disk, and that
+    /// is exactly the graph a long session keeps asking. Null means "cannot
+    /// tell", which callers must render as unknown rather than as fresh.
+    /// </summary>
+    public DateTimeOffset? BuiltAt { get; set; }
+
+    /// <summary>
     /// Format versions newer than this build's that data in this graph was read
     /// from. Empty for a graph built from source, or loaded from a file at or
     /// below this build's version.

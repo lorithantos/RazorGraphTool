@@ -149,7 +149,7 @@ internal static class QueryCommand
             if (options.Escapes) return RunEscapes(query, options);
             if (options.Uncovered) return RunUncovered(query, options);
             if (options.Deep > 0) return RunDeepListing(query, options);
-            if (options.Id != null) return RunNodeReport(query, options.Id, options);
+            if (options.Id != null) return RunNodeReport(query, graph, options.Id, options);
             // Any kind the graph actually holds, foreign ones included. An
             // unparseable --type used to fall through to the generic "Graph
             // loaded" banner and exit 0, so a typo reported success and no
@@ -379,7 +379,10 @@ internal static class QueryCommand
         return 0;
     }
 
-    private static int RunNodeReport(GraphQuery query, string nodeId, QueryOptions options)
+    // Takes the graph as well as the query, the same way RunTypeListing does:
+    // freshness is a property of the graph, not of a traversal over it.
+    private static int RunNodeReport(
+        GraphQuery query, CodeGraph graph, string nodeId, QueryOptions options)
     {
         var node = query.GetNode(nodeId);
         if (node == null)
@@ -437,7 +440,7 @@ internal static class QueryCommand
             return 0;
         }
 
-        GraphReports.PrintNode(node);
+        GraphReports.PrintNode(node, new GraphFreshness(graph));
 
         if (options.Neighbors)
         {

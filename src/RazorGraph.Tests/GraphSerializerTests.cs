@@ -180,6 +180,34 @@ public class GraphSerializerTests
     }
 
     [Fact]
+    public void RoundTrip_PreservesBuiltAt()
+    {
+        var graph = BuildGraph();
+        graph.BuiltAt = new DateTimeOffset(2026, 8, 29, 12, 41, 0, TimeSpan.Zero);
+
+        var restored = GraphSerializer.FromJson(GraphSerializer.ToJson(graph));
+
+        Assert.Equal(graph.BuiltAt, restored.BuiltAt);
+    }
+
+    /// <summary>
+    /// A graph written before the stamp existed must read back as "cannot tell",
+    /// never as fresh: a freshness probe that defaults to clean is the
+    /// reassuring silence the caveat fields exist to prevent.
+    /// </summary>
+    [Fact]
+    public void Read_GraphWithoutBuiltAt_ReportsUnknownRatherThanFresh()
+    {
+        var graph = BuildGraph();
+        graph.BuiltAt = null;
+
+        var restored = GraphSerializer.FromJson(GraphSerializer.ToJson(graph));
+
+        Assert.Null(restored.BuiltAt);
+        Assert.Null(new GraphFreshness(restored).WrittenSinceBuild(restored.Nodes.First()));
+    }
+
+    [Fact]
     public void Read_CurrentVersion_HasNoCaveat()
     {
         var result = GraphSerializer.Read(GraphSerializer.ToJson(BuildGraph()));

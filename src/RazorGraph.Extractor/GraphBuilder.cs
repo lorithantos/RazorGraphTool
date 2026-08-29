@@ -14,7 +14,10 @@ using SymbolInfo = RazorGraph.Extractor.Roslyn.SymbolInfo;
 /// </summary>
 public sealed class GraphBuilder : IAsyncDisposable
 {
-    private readonly CodeGraph _graph = new();
+    // Stamped at construction rather than at return: extraction is the slow part,
+    // and the baseline a consumer wants is the source as it stood when reading
+    // began. Stamping afterwards would call a file edited mid-build fresh.
+    private readonly CodeGraph _graph = new() { BuiltAt = DateTimeOffset.UtcNow };
     private readonly RoslynExtractor _roslyn = new();
 
     /// <summary>

@@ -11,12 +11,22 @@ internal static class GraphReports
     internal static string Describe(GraphNode? node) =>
         node == null ? "(not found)" : $"[{node.DisplayType}] {node.Name} ({node.Id})";
 
-    internal static void PrintNode(GraphNode node)
+    internal static void PrintNode(GraphNode node, GraphFreshness? freshness = null)
     {
         Console.WriteLine($"[{node.DisplayType}] {node.Name}");
         Console.WriteLine($"  Id: {node.Id}");
         Console.WriteLine($"  File: {node.FilePath}");
         if (node.LineStart.HasValue) Console.WriteLine($"  Line: {node.LineStart}");
+
+        // Printed only when true. A note on every clean node is noise that trains
+        // the reader past the one that matters, and silence here means "not asked
+        // or not knowable", never "verified unchanged".
+        if (freshness?.WrittenSinceBuild(node) == true)
+        {
+            Console.WriteLine(
+                "  ! This file has been WRITTEN since the graph was built — the line "
+                + "numbers above may have moved. Rebuild before trusting them.");
+        }
         if (node.Properties.Count > 0)
         {
             Console.WriteLine("  Properties:");

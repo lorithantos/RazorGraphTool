@@ -51,10 +51,13 @@ public static class GraphFormat
     /// <summary>
     /// The version this build writes. 1.1 added the attribute vocabulary —
     /// ExternalType and Parameter nodes, DecoratedBy and Registers edges, and
-    /// the argument payloads riding them — all additive, so a 1.0 reader loads
-    /// a 1.1 graph with a caveat rather than a refusal.
+    /// the argument payloads riding them. 1.2 added the document-level
+    /// <c>builtAt</c> stamp behind per-node freshness. Both additive, so an
+    /// older reader loads a newer graph with a caveat rather than a refusal, and
+    /// a graph written without the stamp reads back as "cannot tell" rather than
+    /// as fresh.
     /// </summary>
-    public static readonly GraphFormatVersion Current = new(1, 1);
+    public static readonly GraphFormatVersion Current = new(1, 2);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

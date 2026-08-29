@@ -52,7 +52,7 @@ public sealed class CoverageTools(GraphStore store)
     {
         var graph = store.Require(graphId).Graph;
         var all = RequireCoverage(() => new GraphQuery(graph).FindUncoveredMethods(project).ToList());
-        var page = all.Take(Math.Max(1, limit)).Select(ToolResponses.NodeSummary).ToList();
+        var page = all.Take(Math.Max(1, limit)).Select(n => ToolResponses.NodeSummary(n)).ToList();
         return ToolResponses.ToJson(new { returned = page.Count, totalMatches = all.Count, truncated = all.Count > page.Count, methods = page });
     }
 

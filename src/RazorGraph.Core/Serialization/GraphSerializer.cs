@@ -30,6 +30,11 @@ public static class GraphSerializer
         var dto = new GraphDto
         {
             FormatVersion = GraphFormat.Current.ToString(),
+            // Stamped rather than inferred from the file's own timestamp: a copy,
+            // a checkout or a restore rewrites that, and the question a consumer
+            // asks is when the graph was EXTRACTED. A graph built before the
+            // stamp existed writes null and reads back as "cannot tell".
+            BuiltAt = graph.BuiltAt,
             ForeignData = DescribeForeignData(graph),
             Nodes = graph.Nodes.Select(ToNodeDto).ToList(),
             Edges = graph.Edges.Select(e => new EdgeDto
@@ -120,7 +125,7 @@ public static class GraphSerializer
 
     private static CodeGraph ToGraph(GraphDto dto, GraphFormatAssessment assessment)
     {
-        var graph = new CodeGraph();
+        var graph = new CodeGraph { BuiltAt = dto.BuiltAt };
 
         // Provenance the elements cannot carry. A newer format can add a property
         // to a kind we do know, which leaves nothing locally strange to spot at
@@ -279,6 +284,10 @@ public static class GraphSerializer
         // First so it lands at the top of the file: a reader deciding whether it
         // can read this document should not have to scan past 20k nodes to find out.
         public string? FormatVersion { get; set; }
+
+        /// <summary>When the graph was extracted. Null on graphs written before
+        /// the stamp existed, which read back as "cannot tell".</summary>
+        public DateTimeOffset? BuiltAt { get; set; }
 
         // Second for the same reason, and omitted entirely when the graph holds
         // nothing foreign -- its presence is the signal.

@@ -43,7 +43,9 @@ public sealed class RazorPageTools(GraphStore store)
             page = ToolResponses.NodeSummary(context.Page),
             pageModel = context.PageModel is null ? null : ToolResponses.NodeSummary(context.PageModel),
             viewModel = context.ViewModel is null ? null : ToolResponses.NodeSummary(context.ViewModel),
-            injectedServices = context.InjectedServices.Select(ToolResponses.NodeSummary).ToList()
+            // Lambda, not a method group: NodeSummary's optional freshness
+            // parameter makes the group ambiguous against Select's indexed overload.
+            injectedServices = context.InjectedServices.Select(n => ToolResponses.NodeSummary(n)).ToList()
         });
     }
 

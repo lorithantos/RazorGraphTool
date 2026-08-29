@@ -3,6 +3,7 @@ namespace RazorGraph.Mcp;
 using System.ComponentModel;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
+using RazorGraph.Core.Graph;
 using RazorGraph.Core.Query;
 using RazorGraph.Core.Serialization;
 
@@ -32,7 +33,11 @@ public sealed class GraphNavigationTools(GraphStore store)
                      .ToList();
         }
 
-        var page = all.Take(Math.Max(1, limit)).Select(ToolResponses.NodeSummary).ToList();
+        // One probe per call, so the stat cache spans the whole result set: a
+        // 50-node page is usually a handful of distinct files.
+        var freshness = new GraphFreshness(graph);
+
+        var page = all.Take(Math.Max(1, limit)).Select(n => ToolResponses.NodeSummary(n, freshness)).ToList();
         return ToolResponses.ToJson(new { returned = page.Count, totalMatches = all.Count, truncated = all.Count > page.Count, nodes = page });
     }
 
@@ -63,7 +68,14 @@ public sealed class GraphNavigationTools(GraphStore store)
             properties = e.Properties.Count > 0 ? e.Properties : null
         }).ToList();
 
-        return ToolResponses.ToJson(new { node = ToolResponses.NodeDetail(node), outgoing, incoming });
+        // The node a caller is about to open at lineStart..lineEnd is exactly the
+        // one worth flagging, so get_node carries it even though it is one node.
+        return ToolResponses.ToJson(new
+        {
+            node = ToolResponses.NodeDetail(node, new GraphFreshness(graph)),
+            outgoing,
+            incoming
+        });
     }
 
     [McpServerTool(Name = "trace_data_flow")]

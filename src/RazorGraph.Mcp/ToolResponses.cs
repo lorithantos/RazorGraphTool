@@ -21,17 +21,25 @@ internal static class ToolResponses
 
     internal static string ToJson(object value) => JsonSerializer.Serialize(value, Json);
 
-    internal static object NodeSummary(GraphNode n) => new
+    /// <summary>
+    /// <c>fileWrittenSince</c> is emitted only when it is true, and only when a
+    /// freshness probe was supplied: absent means "not asked or not knowable",
+    /// never "verified unchanged". True says the file behind this node has been
+    /// WRITTEN since the graph was built — the node's file, not its meaning, and
+    /// not the files it points at.
+    /// </summary>
+    internal static object NodeSummary(GraphNode n, GraphFreshness? freshness = null) => new
     {
         id = n.Id,
         type = n.DisplayType,
         name = n.Name,
         project = n.GetProperty<string>("project"),
         filePath = n.FilePath,
-        line = n.LineStart
+        line = n.LineStart,
+        fileWrittenSince = Stale(n, freshness)
     };
 
-    internal static object NodeDetail(GraphNode n) => new
+    internal static object NodeDetail(GraphNode n, GraphFreshness? freshness = null) => new
     {
         id = n.Id,
         type = n.DisplayType,
@@ -39,7 +47,14 @@ internal static class ToolResponses
         filePath = n.FilePath,
         lineStart = n.LineStart,
         lineEnd = n.LineEnd,
+        fileWrittenSince = Stale(n, freshness),
         properties = n.Properties.Count > 0 ? n.Properties : null,
         labels = n.Labels.Count > 0 ? n.Labels : null
     };
+
+    // Null rather than false when unchanged, so the field disappears under
+    // WhenWritingNull: a flag on every clean node in a 500-node result is noise
+    // that trains the reader to skip the one that matters.
+    private static bool? Stale(GraphNode n, GraphFreshness? freshness) =>
+        freshness?.WrittenSinceBuild(n) == true ? true : null;
 }
