@@ -668,6 +668,15 @@ internal static class SymbolClassifier
     private static object? Scalar(object? value) => value switch
     {
         null => null,
+        // NaN and the infinities are doubles with no JSON number to be written
+        // as, so they travel as their names. They have to be caught before the
+        // double and float arms below, which would pass them through to a writer
+        // that throws on them -- one [InlineData(double.NaN)] in a guard test is
+        // enough to fail the save of an entire solution graph. Naming them beats
+        // the alternative: AllowNamedFloatingPointLiterals emits bare NaN tokens
+        // that are not valid JSON and that no other reader of these graphs takes.
+        double d when !double.IsFinite(d) => NonFinite(d),
+        float nf when !float.IsFinite(nf) => NonFinite(nf),
         string or bool or int or long or double => value,
         char c => c.ToString(),
         sbyte or byte or short or ushort => Convert.ToInt32(value),
@@ -677,6 +686,14 @@ internal static class SymbolClassifier
         ulong ul => (double)ul,
         _ => value.ToString()
     };
+
+    /// <summary>
+    /// The name C# writes for a double that has no numeric form. Matches
+    /// <c>ToString(CultureInfo.InvariantCulture)</c>, so what a reader greps for
+    /// is what the source said.
+    /// </summary>
+    private static string NonFinite(double value) =>
+        double.IsNaN(value) ? "NaN" : value > 0 ? "Infinity" : "-Infinity";
 
     /// <summary>
     /// Ids of in-solution interface methods this method implements — the join
