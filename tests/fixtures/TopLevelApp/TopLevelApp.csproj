@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Deliberately the plain SDK, not Microsoft.NET.Sdk.Web. The web SDK emits a
+       `public partial class Program` so WebApplicationFactory<Program> can bind,
+       and that generated partial gives the type a TypeDeclarationSyntax the
+       extractor's type walk finds anyway. A console app has no such partial, so
+       this fixture is the only one that can fail when top-level statements stop
+       being extracted. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

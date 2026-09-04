@@ -274,6 +274,25 @@ public sealed class RoslynExtractor : IAsyncDisposable
 
                 yield return info;
             }
+
+            // A top-level program has no type declaration for the walk above to
+            // find; its Program class and <Main>$ exist only as symbols, reached
+            // through the entry point. See TopLevelProgram.
+            //
+            // Skipped when the type also has a real declaration: the ASP.NET SDK
+            // emits a `public partial class Program` so WebApplicationFactory
+            // <Program> can bind, and the walk above already yielded it. That
+            // generated partial is also why this gap survived so long — every web
+            // fixture in this repo gets a Program node by accident, and only a
+            // plain console app shows the hole.
+            if (TopLevelProgram.EntryPointUnit(root) is { } unit
+                && TopLevelProgram.DeclaredMethod(unit, model) is { ContainingType: { } programType }
+                && !programType.DeclaringSyntaxReferences.Any(r => r.GetSyntax() is TypeDeclarationSyntax))
+            {
+                var info = SymbolClassifier.ClassifySymbol(
+                    programType, loaded.Name, loaded.Compilation, inScope, Policy);
+                if (info != null) yield return info;
+            }
         }
     }
 
@@ -319,9 +338,8 @@ public sealed class RoslynExtractor : IAsyncDisposable
         foreach (var (root, model) in _loaded.SelectMany(
                      l => l.Compilation.SyntaxTrees.Select(t => (t.GetRoot(), l.Compilation.GetSemanticModel(t)))))
         {
-            foreach (var site in root.DescendantNodes()
-                .OfType<BaseMethodDeclarationSyntax>()
-                .SelectMany(decl => CallSiteScanner.MethodCallSites(decl, model, inScope)))
+            foreach (var site in TopLevelProgram.MethodScopes(root)
+                .SelectMany(scope => CallSiteScanner.MethodCallSites(scope, model, inScope)))
             {
                 yield return site;
             }
@@ -439,9 +457,13 @@ public sealed class RoslynExtractor : IAsyncDisposable
         foreach (var (root, model) in _loaded.SelectMany(
                      l => l.Compilation.SyntaxTrees.Select(t => (t.GetRoot(), l.Compilation.GetSemanticModel(t)))))
         {
-            foreach (var decl in root.DescendantNodes().OfType<BaseMethodDeclarationSyntax>())
+            // Top-level scopes included: a minimal API registers its whole
+            // surface from Main — app.MapGet("/", Handler) hands a method group
+            // to the framework, and that is a callback entry point exactly as a
+            // registration inside a Startup class would be.
+            foreach (var scope in TopLevelProgram.MethodScopes(root))
             {
-                foreach (var targetId in CallSiteScanner.CallbackTargets(decl, model, inScope))
+                foreach (var targetId in CallSiteScanner.CallbackTargets(scope, model, inScope))
                     yield return targetId;
             }
         }

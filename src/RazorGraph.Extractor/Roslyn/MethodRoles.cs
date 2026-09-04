@@ -61,7 +61,11 @@ internal static class MethodRoles
         // them escape surfaces would only manufacture noise.
         if (IsTestMethod(m, policy)) return null;
 
-        if (m.IsStatic && m.Name == "Main") return "main";
+        // <Main>$ is the name the compiler gives the entry point it synthesizes
+        // for top-level statements. Same role as a written Main, and without it
+        // the method that starts the whole application carries no entry-point
+        // kind — so escape analysis has no root to report against.
+        if (m.IsStatic && m.Name is "Main" or "<Main>$") return "main";
 
         if (!m.IsStatic && m.DeclaredAccessibility == Accessibility.Public
             && PageHandlerPrefixes.Any(p => m.Name.StartsWith(p, StringComparison.Ordinal))

@@ -87,6 +87,17 @@ internal static class MemberAccessScanner
                     return model.GetDeclaredSymbol(propDecl) is IPropertySymbol p
                         ? new[] { SymbolIds.MemberId(p) }
                         : Enumerable.Empty<string>();
+
+                // Reaching the compilation unit means no member declaration owns
+                // the access — it is a top-level statement, and the code that
+                // runs it is the synthesized entry point. Last case in the walk,
+                // so an access inside any real member has already returned; and
+                // DeclaredMethod answers null for a unit with no global
+                // statements, which is every ordinary file.
+                case CompilationUnitSyntax unit:
+                    return TopLevelProgram.DeclaredMethod(unit, model) is { } entryPoint
+                        ? new[] { SymbolIds.MethodId(entryPoint) }
+                        : Enumerable.Empty<string>();
             }
         }
         return Enumerable.Empty<string>();

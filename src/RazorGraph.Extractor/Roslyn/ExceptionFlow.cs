@@ -22,11 +22,16 @@ internal static class ExceptionFlow
     /// is decided on live symbols now, while both sides still are symbols —
     /// never by name at query time.
     /// </summary>
-    internal static List<ThrownType> ExtractThrows(BaseMethodDeclarationSyntax decl, SemanticModel model)
+    internal static List<ThrownType> ExtractThrows(SyntaxNode decl, SemanticModel model)
     {
         var sites = new List<(ITypeSymbol? Type, SyntaxNode Site, bool InLambda)>();
 
-        foreach (var node in decl.DescendantNodes(n => n == decl || n is not LocalFunctionStatementSyntax))
+        // Body nodes rather than a descend from decl, so a top-level program's
+        // throws are its global statements' and not those of any type declared
+        // in the same file; see TopLevelProgram. For an ordinary declaration
+        // BodyNodes is just [decl], and this is the original walk.
+        foreach (var node in TopLevelProgram.BodyNodes(decl)
+            .SelectMany(b => b.DescendantNodes(n => n == b || n is not LocalFunctionStatementSyntax)))
         {
             var inLambda = node.Ancestors().TakeWhile(a => a != decl)
                 .Any(a => a is AnonymousFunctionExpressionSyntax);
@@ -88,7 +93,7 @@ internal static class ExceptionFlow
 
     /// <summary>The type a bare 'throw;' rethrows: its catch's declaration, else System.Exception.</summary>
     private static ITypeSymbol? RethrownType(
-        ThrowStatementSyntax rethrow, BaseMethodDeclarationSyntax decl, SemanticModel model)
+        ThrowStatementSyntax rethrow, SyntaxNode decl, SemanticModel model)
     {
         var catchClause = rethrow.Ancestors()
             .TakeWhile(a => a != decl && a is not AnonymousFunctionExpressionSyntax)
@@ -173,7 +178,7 @@ internal static class ExceptionFlow
     /// outer trys alone.
     /// </summary>
     internal static (List<string> GuardedBy, List<string> FilteredBy) SiteGuards(
-        SyntaxNode site, BaseMethodDeclarationSyntax decl, SemanticModel model)
+        SyntaxNode site, SyntaxNode decl, SemanticModel model)
     {
         var guardedBy = new List<string>();
         var filteredBy = new List<string>();

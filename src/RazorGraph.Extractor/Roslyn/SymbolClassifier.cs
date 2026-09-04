@@ -345,16 +345,28 @@ internal static class SymbolClassifier
                 FileLinePositionSpan? mapped = syntaxRef == null
                     ? null
                     : syntaxRef.SyntaxTree.GetMappedLineSpan(syntaxRef.Span);
-                var declSyntax = syntaxRef?.GetSyntax() as BaseMethodDeclarationSyntax;
+                // The scope holding this method's body: an ordinary declaration,
+                // or the compilation unit when the method is the synthesized
+                // entry point of a top-level program. Deliberately not "whatever
+                // syntax the symbol points at" — a primary constructor's
+                // reference is its *type* declaration, and walking that would
+                // attribute every throw in the type to the constructor.
+                var bodyScope = syntaxRef?.GetSyntax() switch
+                {
+                    BaseMethodDeclarationSyntax d => (SyntaxNode)d,
+                    CompilationUnitSyntax unit => unit,
+                    _ => null
+                };
+                var declSyntax = bodyScope as BaseMethodDeclarationSyntax;
 
                 // The semantic model must match the method's own tree — a
                 // partial class puts members in trees the type walk never saw.
-                var model = declSyntax == null
+                var model = bodyScope == null
                     ? null
-                    : compilation.GetSemanticModel(declSyntax.SyntaxTree);
-                var throws = declSyntax == null || model == null
+                    : compilation.GetSemanticModel(bodyScope.SyntaxTree);
+                var throws = bodyScope == null || model == null
                     ? new List<ThrownType>()
-                    : ExceptionFlow.ExtractThrows(declSyntax, model);
+                    : ExceptionFlow.ExtractThrows(bodyScope, model);
                 var (boundaryCatches, boundaryFiltered) =
                     ExceptionFlow.BoundaryCatchSets(m, declSyntax, model);
 

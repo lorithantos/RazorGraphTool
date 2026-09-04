@@ -14,20 +14,25 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 internal static class CallSiteScanner
 {
     /// <summary>
-    /// Call sites in one method declaration: explicit invocations and
-    /// new-expressions with their enclosing catch guards, plus the implicit
-    /// Dispose/DisposeAsync of everything the method holds in a using. Dispose
-    /// sites carry no guards on purpose — disposal runs at scope exit, where
-    /// relating it to enclosing trys is subtle, and unguarded is the
-    /// conservative reading for escape analysis.
+    /// Call sites in one method scope: explicit invocations and new-expressions
+    /// with their enclosing catch guards, plus the implicit Dispose/DisposeAsync
+    /// of everything the method holds in a using. Dispose sites carry no guards
+    /// on purpose — disposal runs at scope exit, where relating it to enclosing
+    /// trys is subtle, and unguarded is the conservative reading for escape
+    /// analysis.
     /// </summary>
+    /// <param name="decl">
+    /// A method declaration, or the compilation unit of a top-level program —
+    /// see TopLevelProgram, which is also what decides the nodes walked for the
+    /// body.
+    /// </param>
     internal static IEnumerable<CallSiteInfo> MethodCallSites(
-        BaseMethodDeclarationSyntax decl, SemanticModel model, IReadOnlySet<string> inScope)
+        SyntaxNode decl, SemanticModel model, IReadOnlySet<string> inScope)
     {
-        if (model.GetDeclaredSymbol(decl) is not IMethodSymbol caller) yield break;
+        if (TopLevelProgram.DeclaredMethod(decl, model) is not { } caller) yield break;
         var fromId = SymbolIds.MethodId(caller);
 
-        foreach (var (site, target) in CallTargetSites(decl, model))
+        foreach (var (site, target) in TopLevelProgram.BodyNodes(decl).SelectMany(b => CallTargetSites(b, model)))
         {
             if (SymbolIds.InScopeMethodId(target, inScope) is not { } toId) continue;
             if (toId == fromId) continue; // direct recursion adds no navigational value
@@ -39,7 +44,7 @@ internal static class CallSiteScanner
         // A method group handed somewhere is a call the future makes. The edge
         // carries no guards on purpose: a try around the registration site does
         // not catch what the delegate throws when it finally runs.
-        foreach (var (_, target) in MethodGroupSites(decl, model))
+        foreach (var (_, target) in TopLevelProgram.BodyNodes(decl).SelectMany(b => MethodGroupSites(b, model)))
         {
             if (SymbolIds.InScopeMethodId(target, inScope) is not { } toId) continue;
             if (toId == fromId) continue;
@@ -101,17 +106,18 @@ internal static class CallSiteScanner
     /// and forwarded elsewhere is not tracked.
     /// </summary>
     internal static IEnumerable<string> CallbackTargets(
-        BaseMethodDeclarationSyntax decl, SemanticModel model, IReadOnlySet<string> inScope)
+        SyntaxNode decl, SemanticModel model, IReadOnlySet<string> inScope)
     {
-        if (model.GetDeclaredSymbol(decl) is not IMethodSymbol container) yield break;
+        if (TopLevelProgram.DeclaredMethod(decl, model) is not { } container) yield break;
 
-        foreach (var (site, target) in MethodGroupSites(decl, model))
+        foreach (var (site, target) in TopLevelProgram.BodyNodes(decl).SelectMany(b => MethodGroupSites(b, model)))
         {
             if (!RegisteredOutOfSolution(site, model, inScope)) continue;
             if (SymbolIds.InScopeMethodId(target, inScope) is { } targetId) yield return targetId;
         }
 
-        foreach (var lambda in decl.DescendantNodes().OfType<AnonymousFunctionExpressionSyntax>())
+        foreach (var lambda in TopLevelProgram.BodyNodes(decl)
+            .SelectMany(b => b.DescendantNodes().OfType<AnonymousFunctionExpressionSyntax>()))
         {
             if (model.GetTypeInfo(lambda).ConvertedType is not INamedTypeSymbol { TypeKind: TypeKind.Delegate })
                 continue;
@@ -218,9 +224,9 @@ internal static class CallSiteScanner
     /// the caller resolves DisposeAsync rather than Dispose.
     /// </summary>
     private static IEnumerable<DisposedResource> DisposedResources(
-        BaseMethodDeclarationSyntax decl, SemanticModel model)
+        SyntaxNode decl, SemanticModel model)
     {
-        foreach (var node in decl.DescendantNodes())
+        foreach (var node in TopLevelProgram.BodyNodes(decl).SelectMany(b => b.DescendantNodes()))
         {
             switch (node)
             {
