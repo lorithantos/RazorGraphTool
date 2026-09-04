@@ -58,6 +58,11 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
         };
 
         node.SetProperty("fullName", sym.FullName);
+        // Types carry isPublic for the same reason methods and members always
+        // have: without it the graph cannot tell an exported type from an
+        // internal one, and every question about a type's reach has to fall
+        // back to reading source.
+        node.SetProperty("isPublic", sym.IsPublic);
         if (sym.Project != null) node.SetProperty("project", sym.Project);
         if (sym.BaseType != null) node.SetProperty("baseType", sym.BaseType);
         if (sym.GeneratedFrom != null) node.SetProperty("generatedFrom", sym.GeneratedFrom);
@@ -199,13 +204,14 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
     }
 
     /// <summary>
-    /// References edges from each member to the in-solution types its declared
-    /// type mentions. Runs in the second pass because the name→id map is only
-    /// complete once every symbol node exists. This edge is what lets a DTO
-    /// that appears only in signatures answer "who uses this type": incoming
-    /// References from the properties and fields typed by it.
+    /// References edges from each member and method to the in-solution types
+    /// its declaration mentions — a member's declared type, a method's return
+    /// and parameter types. Runs in the second pass because the name→id map is
+    /// only complete once every symbol node exists. These edges are what let a
+    /// DTO that appears only in signatures answer "who uses this type": nothing
+    /// calls it, and its incoming References are the whole story.
     /// </summary>
-    internal void AddMemberTypeReferences(SymbolInfo sym)
+    internal void AddDeclaredTypeReferences(SymbolInfo sym)
     {
         // A partial class yields one SymbolInfo per declaration, each carrying
         // the FULL member list (symbol members, not declaration members) — the
@@ -226,6 +232,29 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
                     ToId = typeId,
                     Type = EdgeType.References
                 });
+            }
+        }
+
+        // Method signatures, marked so a consumer can tell "this type appears in
+        // my contract" from "some member is declared as this type". C# pins a
+        // signature type to at least the method's accessibility with no call
+        // site anywhere, so this edge is the only record that the type cannot
+        // be narrowed while the method stays as visible as it is.
+        foreach (var method in sym.MethodNodes)
+        {
+            foreach (var typeName in method.SignatureTypeFullNames)
+            {
+                if (!_typeIdByFullName.TryGetValue(typeName, out var typeId)) continue;
+                if (typeId == sym.Id) continue; // a method returning its own type says nothing
+
+                var edge = new GraphEdge
+                {
+                    FromId = method.Id,
+                    ToId = typeId,
+                    Type = EdgeType.References
+                };
+                edge.Properties["signature"] = true;
+                graph.AddEdge(edge);
             }
         }
     }

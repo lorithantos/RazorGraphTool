@@ -212,7 +212,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         foreach (var sym in symbols)
         {
             _declarations.AddInheritanceEdges(sym);
-            _declarations.AddMemberTypeReferences(sym);
+            _declarations.AddDeclaredTypeReferences(sym);
         }
 
         _declarations.AddExtensionEdges(_symbols);

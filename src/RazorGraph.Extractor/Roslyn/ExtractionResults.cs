@@ -43,6 +43,14 @@ public sealed class SymbolInfo
     /// <summary>Source file a generated type was compiled from (first #line directive); null for hand-written types.</summary>
     public string? GeneratedFrom { get; set; }
 
+    /// <summary>
+    /// Whether the type is reachable from outside its assembly — declared
+    /// public, and nested only inside public types. A public type inside an
+    /// internal one is not public in any way a consumer can use, and reporting
+    /// it as such would make every visibility answer wrong at the edges.
+    /// </summary>
+    public bool IsPublic { get; init; }
+
     public string? BaseType { get; init; }
     public List<string> ImplementedInterfaces { get; init; } = new();
     public List<string> InjectedServices { get; init; } = new();
@@ -221,6 +229,17 @@ public sealed class MethodDetail
 
     /// <summary>Entry-point classification, or null for an ordinary method; see MethodRoles.ClassifyEntryPoint.</summary>
     public string? EntryPointKind { get; init; }
+
+    /// <summary>
+    /// In-solution named types this method's signature mentions — return type
+    /// and parameters, recursively through generic arguments.
+    ///
+    /// These are the types C# pins to at least this method's accessibility even
+    /// when no call site names them. Without them a type used only as a return
+    /// shape looks unreferenced, and both "what breaks if I change this type"
+    /// and any visibility audit answer confidently wrong.
+    /// </summary>
+    public List<string> SignatureTypeFullNames { get; init; } = new();
 
     /// <summary>
     /// For an extension method, the full name of the type it extends — the

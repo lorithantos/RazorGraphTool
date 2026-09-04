@@ -52,16 +52,21 @@ dotnet run --project src/RazorGraph.Cli -- research graph.json --focus "page:Pag
 
 ## Use it from Claude Code
 
-`.mcp.json` in the repo root registers the server:
+`.mcp.json` in the repo root points the session at an HTTP server on port 7718. Publish a
+copy and start it once; every session on the machine then shares it, and it survives being
+killed and rebuilt while a session stays open:
 
 ```bash
-dotnet publish src/RazorGraph.Mcp -c Release -o .mcp-bin   # .mcp.json launches this published copy
+dotnet publish src/RazorGraph.Mcp -c Release -o .mcp-bin
+.mcp-bin/RazorGraph.Mcp.exe --http          # port 7718 unless --port says otherwise
 ```
 
-Restart the session and 23 tools appear: `build_graph`, `build_solution`, `build_lua`, `load_graph`,
-`save_graph`, `list_graphs`, `drop_graph`, `graph_summary`, `find_nodes`, `get_node`,
+(`RazorGraph.Mcp.exe` with no flags speaks stdio instead, for clients that need it.)
+
+Restart the session and 25 tools appear: `server_info`, `build_graph`, `build_solution`, `build_lua`,
+`load_graph`, `save_graph`, `list_graphs`, `drop_graph`, `graph_summary`, `find_nodes`, `get_node`,
 `render_tree`, `page_context`, `trace_data_flow`, `find_path`, `covering_tests`,
-`covered_methods`, `uncovered_methods`, `deep_methods`, `exception_escapes`,
+`covered_methods`, `uncovered_methods`, `deep_methods`, `exception_escapes`, `excess_visibility`,
 `method_body_graph`, `method_body_diff`, `find_server_to_js_mismatches`, `research`.
 
 The server holds **several graphs at once** in a keyed registry. Every tool takes an
@@ -72,11 +77,10 @@ Results are compact JSON — the consumer is a model, not a terminal — and sea
 a `{ returned, totalMatches, truncated }` envelope. Check `truncated` before concluding
 you have seen everything.
 
-> The server launches from the published `.mcp-bin` copy, not live build output, so
-> ordinary `dotnet build` keeps working while a session is attached. The published copy
-> is itself held open while any session uses it: re-publishing needs those sessions
-> closed first, and code changes only reach the tools after a re-publish *and* a session
-> restart.
+> The server runs from the published `.mcp-bin` copy, not live build output, so
+> ordinary `dotnet build` keeps working while a session is attached. Code changes reach
+> the tools after a re-publish and a restart of the HTTP server; sessions reconnect on
+> their own.
 
 ## What ends up in the graph
 

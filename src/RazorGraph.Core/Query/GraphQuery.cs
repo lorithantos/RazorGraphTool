@@ -157,6 +157,153 @@ public sealed class GraphQuery
     }
 
     /// <summary>
+    /// One node whose declared visibility exceeds its observed reach, with the
+    /// projects that do consume it — always its own assembly, or nothing.
+    /// </summary>
+    public sealed record ExcessVisibility(GraphNode Node, IReadOnlyList<string> ConsumedBy);
+
+    /// <summary>
+    /// WORK IN PROGRESS, AND DELIBERATELY AGGRESSIVE. Public nodes with no
+    /// consumer outside their own assembly — candidates for internal, not a
+    /// verdict. Read the false-positive list below before acting on a result.
+    ///
+    /// The question is "does anything outside this assembly use it", so test
+    /// projects are excluded by default: a test reaching in is not a reason to
+    /// stay public when InternalsVisibleTo exists. A project counts as a test
+    /// project when any node in it is marked isTest, which is graph-derived
+    /// rather than name-based.
+    ///
+    /// The closure is what makes this worth running at all. A type pinned public
+    /// by appearing in the signature of a method that IS externally consumed is
+    /// required-public even though nothing calls the type — so external need
+    /// propagates along signature References edges and along containment, to a
+    /// fixed point, before anything is reported. Without that the tool
+    /// confidently recommends changes that do not compile.
+    ///
+    /// KNOWN FALSE POSITIVES, none of which the graph can see:
+    ///   * reflection, DI registration by string or open generic, and
+    ///     serialization all consume a type with no edge to prove it;
+    ///   * a project published as a package is meant to have consumers outside
+    ///     this solution, so "no consumer here" is its normal state, not a
+    ///     finding — scope with <paramref name="project"/> accordingly;
+    ///   * an interface member implemented across an assembly boundary, where
+    ///     the binding is to the declaration rather than the implementation.
+    /// Treat the result as a worklist to verify, and let the compiler have the
+    /// final word.
+    ///
+    /// RESULTS ARE INTERDEPENDENT — apply the set, not a line. A public type
+    /// being required does not pin its members, since a public method on a
+    /// public class can still be narrowed; so a member and the types only that
+    /// member exposes are reported together. Narrow all of them and it compiles;
+    /// narrow the type while leaving the still-public method returning it, and
+    /// it does not.
+    /// </summary>
+    /// <param name="project">Restrict to nodes declared in this project. Recommended: the answer means little across a whole solution.</param>
+    /// <param name="includeTests">Count test projects as real consumers. Off by default; on, this mostly reports nothing.</param>
+    /// <param name="includeMembers">
+    /// Also report properties and fields. Off by default because they swamp the
+    /// result without adding an action: measured on this repo's own extractor,
+    /// 243 of 364 candidates were record properties, which are a type's shape
+    /// rather than separately narrowable surface. Types and methods are the
+    /// grain a person actually edits.
+    /// </param>
+    public IEnumerable<ExcessVisibility> FindExcessVisibility(
+        string? project = null, bool includeTests = false, bool includeMembers = false)
+    {
+        var testProjects = includeTests
+            ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            : _graph.Nodes
+                .Where(n => n.GetProperty<bool>("isTest"))
+                .Select(n => n.GetProperty<string>("project"))
+                .Where(p => p != null)
+                .Select(p => p!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // Containment both ways: a member's reach is its type's reach, and using
+        // a member uses the type that holds it.
+        var ownerOf = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var edge in _graph.Edges.Where(e => e.Type == EdgeType.Contains))
+            ownerOf[edge.ToId] = edge.FromId;
+
+        string? ProjectOf(string id) => _graph.GetNode(id)?.GetProperty<string>("project");
+
+        // Seed: reached from another assembly that is not a test project.
+        // Covers edges never count -- they exist only between tests and code.
+        var required = new HashSet<string>(StringComparer.Ordinal);
+        var consumers = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
+
+        foreach (var edge in _graph.Edges)
+        {
+            if (edge.Type == EdgeType.Covers) continue;
+            if (ProjectOf(edge.FromId) is not { } fromProject) continue;
+            if (ProjectOf(edge.ToId) is not { } toProject) continue;
+
+            if (!consumers.TryGetValue(edge.ToId, out var seen))
+                consumers[edge.ToId] = seen = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+            seen.Add(fromProject);
+
+            if (string.Equals(fromProject, toProject, StringComparison.OrdinalIgnoreCase)) continue;
+            if (testProjects.Contains(fromProject)) continue;
+
+            required.Add(edge.ToId);
+            if (ownerOf.TryGetValue(edge.ToId, out var owner)) required.Add(owner);
+        }
+
+        // Propagate to a fixed point: anything a required method's signature
+        // names, and the type holding a required member, is required too.
+        var signatureRefs = _graph.Edges
+            .Where(e => e.Type == EdgeType.References && e.GetProperty<bool>("signature"))
+            .ToList();
+
+        bool grew;
+        do
+        {
+            grew = false;
+            foreach (var edge in signatureRefs)
+                if (required.Contains(edge.FromId) && required.Add(edge.ToId))
+                    grew = true;
+
+            foreach (var (child, owner) in ownerOf)
+                if (required.Contains(child) && required.Add(owner))
+                    grew = true;
+        }
+        while (grew);
+
+        var candidates = _graph.Nodes
+            .Where(n => n.GetProperty<bool>("isPublic"))
+            .Where(n => project == null ||
+                        string.Equals(n.GetProperty<string>("project"), project, StringComparison.OrdinalIgnoreCase))
+            .Where(n => !required.Contains(n.Id))
+            .Where(n => includeMembers || IsDeclaredType(n) || n.Type == NodeType.Method)
+            .ToList();
+
+        // A member whose own type is already reported adds nothing: narrowing
+        // the type narrows everything inside it, and listing both turns one
+        // decision into forty lines of worklist.
+        var reportedTypes = candidates.Where(IsDeclaredType).Select(n => n.Id).ToHashSet(StringComparer.Ordinal);
+
+        return candidates
+            .Where(n => IsDeclaredType(n)
+                        || !ownerOf.TryGetValue(n.Id, out var owner)
+                        || !reportedTypes.Contains(owner))
+            .Select(n => new ExcessVisibility(
+                n,
+                consumers.TryGetValue(n.Id, out var seen) ? seen.ToList() : Array.Empty<string>()))
+            .OrderBy(r => r.Node.DisplayType, StringComparer.Ordinal)
+            .ThenBy(r => r.Node.Name, StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// A declared type rather than something living inside one. Listed by kind
+    /// rather than inferred from containment, because Project nodes contain
+    /// types and that would make every type look like a member.
+    /// </summary>
+    private static bool IsDeclaredType(GraphNode node) => node.Type is
+        NodeType.Class or NodeType.PageModel or NodeType.ApiController or NodeType.ViewModel
+        or NodeType.Service or NodeType.ServiceInterface or NodeType.ServiceImplementation
+        or NodeType.Middleware or NodeType.ExternalType;
+
+    /// <summary>
     /// The relevance map behind a research selection: focus nodes score 1.0,
     /// every node reachable within maxDepth scores 1/(1+depth), and when
     /// multiple focus nodes reach the same node the best (nearest) score

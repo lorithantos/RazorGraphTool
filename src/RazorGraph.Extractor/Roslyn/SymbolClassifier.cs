@@ -32,6 +32,7 @@ internal static class SymbolClassifier
                 Type = NodeType.PageModel,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
+                IsPublic = IsEffectivelyPublic(symbol),
                 FilePath = filePath,
                 LineStart = lineStart,
                 LineEnd = lineEnd,
@@ -56,6 +57,7 @@ internal static class SymbolClassifier
                 Type = NodeType.ApiController,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
+                IsPublic = IsEffectivelyPublic(symbol),
                 FilePath = filePath,
                 LineStart = lineStart,
                 LineEnd = lineEnd,
@@ -78,6 +80,7 @@ internal static class SymbolClassifier
                 Type = symbol.TypeKind == TypeKind.Interface ? NodeType.ServiceInterface : NodeType.ServiceImplementation,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
+                IsPublic = IsEffectivelyPublic(symbol),
                 FilePath = filePath,
                 LineStart = lineStart,
                 LineEnd = lineEnd,
@@ -99,6 +102,7 @@ internal static class SymbolClassifier
                 Type = NodeType.ViewModel,
                 Name = symbol.Name,
                 FullName = symbol.ToDisplayString(),
+                IsPublic = IsEffectivelyPublic(symbol),
                 FilePath = filePath,
                 LineStart = lineStart,
                 LineEnd = lineEnd,
@@ -122,6 +126,7 @@ internal static class SymbolClassifier
             Type = NodeType.Class,
             Name = symbol.Name,
             FullName = symbol.ToDisplayString(),
+            IsPublic = IsEffectivelyPublic(symbol),
             FilePath = filePath,
             LineStart = lineStart,
             LineEnd = lineEnd,
@@ -133,6 +138,34 @@ internal static class SymbolClassifier
             MemberNodes = ExtractMemberNodes(symbol, inScope, policy),
             InjectedServices = ExtractInjectedServices(symbol)
         };
+    }
+
+    /// <summary>
+    /// Reachable from outside the assembly: public, and nested only inside
+    /// public types. The containment walk is the whole point — a public type
+    /// nested in an internal one is not reachable by anyone, and calling it
+    /// public would put false findings in every visibility report.
+    /// </summary>
+    private static bool IsEffectivelyPublic(INamedTypeSymbol symbol)
+    {
+        for (INamedTypeSymbol? t = symbol; t != null; t = t.ContainingType)
+            if (t.DeclaredAccessibility != Accessibility.Public) return false;
+        return true;
+    }
+
+    /// <summary>
+    /// In-solution types named by a method's signature: return type and every
+    /// parameter, recursively through generic arguments. See
+    /// MethodDetail.SignatureTypeFullNames for why these are not optional.
+    /// </summary>
+    private static List<string> SignatureTypes(IMethodSymbol m, IReadOnlySet<string> inScope)
+    {
+        var names = InScopeNamedTypes(m.ReturnType, inScope);
+        foreach (var parameter in m.Parameters)
+            foreach (var name in InScopeNamedTypes(parameter.Type, inScope))
+                if (!names.Contains(name))
+                    names.Add(name);
+        return names;
     }
 
     // Names the compiler mints for itself (<>c__DisplayClass, record equality
@@ -391,6 +424,7 @@ internal static class SymbolClassifier
                     NestingDepth = declSyntax == null ? 0 : BodyGraphExtractor.NestingDepth(declSyntax),
                     Throws = throws,
                     EntryPointKind = MethodRoles.ClassifyEntryPoint(m, inScope, policy),
+                    SignatureTypeFullNames = SignatureTypes(m, inScope),
                     ExtendsTypeFullName = m.IsExtensionMethod
                         ? m.Parameters[0].Type.OriginalDefinition.ToDisplayString()
                         : null,
