@@ -1,8 +1,5 @@
 {
   "mcpServers": {
-    "razorgraph": {
-      "command": ".mcp-bin/RazorGraph.Mcp.exe",
-      "args": []
-    }
+    "razorgraph": { "type": "http", "url": "http://127.0.0.1:7718/" }
   }
 }
