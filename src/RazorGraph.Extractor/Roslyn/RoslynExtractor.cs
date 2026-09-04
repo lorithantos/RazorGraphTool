@@ -63,12 +63,25 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// </summary>
     public static void EnsureMsBuildRegistered() => _ = Registration.Value;
 
-    private static readonly Lazy<bool> Registration = new(() =>
+    /// <summary>
+    /// The located SDK, kept rather than discarded because its MSBuildPath is
+    /// how AnalyzerHostCheck finds the Roslyn that SDK ships. Null when the host
+    /// registered before us and no instance can be queried back -- "cannot
+    /// tell", which the check treats as silence rather than as compatible.
+    /// </summary>
+    private static readonly Lazy<VisualStudioInstance?> Registration = new(() =>
     {
         // Still checked: the host application may have registered before us.
-        if (!MSBuildLocator.IsRegistered) MSBuildLocator.RegisterDefaults();
-        return true;
+        if (MSBuildLocator.IsRegistered) return MSBuildLocator.QueryVisualStudioInstances().FirstOrDefault();
+        return MSBuildLocator.RegisterDefaults();
     });
+
+    /// <summary>
+    /// Directory of the SDK MSBuildLocator resolved, or null when it cannot be
+    /// determined. The Roslyn that SDK ships lives beneath it; see
+    /// AnalyzerHostCheck.SdkRoslynVersion.
+    /// </summary>
+    internal static string? SdkPath => Registration.Value?.MSBuildPath;
 
     /// <summary>One compiled project and the Roslyn project it came from.</summary>
     public sealed record LoadedProject(Project Project, Compilation Compilation)
@@ -99,6 +112,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
     {
         _workspace = MSBuildWorkspace.Create();
         var project = await _workspace.OpenProjectAsync(projectPath, cancellationToken: ct);
+        WatchAnalyzerHost(project);
         var compilation = await project.GetCompilationAsync(ct)
             ?? throw new InvalidOperationException($"Failed to compile project: {projectPath}");
 
@@ -114,6 +128,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
         var project = Solution.Projects.FirstOrDefault(p =>
             p.Name.Equals(projectName, StringComparison.OrdinalIgnoreCase))
             ?? throw new InvalidOperationException($"Project '{projectName}' not found in solution.");
+        WatchAnalyzerHost(project);
         var compilation = await project.GetCompilationAsync(ct)
             ?? throw new InvalidOperationException($"Failed to compile project: {projectName}");
 
@@ -151,6 +166,8 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 continue;
             }
 
+            WatchAnalyzerHost(project);
+
             // A project that will not compile is reported and skipped rather than
             // failing the whole solution: a partial graph beats no graph, and the
             // omission is visible in the project list.
@@ -173,6 +190,37 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// <summary>Test projects skipped by the most recent load, empty unless exclusion was asked for.</summary>
     public IReadOnlyList<string> SkippedTestProjects => _skippedTestProjects;
     private readonly List<string> _skippedTestProjects = new();
+
+    /// <summary>
+    /// Reasons this build's SDK analyzers may not have run: our Roslyn trailing
+    /// the SDK's, and any analyzer that actually failed to load. Empty is the
+    /// normal case and means the generators ran. See AnalyzerHostCheck for why
+    /// this cannot be left to surface on its own.
+    /// </summary>
+    public IReadOnlyList<string> AnalyzerHostWarnings => _analyzerHostWarnings;
+    private readonly List<string> _analyzerHostWarnings = new();
+
+    /// <summary>
+    /// Arm both host checks for one project. Called before the compilation is
+    /// requested, because requesting it is what loads the analyzers.
+    /// </summary>
+    private void WatchAnalyzerHost(Project project)
+    {
+        AnalyzerHostCheck.WatchLoadFailures(project, _analyzerHostWarnings);
+
+        // Once per load, not once per project: the host and the SDK are the
+        // same for every project in a solution, and repeating the line would
+        // bury the per-project failures under it.
+        if (_versionChecked) return;
+        _versionChecked = true;
+
+        var warning = AnalyzerHostCheck.VersionWarning(
+            AnalyzerHostCheck.HostRoslynVersion(),
+            AnalyzerHostCheck.SdkRoslynVersion(Registration.Value?.MSBuildPath));
+        if (warning != null) _analyzerHostWarnings.Add(warning);
+    }
+
+    private bool _versionChecked;
 
     /// <summary>
     /// A test project is one referencing a test framework. Decided from

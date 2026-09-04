@@ -105,10 +105,22 @@ internal static class BuildCommands
         foreach (var shape in builder.UnboundShapes)
             Console.Error.WriteLine($"warning: unbound shape: {shape} — no template, Liquid file or code binding serves this name; OrchardCore throws at render time.");
 
+        ReportAnalyzerHostWarnings(builder);
         ReportUnresolvedAttributes(builder);
 
         GraphReports.PrintSummary(graph);
         return 0;
+    }
+
+    /// <summary>
+    /// An SDK generator that did not load produces no types and no error. This
+    /// is the only place that says so, which is why it rides the build output
+    /// beside the other findings rather than waiting to be asked for.
+    /// </summary>
+    private static void ReportAnalyzerHostWarnings(GraphBuilder builder)
+    {
+        foreach (var warning in builder.AnalyzerHostWarnings)
+            Console.Error.WriteLine($"warning: {warning}");
     }
 
     /// <summary>
@@ -206,6 +218,7 @@ internal static class BuildCommands
         foreach (var shape in builder.UnboundShapes)
             Console.Error.WriteLine($"warning: unbound shape: {shape} — no template, Liquid file or code binding serves this name; OrchardCore throws at render time.");
 
+        ReportAnalyzerHostWarnings(builder);
         ReportUnresolvedAttributes(builder);
 
         GraphReports.PrintSummary(graph);

@@ -86,6 +86,14 @@ public sealed class GraphBuilder : IAsyncDisposable
     public IReadOnlyList<string> SkippedTestProjects => _roslyn.SkippedTestProjects;
 
     /// <summary>
+    /// Reasons the SDK's source generators may not have run for this build. A
+    /// generator that fails to load takes its generated types with it in
+    /// silence, so this list is the difference between a graph that is missing
+    /// Razor page classes and a graph that says it is; see AnalyzerHostCheck.
+    /// </summary>
+    public IReadOnlyList<string> AnalyzerHostWarnings => _roslyn.AnalyzerHostWarnings;
+
+    /// <summary>
     /// The attribute policy for this build — classification name sets and
     /// argument-payload suppression as data. Defaults to the embedded shipped
     /// policy; set it from AttributePolicy.LoadFile to override without a

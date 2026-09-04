@@ -44,7 +44,8 @@ public sealed class GraphStoreTools(GraphStore store)
             : await builder.BuildFromProjectAsync(full, ct);
 
         return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries,
-            unboundShapes: builder.UnboundShapes, unresolvedAttributes: builder.UnresolvedAttributes);
+            unboundShapes: builder.UnboundShapes, unresolvedAttributes: builder.UnresolvedAttributes,
+            analyzerHostWarnings: builder.AnalyzerHostWarnings);
     }
 
     [McpServerTool(Name = "build_solution")]
@@ -71,7 +72,8 @@ public sealed class GraphStoreTools(GraphStore store)
         var graph = await builder.BuildFromSolutionAllAsync(full, ct);
 
         return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries, builder.SkippedTestProjects,
-            builder.UnboundShapes, unresolvedAttributes: builder.UnresolvedAttributes);
+            builder.UnboundShapes, unresolvedAttributes: builder.UnresolvedAttributes,
+            analyzerHostWarnings: builder.AnalyzerHostWarnings);
     }
 
     /// <summary>
@@ -208,7 +210,8 @@ public sealed class GraphStoreTools(GraphStore store)
         IReadOnlyList<string>? testProjectSkips = null,
         IReadOnlyList<string>? unboundShapes = null,
         GraphFormatAssessment? format = null,
-        IReadOnlyList<string>? unresolvedAttributes = null)
+        IReadOnlyList<string>? unresolvedAttributes = null,
+        IReadOnlyList<string>? analyzerHostWarnings = null)
     {
         var graph = entry.Graph;
         // Grouped by display kind, so a foreign vocabulary is censused under its
@@ -251,7 +254,12 @@ public sealed class GraphStoreTools(GraphStore store)
             // Attribute types C# could not bind. It resolves them at compile time,
             // so this is only ever non-empty when the compilation had errors --
             // which devalues every answer in the graph, not only these edges.
-            unresolvedAttributes = unresolvedAttributes is { Count: > 0 } ? unresolvedAttributes : null
+            unresolvedAttributes = unresolvedAttributes is { Count: > 0 } ? unresolvedAttributes : null,
+            // The SDK's source generators did not all run, so types they would
+            // have produced -- Razor page classes above all -- are absent. It
+            // reports here because nothing else reports it at all: a generator
+            // that fails to load returns an empty list rather than throwing.
+            analyzerHostWarnings = analyzerHostWarnings is { Count: > 0 } ? analyzerHostWarnings : null
         });
     }
 }
