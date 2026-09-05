@@ -109,6 +109,8 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
             if (method.IsTest) node.SetProperty("isTest", true);
             if (method.IsTestLifecycle) node.SetProperty("isTestLifecycle", true);
             if (method.IsAbstract) node.SetProperty("isAbstract", true);
+            if (method.IsOverride) node.SetProperty("isOverride", true);
+            if (method.IsPrimaryConstructor) node.SetProperty("isPrimaryConstructor", true);
             if (method.NestingDepth > 0) node.SetProperty("bodyDepth", method.NestingDepth);
             if (method.Throws.Count > 0)
             {

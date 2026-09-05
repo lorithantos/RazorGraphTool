@@ -426,6 +426,9 @@ internal static class SymbolClassifier
                     // still nodes worth having (calls bind to them), but they are not
                     // code that a test could execute.
                     IsAbstract = m.IsAbstract,
+                    IsOverride = m.IsOverride,
+                    IsPrimaryConstructor = m.MethodKind == MethodKind.Constructor
+                        && m.DeclaringSyntaxReferences.Any(r => r.GetSyntax() is Microsoft.CodeAnalysis.CSharp.Syntax.TypeDeclarationSyntax),
                     NestingDepth = declSyntax == null ? 0 : BodyGraphExtractor.NestingDepth(declSyntax),
                     Throws = throws,
                     EntryPointKind = MethodRoles.ClassifyEntryPoint(m, inScope, policy),

@@ -225,6 +225,15 @@ internal sealed class MethodDetail
     /// <summary>Declared without a body — an interface member or an abstract method.</summary>
     public bool IsAbstract { get; init; }
 
+    /// <summary>Overrides a base member, so its accessibility is the base declaration's to choose.</summary>
+    public bool IsOverride { get; init; }
+
+    /// <summary>
+    /// A primary constructor -- a positional record's or a class's -- is declared by
+    /// the type header, so it has the type's accessibility and the type's line.
+    /// </summary>
+    public bool IsPrimaryConstructor { get; init; }
+
     /// <summary>
     /// Maximum syntactic nesting depth of the body — the christmas-tree metric.
     /// 0 for expression-bodied, abstract, and implicitly declared members.

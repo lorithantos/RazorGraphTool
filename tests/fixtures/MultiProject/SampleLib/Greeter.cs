@@ -17,4 +17,7 @@ public class Greeter : IGreeter
 
     /// <summary>One hop past the implementation, so depth keeps counting after the dispatch step.</summary>
     private static string Shape(string name) => $"hello {name}";
+
+    /// <summary>An override: its accessibility is object.ToString's, not this type's to narrow.</summary>
+    public override string ToString() => "greeter";
 }

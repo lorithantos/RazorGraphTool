@@ -345,6 +345,11 @@ public sealed class GraphQuery
             // nothing external needs it.
             bool Narrowable(GraphNode member)
             {
+                // An override's accessibility is the base declaration's to choose, and a
+                // primary constructor is declared by the type header on the type's own
+                // line: neither has a line of its own to narrow. 19 of the last 20 rows
+                // offered on this repo were positional-record constructors.
+                if (member.GetProperty<bool>("isOverride") || member.GetProperty<bool>("isPrimaryConstructor")) return false;
                 if (!ownerOf.TryGetValue(member.Id, out var ownerId)) return true;
                 if (reportedTypes.Contains(ownerId)) return false;
                 if (_graph.GetNode(ownerId) is not { } owner) return true;

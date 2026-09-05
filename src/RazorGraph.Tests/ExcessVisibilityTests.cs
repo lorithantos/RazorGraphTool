@@ -336,4 +336,29 @@ public class ExcessVisibilityTests
         Assert.DoesNotContain("type:Lib.Packet",
             new GraphQuery(g).FindExcessVisibility("Lib").Select(r => r.Node.Id));
     }
+
+    [Fact]
+    public void Excludes_OverridesAndPrimaryConstructors()
+    {
+        // Neither has a line of its own to narrow: an override must match the
+        // base declaration, and a primary constructor is the type header. The
+        // last 20 rows offered on this repo were 19 record constructors and one
+        // ToString override, every one a non-edit.
+        var g = BuildGraph();
+        var toString = Method("m:Lib.Used.ToString()", "ToString", "Lib");
+        toString.SetProperty("isOverride", true);
+        g.AddNode(toString);
+        Contains(g, "type:Lib.Used", "m:Lib.Used.ToString()");
+        var ctor = Method("m:Lib.Used..ctor(string)", ".ctor", "Lib");
+        ctor.SetProperty("isPrimaryConstructor", true);
+        g.AddNode(ctor);
+        Contains(g, "type:Lib.Used", "m:Lib.Used..ctor(string)");
+
+        var found = new GraphQuery(g).FindExcessVisibility("Lib").Select(r => r.Node.Id).ToList();
+
+        Assert.DoesNotContain("m:Lib.Used.ToString()", found);
+        Assert.DoesNotContain("m:Lib.Used..ctor(string)", found);
+        // The plain unrequired member on the same type is still offered.
+        Assert.Contains("m:Lib.Used.InternalOnly()", found);
+    }
 }

@@ -264,6 +264,23 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         graph.Nodes.Single(n => n.GetProperty<string>("fullName") == fullName);
 
     [Fact]
+    public void Methods_SayWhenTheirAccessibilityIsNotTheirOwn()
+    {
+        // An override takes the base declaration's accessibility; a positional
+        // record's constructor takes the type header's. The visibility audit
+        // needs both facts to stop offering edits that have no line.
+        var primaryCtor = _solutionGraph!.GetNode("m:SampleLib.PriceTag..ctor(string,decimal)");
+        Assert.NotNull(primaryCtor);
+        Assert.True(primaryCtor!.GetProperty<bool>("isPrimaryConstructor"));
+
+        Assert.True(Method(_solutionGraph, "SampleLib.Greeter", "ToString").GetProperty<bool>("isOverride"));
+
+        var ordinary = Method(_solutionGraph, "SampleLib.Greeter", "Greet");
+        Assert.False(ordinary.GetProperty<bool>("isOverride"));
+        Assert.False(ordinary.GetProperty<bool>("isPrimaryConstructor"));
+    }
+
+    [Fact]
     public void CoversEdges_FollowInterfaceDispatch()
     {
         // The test binds to IGreeter.Greet and never names Greeter.Greet. Coverage
