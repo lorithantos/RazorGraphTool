@@ -48,6 +48,15 @@ public sealed class GraphQuery
     }
 
     /// <summary>
+    /// Find nodes of ANY kind by name substring. This is the right first call
+    /// when a caller knows a name and not yet what kind of thing carries it:
+    /// requiring a kind up front turns one question into a guess per kind, and
+    /// a wrong first guess reads as "no such thing".
+    /// </summary>
+    public IEnumerable<GraphNode> FindNodesNamed(string nameContains) =>
+        _graph.Nodes.Where(n => n.Name.Contains(nameContains, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
     /// Get all direct neighbors of a node via outgoing edges of given types.
     /// </summary>
     public IEnumerable<(GraphEdge Edge, GraphNode Target)> GetNeighbors(

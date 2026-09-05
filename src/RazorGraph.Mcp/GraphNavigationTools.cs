@@ -15,17 +15,29 @@ using RazorGraph.Core.Serialization;
 public sealed class GraphNavigationTools(GraphStore store)
 {
     [McpServerTool(Name = "find_nodes")]
-    [Description($"Find nodes by type, optionally filtered by case-insensitive name substring and by project. Valid node types: {ToolArguments.NodeTypeList}. A graph written by a newer version or a non-C# extractor may also carry foreign kinds; those are selectable by the name graph_summary and other results show for them. An unrecognised type is refused with the foreign kinds this graph holds, rather than returning nothing. Check 'truncated' before concluding you have seen everything.")]
+    [Description($"Find nodes by type, by case-insensitive name substring, or both; optionally restricted to a project. Omit nodeType to search every kind by name, which is the right first call when you know a name but not what kind of thing carries it. At least one of nodeType or nameContains is required. Valid node types: {ToolArguments.NodeTypeList}. A graph written by a newer version or a non-C# extractor may also carry foreign kinds; those are selectable by the name graph_summary and other results show for them. An unrecognised type is refused with the foreign kinds this graph holds, rather than returning nothing. Check 'truncated' before concluding you have seen everything.")]
     public string FindNodes(
-        [Description("Node type, e.g. RazorPage; or a foreign kind name this graph carries, e.g. luaModule")] string nodeType,
-        [Description("Case-insensitive name substring filter")] string? nameContains = null,
+        [Description("Node type, e.g. RazorPage; or a foreign kind name this graph carries, e.g. luaModule. Omit to search every kind by nameContains.")] string? nodeType = null,
+        [Description("Case-insensitive name substring filter. Required when nodeType is omitted.")] string? nameContains = null,
         [Description("Restrict to nodes from this project (solution graphs only)")] string? project = null,
         [Description("Max nodes to return (default 50)")] int limit = 50,
         [Description(ToolArguments.GraphIdDescription)] string? graphId = null)
     {
         var graph = store.Require(graphId).Graph;
         var query = new GraphQuery(graph);
-        var all = query.FindNodes(ToolArguments.ResolveNodeKind(graph, nodeType), nameContains).ToList();
+
+        // A missing REQUIRED argument used to fail inside the SDK's binding step,
+        // before this body ran, as "An error occurred invoking 'find_nodes'" --
+        // a message naming nothing a caller could correct. Both parameters are
+        // optional now, and the one refusal left names both of them.
+        var byType = !string.IsNullOrWhiteSpace(nodeType);
+        var byName = !string.IsNullOrWhiteSpace(nameContains);
+        if (!byType && !byName)
+            throw new McpException("find_nodes needs at least one of nodeType or nameContains: a type to list, a name substring to search every kind for, or both.");
+
+        var all = (byType
+            ? query.FindNodes(ToolArguments.ResolveNodeKind(graph, nodeType!), nameContains)
+            : query.FindNodesNamed(nameContains!)).ToList();
 
         if (!string.IsNullOrWhiteSpace(project))
         {

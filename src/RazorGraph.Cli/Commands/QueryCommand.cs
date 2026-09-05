@@ -37,7 +37,7 @@ internal static class QueryCommand
         var graphArg = new Argument<FileInfo>("graph") { Description = "Path to a built graph JSON file" };
         var idOpt = new Option<string?>("--id") { Description = "Look up a node by its stable id" };
         var typeOpt = new Option<string?>("--type") { Description = "Find nodes by NodeType (e.g. RazorPage)" };
-        var nameOpt = new Option<string?>("--name") { Description = "Filter found nodes by name substring" };
+        var nameOpt = new Option<string?>("--name") { Description = "Filter --type results by name substring; alone, search every kind by name" };
         var neighborsOpt = new Option<bool>("--neighbors") { Description = "With --id: list outgoing edges" };
         var renderTreeOpt = new Option<bool>("--render-tree") { Description = "With --id of a page: show layout/partial render tree" };
         var contextOpt = new Option<bool>("--context") { Description = "With --id of a page: show PageModel, ViewModel, and injected services" };
@@ -156,6 +156,9 @@ internal static class QueryCommand
             // results -- the caller could not tell a bad argument from an empty
             // graph.
             if (options.Type != null) return RunTypeListing(query, graph, options);
+            // --name alone searches every kind, the same as find_nodes without
+            // nodeType: the call to make when the kind is what you are asking.
+            if (options.Name != null) return RunNameListing(query, options);
         }
         catch (InvalidOperationException ex)
         {
@@ -178,7 +181,7 @@ internal static class QueryCommand
             return 0;
         }
 
-        Console.WriteLine("Graph loaded. Use --id, --type, or --mismatches to query.");
+        Console.WriteLine("Graph loaded. Use --id, --type, --name, or --mismatches to query.");
         Console.WriteLine($"Total: {graph.Nodes.Count} nodes, {graph.Edges.Count} edges");
         return 0;
     }
@@ -521,15 +524,40 @@ internal static class QueryCommand
         }
 
         Console.WriteLine($"Found {nodes.Count} nodes of type {kind}:");
+        PrintListing(nodes);
+        return 0;
+    }
+
+    private static int RunNameListing(GraphQuery query, QueryOptions options)
+    {
+        var nodes = query.FindNodesNamed(options.Name!)
+            .Where(n => options.Project == null ||
+                        string.Equals(n.GetProperty<string>("project"), options.Project, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (options.Json)
+        {
+            Emit(new { contract = JsonContract, mode = "name", name = options.Name, project = options.Project, returned = nodes.Count, results = nodes.Select(NodeRef) });
+            return 0;
+        }
+
+        // The kind is the thing the caller did not know, so it leads each row.
+        Console.WriteLine($"Found {nodes.Count} nodes named like '{options.Name}':");
+        PrintListing(nodes, showKind: true);
+        return 0;
+    }
+
+    private static void PrintListing(List<GraphNode> nodes, bool showKind = false)
+    {
         foreach (var n in nodes)
         {
-            Console.WriteLine($"  [{n.Id}] {n.Name} ({n.FilePath})");
+            var kind = showKind ? $"[{n.DisplayType}] " : string.Empty;
+            Console.WriteLine($"  {kind}[{n.Id}] {n.Name} ({n.FilePath})");
 
             // The same rule the JSON rows follow: a listing that stays silent
             // about the broken ones reads as a clean bill of health.
             foreach (var finding in FindingsOn(n) ?? []) Console.WriteLine($"      ! {finding}");
         }
-        return 0;
     }
 
     /// <summary>

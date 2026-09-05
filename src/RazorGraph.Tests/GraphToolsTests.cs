@@ -39,6 +39,55 @@ public class GraphToolsTests
         Assert.Empty(advertised.Except(real));
     }
 
+    [Fact]
+    public void FindNodes_WithoutNodeType_SearchesEveryKindByName()
+    {
+        // nodeType used to be a required argument, so the call to make when you
+        // know a name and not its kind failed in the SDK before the tool ran,
+        // as "An error occurred invoking 'find_nodes'". Found 2026-09-04 by
+        // hitting it three times in one session and guessing a kind each time.
+        var tools = new GraphNavigationTools(StoreOver(MixedKindGraph()));
+
+        using var doc = JsonDocument.Parse(tools.FindNodes(nameContains: "Widget"));
+        var kinds = doc.RootElement.GetProperty("nodes").EnumerateArray()
+            .Select(n => n.GetProperty("type").GetString())
+            .OrderBy(k => k, StringComparer.Ordinal)
+            .ToList();
+
+        Assert.Equal(["Class", "Method", "Property"], kinds);
+        Assert.Equal(3, doc.RootElement.GetProperty("totalMatches").GetInt32());
+    }
+
+    [Fact]
+    public void FindNodes_WithNeitherTypeNorName_RefusesNamingBoth()
+    {
+        // The refusal has to say what to supply: the SDK's message named nothing.
+        var tools = new GraphNavigationTools(StoreOver(MixedKindGraph()));
+
+        var message = Assert.Throws<McpException>(() => tools.FindNodes()).Message;
+
+        Assert.Contains("nodeType", message, StringComparison.Ordinal);
+        Assert.Contains("nameContains", message, StringComparison.Ordinal);
+    }
+
+    private static GraphStore StoreOver(CodeGraph graph)
+    {
+        var store = new GraphStore();
+        store.Add(graph, source: "test://hand-built", requestedId: "g");
+        return store;
+    }
+
+    /// <summary>One name across three kinds, plus a node that does not match.</summary>
+    private static CodeGraph MixedKindGraph()
+    {
+        var graph = new CodeGraph();
+        graph.AddNode(new GraphNode { Id = "type:Web.Widget", Type = NodeType.Class, Name = "Widget" });
+        graph.AddNode(new GraphNode { Id = "m:Web.Widget.Widget()", Type = NodeType.Method, Name = "Widget" });
+        graph.AddNode(new GraphNode { Id = "prop:Web.Panel.Widget", Type = NodeType.Property, Name = "Widget" });
+        graph.AddNode(new GraphNode { Id = "type:Web.Panel", Type = NodeType.Class, Name = "Panel" });
+        return graph;
+    }
+
     private static ExceptionEscapeTools ToolsOver(CodeGraph graph)
     {
         var store = new GraphStore();
