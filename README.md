@@ -120,7 +120,13 @@ test method to production code its call chain reaches — the full call closure,
 fixed horizon, carrying on each edge the depth it was reached at, so a consumer who
 wants direct exercise alone filters on depth. Traversal seeds from the test and from its
 class's lifecycle hooks and constructor alike: the framework runs those around every
-test, so work done there is exercised even though no test calls it. A "covered" method
+test, so work done there is exercised even though no test calls it. Interface dispatch
+is widened the same way escapes widen it: a test that calls `I.M` reaches every
+in-solution implementation of `I.M` one hop further on, because the implementation is
+what runs. Not followed: property accessor bodies (source-generated setters included),
+virtual overrides reached through a base-class call, stored-and-forwarded delegates, and
+reflection — an empty `covering_tests` answer names these in its `caveat` rather than
+reading as proof. A "covered" method
 is one some test *can* reach — not one a test asserted on. Edges are only emitted across
 a project boundary, so `build_solution` is required; `uncovered_methods` excludes
 bodiless interface and abstract declarations, which never bind a call and would

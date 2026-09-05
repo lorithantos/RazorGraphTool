@@ -25,6 +25,16 @@ internal sealed class CoverageEmitter(CodeGraph graph)
     /// around every test in the class, so work done there is exercised by each
     /// of them even though no test calls it. A node reachable from both seeds
     /// keeps the shallower depth.
+    ///
+    /// Interface dispatch is widened the way the escape sweep widens it: a call
+    /// bound to an interface member reaches every in-solution implementation
+    /// one hop further on, via the method-level Implements edges. Without this,
+    /// coverage parked on the interface member and every implementation reached
+    /// only through it reported zero -- a confident "untested" for code that
+    /// forty tests exercised, found on MVVM and DI-shaped code where dispatch
+    /// through the interface is the ONLY way in. Conservative across multiple
+    /// implementations, like reachability itself: any implementation the call
+    /// could bind to is reached.
     /// </summary>
     internal void AddCoverageEdges(int maxDepth = int.MaxValue)
     {
@@ -38,8 +48,6 @@ internal sealed class CoverageEmitter(CodeGraph graph)
             .GroupBy(n => n.GetProperty<string>("declaringType") ?? string.Empty)
             .ToDictionary(g => g.Key, g => g.ToList());
 
-        var callsOnly = new HashSet<EdgeType> { EdgeType.Calls };
-
         foreach (var test in tests)
         {
             var testProject = test.GetProperty<string>("project");
@@ -49,18 +57,12 @@ internal sealed class CoverageEmitter(CodeGraph graph)
             if (declaringType != null && lifecycleByType.TryGetValue(declaringType, out var hooks))
                 seeds.AddRange(hooks);
 
-            // Materialised before edges are added: Traverse streams straight off
+            // The walk completes before any edge is added: it reads straight off
             // the adjacency lists, and adding a Covers edge below mutates one of
             // them mid-enumeration.
             var reachedAtDepth = new Dictionary<string, (GraphNode Node, int Depth)>();
             foreach (var seed in seeds)
-            {
-                foreach (var (node, _, depth) in graph.Traverse(seed.Id, callsOnly, maxDepth).ToList())
-                {
-                    if (!reachedAtDepth.TryGetValue(node.Id, out var existing) || depth < existing.Depth)
-                        reachedAtDepth[node.Id] = (node, depth);
-                }
-            }
+                Reach(seed.Id, maxDepth, reachedAtDepth);
 
             foreach (var (node, depth) in reachedAtDepth.Values)
             {
@@ -81,5 +83,48 @@ internal sealed class CoverageEmitter(CodeGraph graph)
                 });
             }
         }
+    }
+
+    /// <summary>
+    /// Breadth-first from one seed over the steps a call can take, recording the
+    /// shallowest depth each node is reached at across every seed so far.
+    /// </summary>
+    private void Reach(string seedId, int maxDepth, Dictionary<string, (GraphNode Node, int Depth)> reached)
+    {
+        var visited = new HashSet<string>(StringComparer.Ordinal) { seedId };
+        var queue = new Queue<(string Id, int Depth)>();
+        queue.Enqueue((seedId, 0));
+
+        while (queue.Count > 0)
+        {
+            var (id, depth) = queue.Dequeue();
+            if (depth >= maxDepth) continue;
+
+            foreach (var nextId in Steps(id))
+            {
+                if (!visited.Add(nextId)) continue;
+                if (graph.GetNode(nextId) is not { } node) continue;
+
+                var nextDepth = depth + 1;
+                if (!reached.TryGetValue(nextId, out var existing) || nextDepth < existing.Depth)
+                    reached[nextId] = (node, nextDepth);
+                queue.Enqueue((nextId, nextDepth));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Where a call from this method can land: what it calls, and -- when it is
+    /// an interface member -- every body that implements it. Implements edges
+    /// point implementation → interface, so the dispatch step is an incoming
+    /// edge read the other way, the same join EscapeEmitter.CallerEdges makes.
+    /// </summary>
+    private IEnumerable<string> Steps(string id)
+    {
+        foreach (var edge in graph.Outgoing(id))
+            if (edge.Type == EdgeType.Calls) yield return edge.ToId;
+
+        foreach (var edge in graph.Incoming(id))
+            if (edge.Type == EdgeType.Implements) yield return edge.FromId;
     }
 }

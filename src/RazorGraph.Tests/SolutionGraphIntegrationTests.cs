@@ -207,7 +207,7 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
             .ToList();
 
         Assert.Equal(
-            new[] { "Cache_SeedsItself", "List_ReturnsSortedCatalogs", "Preload_CountsCatalogs", "Warm_IsPositive" },
+            new[] { "Cache_SeedsItself", "Greet_ThroughTheInterface", "List_ReturnsSortedCatalogs", "Preload_CountsCatalogs", "Warm_IsPositive" },
             tests.OrderBy(t => t, StringComparer.Ordinal));
         // NotATest calls production code but carries no attribute, and
         // InitializeAsync is a lifecycle hook, not a test.
@@ -240,6 +240,28 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         // model would report it as untested.
         Assert.Single(covering);
         Assert.Equal(2, covering[0].Depth);
+    }
+
+    [Fact]
+    public void CoversEdges_FollowInterfaceDispatch()
+    {
+        // The test binds to IGreeter.Greet and never names Greeter.Greet. Coverage
+        // used to park on the interface member and report the implementation as
+        // untested; the implementation is what runs, so it is what the test covers.
+        var query = new GraphQuery(_solutionGraph!);
+        var declaration = Method(_solutionGraph!, "SampleLib.IGreeter", "Greet");
+        var implementation = Method(_solutionGraph!, "SampleLib.Greeter", "Greet");
+        var beyond = Method(_solutionGraph!, "SampleLib.Greeter", "Shape");
+
+        var onDeclaration = Assert.Single(query.GetCoveringTests(declaration.Id));
+        var onImplementation = Assert.Single(query.GetCoveringTests(implementation.Id));
+        var onBeyond = Assert.Single(query.GetCoveringTests(beyond.Id));
+
+        Assert.Equal("Greet_ThroughTheInterface", onImplementation.Test.Name);
+        // The dispatch step costs a hop, so depth keeps its meaning of "calls away".
+        Assert.Equal(1, onDeclaration.Depth);
+        Assert.Equal(2, onImplementation.Depth);
+        Assert.Equal(3, onBeyond.Depth);
     }
 
     [Fact]
