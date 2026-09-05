@@ -68,10 +68,21 @@ internal sealed class GraphNavigationTools(GraphStore store)
         [Description("Which side to return in full rather than summarised: \"outgoing\" (default), \"incoming\", \"all\", or \"none\" for counts on both sides. The summarised side always still reports its total and its per-type counts, so nothing is hidden — only the rows are withheld.")] string? edges = null,
         [Description("Restrict the expanded side to one edge type, e.g. Calls. availableFields.edgeType names the types this node actually carries; anything else is refused with that list rather than answered with an empty one.")] string? edgeType = null,
         [Description("Cap on each expanded list (default 100). The side reports returned and truncated when it bites.")] int limit = 100,
+        [Description("Name of a list-valued property to return in full, or \"all\". List properties (a type's methods, a method's throws) come back as counts otherwise. availableFields.fields names the ones this node carries; anything else is refused with that list.")] string? fields = null,
         [Description(ToolArguments.GraphIdDescription)] string? graphId = null)
     {
         var graph = store.Require(graphId).Graph;
         var node = graph.GetNode(id) ?? throw new McpException($"Node not found: {id}. Use find_nodes to discover ids.");
+
+        var listProperties = ToolResponses.ListPropertyNames(node);
+        if (!string.IsNullOrWhiteSpace(fields)
+            && !string.Equals(fields, "all", StringComparison.OrdinalIgnoreCase)
+            && !listProperties.Contains(fields, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new McpException(
+                $"This node has no list property '{fields}'. It has: "
+                + (listProperties.Count == 0 ? "none at all" : string.Join(", ", listProperties)) + ".");
+        }
 
         var (expandOut, expandIn) = ParseExpansion(edges);
 
@@ -103,7 +114,7 @@ internal sealed class GraphNavigationTools(GraphStore store)
             // before opening a file at lineStart.
             builtAt = graph.BuiltAt,
             freshnessCaveat = ToolResponses.FreshnessCaveat(graph),
-            node = ToolResponses.NodeDetail(node, new GraphFreshness(graph)),
+            node = ToolResponses.NodeDetail(node, new GraphFreshness(graph), fields),
             outgoing = Side(outEdges, expandOut, edgeType, limit, e => new
             {
                 type = e.DisplayType,
@@ -124,9 +135,12 @@ internal sealed class GraphNavigationTools(GraphStore store)
             {
                 edges = new[] { "none", "outgoing", "incoming", "all" },
                 edgeType = present,
-                note = "Arguments to get_node. 'edges' chooses which side comes back as rows; "
-                     + "'edgeType' narrows that side to one type. A summarised side still reports "
-                     + "its total and per-type counts."
+                fields = listProperties,
+                note = "Arguments to get_node, and a menu derived from THIS node. 'edges' chooses "
+                     + "which side comes back as rows and 'edgeType' narrows that side to one type; "
+                     + "'fields' names a list property to return in full, or \"all\". A summarised "
+                     + "side still reports its total and per-type counts, and a collapsed list "
+                     + "still reports its count — nothing is hidden, only unlisted."
             }
         });
     }

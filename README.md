@@ -87,6 +87,15 @@ node* can take, so the counts tell you whether to look further and the menu tell
 what to ask for. An unknown edge type is refused, naming the types the node has, rather
 than answered with an empty list that reads as "nothing points at this".
 
+The same applies to the node's own payload. Scalar properties come back inline — they
+are what orients a reader, and they are cheap. List-valued ones (a type's `methods`, a
+method's `throws`) come back as counts, and `fields` expands one by name or `all`. The
+split is measured: across a 2,098-node graph the scalars total 245KB, about 117 bytes a
+node, while the lists are 37KB concentrated on 229 nodes and own every fat payload. On
+the worst node in that graph — a test class whose method-name list duplicates the
+`Contains` edges the same node already reports — collapsing the lists takes the answer
+from 4,543 characters to 1,456.
+
 `total` and `byType` always describe the whole side. `edgeType` narrows the rows only,
 and a filtered expansion reports `filteredTo` and `matching` beside the unfiltered
 total — a narrowing argument must never change what the unasked-for half of an answer

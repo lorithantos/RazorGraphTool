@@ -223,6 +223,85 @@ public class GraphToolsTests
         Assert.Contains("none, outgoing, incoming, all", message, StringComparison.Ordinal);
     }
 
+    // ---- The node's own payload is narrow too -----------------------------------
+
+    // Measured on a 2,098-node graph: scalars are 245KB total, about 117 bytes a
+    // node, and are what orients a reader. Lists are 37KB on 229 nodes and own
+    // every fat payload. So scalars inline, lists counted.
+
+    [Fact]
+    public void GetNode_ListProperties_ComeBackAsCounts_ScalarsInline()
+    {
+        var tools = new GraphNavigationTools(StoreOver(NodeWithListsGraph()));
+
+        using var doc = JsonDocument.Parse(tools.GetNode(ListyId));
+        var node = doc.RootElement.GetProperty("node");
+
+        // Scalars are cheap and answer a question without a second call.
+        Assert.True(node.GetProperty("properties").GetProperty("isPublic").GetBoolean());
+        Assert.Equal("Nav.Squad", node.GetProperty("properties").GetProperty("declaringType").GetString());
+
+        // Lists say how big they are and nothing else.
+        var methods = node.GetProperty("collections").GetProperty("methods");
+        Assert.Equal(40, methods.GetProperty("count").GetInt32());
+        Assert.False(methods.GetProperty("expanded").GetBoolean());
+        Assert.False(methods.TryGetProperty("values", out _));
+    }
+
+    [Fact]
+    public void GetNode_Fields_ExpandsTheOneListThatWasWanted()
+    {
+        var tools = new GraphNavigationTools(StoreOver(NodeWithListsGraph()));
+
+        using var doc = JsonDocument.Parse(tools.GetNode(ListyId, fields: "throws"));
+        var collections = doc.RootElement.GetProperty("node").GetProperty("collections");
+
+        Assert.True(collections.GetProperty("throws").GetProperty("expanded").GetBoolean());
+        Assert.Equal(2, collections.GetProperty("throws").GetProperty("values").GetArrayLength());
+
+        // And the one that was not asked for stays a count.
+        Assert.False(collections.GetProperty("methods").GetProperty("expanded").GetBoolean());
+        Assert.Equal(40, collections.GetProperty("methods").GetProperty("count").GetInt32());
+    }
+
+    [Fact]
+    public void GetNode_AvailableFields_NamesTheListsThisNodeCarries()
+    {
+        var tools = new GraphNavigationTools(StoreOver(NodeWithListsGraph()));
+
+        using var doc = JsonDocument.Parse(tools.GetNode(ListyId));
+        var names = doc.RootElement.GetProperty("availableFields").GetProperty("fields")
+            .EnumerateArray().Select(e => e.GetString()).ToList();
+
+        Assert.Equal(["methods", "throws"], names);
+    }
+
+    [Fact]
+    public void GetNode_UnknownField_IsRefusedNamingWhatTheNodeHas()
+    {
+        var tools = new GraphNavigationTools(StoreOver(NodeWithListsGraph()));
+
+        var message = Assert.Throws<McpException>(() => tools.GetNode(ListyId, fields: "properties")).Message;
+
+        Assert.Contains("methods", message, StringComparison.Ordinal);
+        Assert.Contains("throws", message, StringComparison.Ordinal);
+    }
+
+    private const string ListyId = "m:Nav.Squad.Advance()";
+
+    /// <summary>A node with both kinds of property: cheap scalars and two lists.</summary>
+    private static CodeGraph NodeWithListsGraph()
+    {
+        var graph = new CodeGraph { BuiltAt = DateTimeOffset.UtcNow };
+        var node = new GraphNode { Id = ListyId, Type = NodeType.Method, Name = "Advance" };
+        node.SetProperty("isPublic", true);
+        node.SetProperty("declaringType", "Nav.Squad");
+        node.SetProperty("methods", Enumerable.Range(0, 40).Select(i => $"Member{i}").ToList());
+        node.SetProperty("throws", new List<string> { "System.InvalidOperationException", "Nav.SquadException" });
+        graph.AddNode(node);
+        return graph;
+    }
+
     // ---- Freshness: absence has to mean one thing ------------------------------
 
     [Fact]

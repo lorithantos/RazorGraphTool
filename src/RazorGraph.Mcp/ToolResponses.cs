@@ -47,19 +47,70 @@ internal static class ToolResponses
     /// documentation, so a caller opens the exact chunk instead of a line
     /// number and a guess.
     /// </summary>
-    internal static object NodeDetail(GraphNode n, GraphFreshness? freshness = null) => new
+    /// <remarks>
+    /// Scalar properties come back inline and list-valued ones come back as
+    /// counts, expandable by name. That split is measured rather than guessed:
+    /// on a 2,098-node graph the scalars total 245KB, about 117 bytes a node,
+    /// which is cheap and is exactly what orients a reader — is this public,
+    /// static, abstract, what does it return. The lists are 37KB concentrated on
+    /// 229 nodes, and they own every fat payload; the worst is a test class
+    /// whose method-name list is 2,948 bytes and duplicates the Contains edges
+    /// that same node already reports. So stripping the scalars would buy
+    /// nothing and cost a round trip, while sending the lists unasked is the
+    /// same mistake the edge summary exists to stop, one level in.
+    /// </remarks>
+    internal static object NodeDetail(GraphNode n, GraphFreshness? freshness = null, string? expand = null)
     {
-        id = n.Id,
-        type = n.DisplayType,
-        name = n.Name,
-        filePath = n.FilePath,
-        lineDocs = n.LineDocs,
-        lineStart = n.LineStart,
-        lineEnd = n.LineEnd,
-        fileWrittenSince = Stale(n, freshness),
-        properties = n.Properties.Count > 0 ? n.Properties : null,
-        labels = n.Labels.Count > 0 ? n.Labels : null
-    };
+        var scalars = new Dictionary<string, object>(StringComparer.Ordinal);
+        var collections = new Dictionary<string, object>(StringComparer.Ordinal);
+
+        foreach (var (key, value) in n.Properties)
+        {
+            if (!IsList(value))
+            {
+                scalars[key] = value;
+                continue;
+            }
+
+            var items = ((System.Collections.IEnumerable)value).Cast<object>().ToList();
+            var wanted = expand is not null
+                && (string.Equals(expand, "all", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(expand, key, StringComparison.OrdinalIgnoreCase));
+
+            collections[key] = new
+            {
+                count = items.Count,
+                expanded = wanted,
+                values = wanted ? (object?)items : null
+            };
+        }
+
+        return new
+        {
+            id = n.Id,
+            type = n.DisplayType,
+            name = n.Name,
+            filePath = n.FilePath,
+            lineDocs = n.LineDocs,
+            lineStart = n.LineStart,
+            lineEnd = n.LineEnd,
+            fileWrittenSince = Stale(n, freshness),
+            properties = scalars.Count > 0 ? scalars : null,
+            collections = collections.Count > 0 ? collections : null,
+            labels = n.Labels.Count > 0 ? n.Labels : null
+        };
+    }
+
+    /// <summary>The list-valued property names on a node — what <c>fields</c> can expand.</summary>
+    internal static List<string> ListPropertyNames(GraphNode n) =>
+        n.Properties.Where(p => IsList(p.Value))
+                    .Select(p => p.Key)
+                    .OrderBy(k => k, StringComparer.Ordinal)
+                    .ToList();
+
+    // A string is IEnumerable and is not a list in any sense a reader means.
+    private static bool IsList(object? value) =>
+        value is System.Collections.IEnumerable and not string;
 
     // Null rather than false when unchanged, so the field disappears under
     // WhenWritingNull: a flag on every clean node in a 500-node result is noise
