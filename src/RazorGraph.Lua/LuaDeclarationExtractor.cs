@@ -106,7 +106,7 @@ public sealed record LuaFileDeclarations(
 /// Loretta types exist — everything downstream sees the records above, so
 /// replacing the parser is a rewrite of this file rather than of the project.
 /// </summary>
-public sealed class LuaDeclarationExtractor(ILuaHost host)
+internal sealed class LuaDeclarationExtractor(ILuaHost host)
 {
     // NO PARSER WARM-UP, as of 0.2.14-nightly.26.
     //

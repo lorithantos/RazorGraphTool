@@ -18,7 +18,7 @@ using System.Text.RegularExpressions;
 /// trust, so every pattern here requires an explicit literal rather than
 /// inferring from a variable.
 /// </summary>
-public sealed class ClientAssetExtractor
+internal sealed class ClientAssetExtractor
 {
     // dataset.fooBar -> the DOM maps this to the data-foo-bar attribute.
     private static readonly Regex DatasetAccessRegex = new(
@@ -100,7 +100,7 @@ public sealed class ClientAssetExtractor
     };
 
     /// <summary>One asset the vendor policy dropped, and why.</summary>
-    public sealed record SkippedAsset(string RelativePath, string Reason);
+    internal sealed record SkippedAsset(string RelativePath, string Reason);
 
     /// <summary>Assets the most recent <see cref="ExtractAssets"/> call dropped as vendor.</summary>
     public IReadOnlyList<SkippedAsset> LastSkipped => _lastSkipped;
@@ -473,7 +473,7 @@ public sealed class ClientAssetExtractor
     private static string NormalizeRelative(string path) => path.Replace('\\', '/');
 }
 
-public sealed class ClientAssetInfo
+internal sealed class ClientAssetInfo
 {
     public required string Id { get; init; }
     public required string Name { get; init; }

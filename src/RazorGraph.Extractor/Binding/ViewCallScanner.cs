@@ -16,7 +16,7 @@ using RazorGraph.Extractor.Roslyn;
 /// </param>
 /// <param name="Source">How the name was arrived at, kept so a reader can weigh it.</param>
 /// <param name="Reason">Why the name is unknown, when it is.</param>
-public sealed record ViewCall(
+internal sealed record ViewCall(
     string MethodId,
     string? Name,
     string Controller,
@@ -38,7 +38,7 @@ public sealed record ViewCall(
 /// of a template — stamped at extraction, where the project is known, rather than
 /// guessed at from the method name later.
 /// </param>
-public sealed record ShapeReference(string MethodId, string Name, bool IsAlternate, int Line, bool InTestCode = false);
+internal sealed record ShapeReference(string MethodId, string Name, bool IsAlternate, int Line, bool InTestCode = false);
 
 /// <summary>
 /// A controller method reachable as an action, with the name routing knows it by.
@@ -48,7 +48,7 @@ public sealed record ShapeReference(string MethodId, string Name, bool IsAlterna
 /// behalf takes the caller's action name, and the caller may never touch View
 /// itself.
 /// </summary>
-public sealed record ActionMethod(string MethodId, string ActionName);
+internal sealed record ActionMethod(string MethodId, string ActionName);
 
 /// <summary>Where a view name came from.</summary>
 public enum ViewNameSource
@@ -85,7 +85,7 @@ public enum ViewNameSource
 /// selected rather than inspecting argument text. That is the difference between
 /// resolving almost every call and resolving only the 64 literals.
 /// </summary>
-public static class ViewCallScanner
+internal static class ViewCallScanner
 {
     private static readonly HashSet<string> RenderMethods =
         new(StringComparer.Ordinal) { "View", "PartialView" };

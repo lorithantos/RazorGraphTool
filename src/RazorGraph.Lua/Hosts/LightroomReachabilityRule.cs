@@ -21,7 +21,7 @@ using RazorGraph.Lua.Checks;
 /// A file the manifest never mentions is still live if a file the manifest DOES
 /// mention requires it, and only the require edges can settle that.
 /// </summary>
-public sealed class LightroomReachabilityRule : ILuaRule
+internal sealed class LightroomReachabilityRule : ILuaRule
 {
     private const string ManifestFile = "Info.lua";
 

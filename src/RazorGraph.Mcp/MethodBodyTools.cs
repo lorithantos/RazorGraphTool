@@ -13,7 +13,7 @@ using RazorGraph.Extractor.Roslyn;
 /// two bodies flow-equivalent.
 /// </summary>
 [McpServerToolType]
-public sealed class MethodBodyTools(GraphStore store)
+internal sealed class MethodBodyTools(GraphStore store)
 {
     [McpServerTool(Name = "deep_methods")]
     [Description("Methods whose body nests control flow at least minDepth levels deep — the deep-nesting (christmas-tree) report, deepest first. bodyDepth is syntactic nesting stamped at build time; expression-bodied and flat methods never appear.")]

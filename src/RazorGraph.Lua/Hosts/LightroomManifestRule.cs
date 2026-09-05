@@ -19,7 +19,7 @@ using RazorGraph.Lua.Checks;
 /// declaring LrSdkMinimumVersion 3.0 while calling a function introduced in 15.3
 /// installs happily on 3.0 and then fails when that path runs.
 /// </summary>
-public sealed class LightroomManifestRule : ILuaRule
+internal sealed class LightroomManifestRule : ILuaRule
 {
     private const string ManifestFile = "Info.lua";
 

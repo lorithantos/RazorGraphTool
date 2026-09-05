@@ -241,7 +241,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// <summary>
     /// Extract all relevant symbols: PageModels, Controllers, Services, ViewModels.
     /// </summary>
-    public IEnumerable<SymbolInfo> ExtractSymbols()
+    internal IEnumerable<SymbolInfo> ExtractSymbols()
     {
         if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
 
@@ -302,7 +302,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// SymbolClassifier.ExtractAssemblyAttributes for why generated sites are
     /// excluded.
     /// </summary>
-    public IEnumerable<(string ProjectName, List<AttributeUsage> Attributes)> ExtractAssemblyAttributes()
+    internal IEnumerable<(string ProjectName, List<AttributeUsage> Attributes)> ExtractAssemblyAttributes()
     {
         if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
 
@@ -329,7 +329,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// syntax at the site, and without the edges the methods read as unreached
     /// by the very code that guarantees they run.
     /// </summary>
-    public IEnumerable<CallSiteInfo> ExtractCallSites()
+    internal IEnumerable<CallSiteInfo> ExtractCallSites()
     {
         if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
 
@@ -358,7 +358,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// the semantic model; see ViewCallScanner. Names are not resolved to files
     /// here — that needs the Razor layer, which is built later.
     /// </summary>
-    public IEnumerable<ViewCall> ExtractViewCalls()
+    internal IEnumerable<ViewCall> ExtractViewCalls()
     {
         if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
 
@@ -379,7 +379,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// ViewCallScanner. Empty on a solution with no such types, which is every
     /// solution that is not OrchardCore-shaped.
     /// </summary>
-    public IEnumerable<ShapeReference> ExtractShapeNames()
+    internal IEnumerable<ShapeReference> ExtractShapeNames()
     {
         if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
 
@@ -410,7 +410,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// ViewCallScanner. Needed to attribute a helper's render to the action that
     /// invoked it, which is the only thing that knows the view name.
     /// </summary>
-    public IEnumerable<ActionMethod> ExtractActionMethods()
+    internal IEnumerable<ActionMethod> ExtractActionMethods()
     {
         if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
 
@@ -430,7 +430,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// Every read and write of an in-solution property or field, attributed to
     /// the code that performs it; see MemberAccessScanner.
     /// </summary>
-    public IEnumerable<MemberAccessInfo> ExtractMemberAccesses()
+    internal IEnumerable<MemberAccessInfo> ExtractMemberAccesses()
     {
         if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
 
@@ -448,7 +448,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// Methods that out-of-solution code can call back into; see
     /// CallSiteScanner.CallbackTargets.
     /// </summary>
-    public IEnumerable<string> ExtractCallbackTargets()
+    internal IEnumerable<string> ExtractCallbackTargets()
     {
         if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
 

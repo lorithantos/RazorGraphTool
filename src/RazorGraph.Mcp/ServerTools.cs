@@ -15,7 +15,7 @@ using ModelContextProtocol.Server;
 /// running should not require leaving the tools to verify.
 /// </remarks>
 [McpServerToolType]
-public sealed class ServerTools(GraphStore store)
+internal sealed class ServerTools(GraphStore store)
 {
     [McpServerTool(Name = "server_info")]
     [Description(

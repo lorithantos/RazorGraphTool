@@ -22,7 +22,7 @@ namespace RazorGraph.Extractor.Binding;
 ///    runtime configuration. Callers that need a single edge take the first;
 ///    callers that want to report ambiguity now can.
 /// </summary>
-public static class ViewNameResolver
+internal static class ViewNameResolver
 {
     /// <summary>Shared folders, in the order ASP.NET consults them.</summary>
     private static readonly string[] SharedFolders = ["Views/Shared", "Pages/Shared", "Views"];

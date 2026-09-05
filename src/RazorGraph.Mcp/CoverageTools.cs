@@ -11,7 +11,7 @@ using RazorGraph.Core.Query;
 /// reaches at all.
 /// </summary>
 [McpServerToolType]
-public sealed class CoverageTools(GraphStore store)
+internal sealed class CoverageTools(GraphStore store)
 {
     [McpServerTool(Name = "covering_tests")]
     [Description("Test methods that exercise a given production method, nearest first. Reachability through Calls edges, widened through interface dispatch: a test that calls I.M reaches every in-solution implementation of I.M one hop further on. Requires a graph built with build_solution — coverage edges cross a project boundary and cannot exist in a single-project graph. An empty list carries a 'caveat' naming what the walk cannot follow, so zero is never mistaken for proof of absence.")]

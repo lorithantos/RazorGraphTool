@@ -46,7 +46,7 @@ public sealed record GraphFormatAssessment(GraphFormatVersion? Version, bool Sup
 ///           can still read it, and the tolerant enum handling is what keeps
 ///           unknown vocabulary from throwing. Reported, never refused.
 /// </summary>
-public static class GraphFormat
+internal static class GraphFormat
 {
     /// <summary>
     /// The version this build writes. 1.1 added the attribute vocabulary —

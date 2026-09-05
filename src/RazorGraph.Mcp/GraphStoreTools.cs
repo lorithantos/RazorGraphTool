@@ -13,7 +13,7 @@ using RazorGraph.Lua;
 /// and save them as JSON, list, summarize, and drop them.
 /// </summary>
 [McpServerToolType]
-public sealed class GraphStoreTools(GraphStore store)
+internal sealed class GraphStoreTools(GraphStore store)
 {
     [McpServerTool(Name = "build_graph")]
     [Description("Build a code graph from one ASP.NET Core Razor project (.csproj), or one project inside a solution. Slow (compiles the project). To graph a whole solution with edges that cross project boundaries, use build_solution instead. Returns a summary with node/edge counts by type.")]

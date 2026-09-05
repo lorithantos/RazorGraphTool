@@ -18,7 +18,7 @@ using RazorGraph.Lua.Checks;
 /// The one thing worth an error is a module Adobe REMOVED, because that is a
 /// call that fails on a version the plug-in claims to support.
 /// </summary>
-public sealed class LightroomSdkRule : ILuaRule
+internal sealed class LightroomSdkRule : ILuaRule
 {
     public string Id => "lightroom.sdk-surface";
 

@@ -22,7 +22,7 @@ using RazorGraph.Lua.Checks;
 /// not enumerate, and an argument that is not a literal. Neither produces a
 /// finding, because neither is knowable from here.
 /// </summary>
-public sealed class LightroomArgumentRule : ILuaRule
+internal sealed class LightroomArgumentRule : ILuaRule
 {
     public string Id => "lightroom.sdk-argument";
 

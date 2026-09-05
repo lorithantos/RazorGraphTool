@@ -18,7 +18,7 @@ using RazorGraph.Lua.Hosts;
 /// A rule of the LANGUAGE rather than of any host, so it lives here and always
 /// runs — a host chooses its dialect, not whether the dialect is enforced.
 /// </summary>
-public sealed class DialectRule : ILuaRule
+internal sealed class DialectRule : ILuaRule
 {
     public string Id => "lua.dialect";
 

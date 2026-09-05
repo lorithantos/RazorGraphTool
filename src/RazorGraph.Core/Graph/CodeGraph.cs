@@ -91,7 +91,7 @@ public sealed class CodeGraph
     public IEnumerable<GraphNode> NodesOfType(NodeType type) =>
         _nodes.Values.Where(n => n.Type == type);
 
-    public IEnumerable<GraphNode> NodesWithLabel(string label) =>
+    internal IEnumerable<GraphNode> NodesWithLabel(string label) =>
         _nodes.Values.Where(n => n.Labels.Contains(label));
 
     /// <summary>
@@ -145,7 +145,7 @@ public sealed class CodeGraph
     /// from a PageModel spent its whole budget getting to the methods and
     /// reported none of the calls they make.
     /// </param>
-    public IEnumerable<(GraphNode Node, GraphEdge Edge, int Depth)> Traverse(
+    internal IEnumerable<(GraphNode Node, GraphEdge Edge, int Depth)> Traverse(
         string startId,
         IReadOnlySet<EdgeType>? edgeFilter = null,
         int maxDepth = 3,

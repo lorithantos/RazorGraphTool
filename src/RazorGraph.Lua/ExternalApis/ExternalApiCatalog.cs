@@ -28,7 +28,7 @@ using System.Text.Json.Serialization;
 /// list its values, never that any value is acceptable, so nothing may call a
 /// value wrong on the strength of a missing entry.
 /// </param>
-public sealed record ApiFunction(
+internal sealed record ApiFunction(
     string? Since = null,
     List<string>? Params = null,
     Dictionary<string, Dictionary<string, ApiParamValue>>? ParamValues = null);
@@ -41,7 +41,7 @@ public sealed record ApiFunction(
 /// because that is where it varies: setRawMetadata has accepted a key since 2.0
 /// and gained others in 3.0, 4.0, 6.0 and 13.2.
 /// </param>
-public sealed record ApiParamValue(string? Since = null);
+internal sealed record ApiParamValue(string? Since = null);
 
 /// <summary>One module in a catalogued external API surface.</summary>
 /// <param name="FirstCataloguedIn">
@@ -59,7 +59,7 @@ public sealed record ApiParamValue(string? Since = null);
 /// because it is a fact about the product rather than about our collection.
 /// </param>
 /// <param name="Functions">Documented functions, with their own introduction versions.</param>
-public sealed record ExternalApiModule(
+internal sealed record ExternalApiModule(
     string FirstCataloguedIn,
     string? AbsentAfter = null,
     string? FirstSupportedIn = null,
@@ -75,7 +75,7 @@ public sealed record ExternalApiModule(
 /// which is what provenance needs. Parsing the prose would add a dependency in
 /// order to learn something weaker.
 /// </summary>
-public sealed record ExternalApiDocument(string File, long Bytes, string Sha256);
+internal sealed record ExternalApiDocument(string File, long Bytes, string Sha256);
 
 /// <summary>
 /// What one catalogued version's source package attested about itself.
@@ -90,7 +90,7 @@ public sealed record ExternalApiDocument(string File, long Bytes, string Sha256)
 /// second artefact, and lets anyone confirm they hold the same files. Absent
 /// where a package shipped none — Lightroom SDK 3.0's Manual folder is empty.
 /// </param>
-public sealed record ExternalApiProvenance(
+internal sealed record ExternalApiProvenance(
     string Declares,
     string? Build = null,
     List<ExternalApiDocument>? Guides = null);
@@ -100,7 +100,7 @@ public sealed record ExternalApiProvenance(
 /// </summary>
 /// <param name="SeenIn">Catalogued versions whose own sample code imports it.</param>
 /// <param name="Evidence">Where it was observed, so the claim can be re-checked.</param>
-public sealed record UndocumentedApiModule(List<string> SeenIn, List<string> Evidence);
+internal sealed record UndocumentedApiModule(List<string> SeenIn, List<string> Evidence);
 
 /// <summary>
 /// A key a plug-in manifest may declare.
@@ -112,15 +112,15 @@ public sealed record UndocumentedApiModule(List<string> SeenIn, List<string> Evi
 /// <param name="Required">Null unless the specification said; the samples cannot tell.</param>
 /// <param name="Type">Declared value type, where the specification gave one.</param>
 /// <param name="UsedBySamples">How many example manifests declare it.</param>
-public sealed record ManifestKey(string Source, bool? Required = null, string? Type = null, int UsedBySamples = 0);
+internal sealed record ManifestKey(string Source, bool? Required = null, string? Type = null, int UsedBySamples = 0);
 
 /// <summary>What a catalogue concluded about one referenced module name.</summary>
-public abstract record ExternalApiVerdict
+internal abstract record ExternalApiVerdict
 {
     private ExternalApiVerdict() { }
 
     /// <summary>In the catalogue, with the versions that carry it.</summary>
-    public sealed record Known(string Name, string FirstCataloguedIn, string? AbsentAfter) : ExternalApiVerdict;
+    internal sealed record Known(string Name, string FirstCataloguedIn, string? AbsentAfter) : ExternalApiVerdict;
 
     /// <summary>
     /// Real, but on no reference page. The vendor ships and uses it — their own
@@ -128,7 +128,7 @@ public abstract record ExternalApiVerdict
     /// Known because anything built on it is built on observation, and distinct
     /// from unknown because it demonstrably exists.
     /// </summary>
-    public sealed record KnownUndocumented(string Name, IReadOnlyList<string> Evidence) : ExternalApiVerdict;
+    internal sealed record KnownUndocumented(string Name, IReadOnlyList<string> Evidence) : ExternalApiVerdict;
 
     /// <summary>
     /// Not in any catalogued version. Deliberately NOT called "nonexistent": the
@@ -137,7 +137,7 @@ public abstract record ExternalApiVerdict
     /// anything catalogued. Reporting it as invalid would be the absence-as-finding
     /// trap wearing a version number.
     /// </summary>
-    public sealed record UnknownToCatalogue(string Name, string Reason) : ExternalApiVerdict;
+    internal sealed record UnknownToCatalogue(string Name, string Reason) : ExternalApiVerdict;
 }
 
 /// <summary>
@@ -153,7 +153,7 @@ public abstract record ExternalApiVerdict
 /// ngx.* — can be added as JSON without code, which is the extension path the
 /// wider ecosystem would use.
 /// </summary>
-public sealed class ExternalApiCatalog
+internal sealed class ExternalApiCatalog
 {
     private static readonly JsonSerializerOptions Options = new()
     {

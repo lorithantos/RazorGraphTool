@@ -14,7 +14,7 @@ using RazorGraph.Lua.ExternalApis;
 /// missing modules, they are someone else's, and reporting them as failures would
 /// mean a healthy plugin looked broken 191 times over.
 /// </summary>
-public sealed class LightroomHost : ILuaHost
+internal sealed class LightroomHost : ILuaHost
 {
     private static readonly Lazy<ExternalApiCatalog> Sdk =
         new(() => ExternalApiCatalog.LoadEmbedded("lightroom-classic"));

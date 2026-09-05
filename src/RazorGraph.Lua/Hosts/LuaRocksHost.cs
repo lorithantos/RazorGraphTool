@@ -11,7 +11,7 @@ using System.Text.RegularExpressions;
 /// removes all guessing. It is not exhaustive though: those 605 cover 605 of
 /// Kong's 1,309 .lua files, so spec/ and bin/ still need the convention rule.
 /// </summary>
-public sealed partial class LuaRocksHost : ILuaHost
+internal sealed partial class LuaRocksHost : ILuaHost
 {
     private readonly string _root;
     private readonly Dictionary<string, string> _rockspecModules;

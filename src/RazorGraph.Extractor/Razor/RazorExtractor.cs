@@ -11,7 +11,7 @@ using RazorSyntaxNode = Microsoft.AspNetCore.Razor.Language.Syntax.SyntaxNode;
 /// Microsoft.AspNetCore.Razor.Language and is unlocked via Krafs.Publicizer;
 /// when the syntax path fails, extraction falls back to TextRazorExtractor.
 /// </summary>
-public sealed class RazorExtractor
+internal sealed class RazorExtractor
 {
     private readonly RazorProjectEngine _engine;
     private readonly string _projectRoot;
@@ -228,7 +228,7 @@ public sealed class RazorExtractor
     }
 }
 
-public sealed class RazorPageInfo
+internal sealed class RazorPageInfo
 {
     public required string Id { get; init; }
     public required string FilePath { get; init; }
@@ -268,28 +268,28 @@ public sealed class RazorPageInfo
 /// A script block living inside a Razor file. It has no path of its own, so the
 /// page plus the starting line is its identity.
 /// </summary>
-public sealed class InlineScriptInfo
+internal sealed class InlineScriptInfo
 {
     public string Body { get; init; } = string.Empty;
     public int Line { get; init; }
     public int LineCount { get; init; }
 }
 
-public sealed class PartialRenderInfo
+internal sealed class PartialRenderInfo
 {
     public string Name { get; set; } = string.Empty;
     public bool IsTagHelper { get; set; }
     public int Line { get; set; }
 }
 
-public sealed class TagHelperInfo
+internal sealed class TagHelperInfo
 {
     public string TagName { get; set; } = string.Empty;
     public List<TagHelperAttributeInfo> Attributes { get; set; } = new();
     public int Line { get; set; }
 }
 
-public sealed class TagHelperAttributeInfo
+internal sealed class TagHelperAttributeInfo
 {
     public string Name { get; set; } = string.Empty;
     public string Value { get; set; } = string.Empty;

@@ -49,20 +49,20 @@ public abstract record ModuleResolution
     private ModuleResolution() { }
 
     /// <summary>Resolved to a file in this unit — emit an edge.</summary>
-    public sealed record InGraph(string FilePath) : ModuleResolution;
+    internal sealed record InGraph(string FilePath) : ModuleResolution;
 
     /// <summary>
     /// Resolved, but outside the graph: an SDK or host API module such as
     /// LrDialogs, vim.api, ngx. Recorded, not edged, and NOT a failure.
     /// </summary>
-    public sealed record External(string Name) : ModuleResolution;
+    internal sealed record External(string Name) : ModuleResolution;
 
     /// <summary>
     /// Could not be resolved, with the reason preserved. Kong's dynamic
     /// require(expr) and Roblox's instance-tree require(script.Parent.X) are both
     /// unresolvable and have nothing else in common; one bucket would hide that.
     /// </summary>
-    public sealed record Unresolved(string Reason) : ModuleResolution;
+    internal sealed record Unresolved(string Reason) : ModuleResolution;
 }
 
 /// <summary>One Lua source file belonging to a unit.</summary>

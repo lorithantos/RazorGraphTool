@@ -6,7 +6,7 @@ using Microsoft.CodeAnalysis;
 /// Stable node ids for symbols — the identity every declaration site and every
 /// call, access, and coverage edge agrees on.
 /// </summary>
-public static class SymbolIds
+internal static class SymbolIds
 {
     /// <summary>
     /// Stable id for a method, shared by the declaration site and every call site.

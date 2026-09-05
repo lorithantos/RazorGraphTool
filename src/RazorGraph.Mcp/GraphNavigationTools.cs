@@ -12,7 +12,7 @@ using RazorGraph.Core.Serialization;
 /// the research export built from what a traversal reaches.
 /// </summary>
 [McpServerToolType]
-public sealed class GraphNavigationTools(GraphStore store)
+internal sealed class GraphNavigationTools(GraphStore store)
 {
     [McpServerTool(Name = "find_nodes")]
     [Description($"Find nodes by type, by case-insensitive name substring, or both; optionally restricted to a project. Omit nodeType to search every kind by name, which is the right first call when you know a name but not what kind of thing carries it. At least one of nodeType or nameContains is required. Valid node types: {ToolArguments.NodeTypeList}. A graph written by a newer version or a non-C# extractor may also carry foreign kinds; those are selectable by the name graph_summary and other results show for them. An unrecognised type is refused with the foreign kinds this graph holds, rather than returning nothing. Check 'truncated' before concluding you have seen everything.")]

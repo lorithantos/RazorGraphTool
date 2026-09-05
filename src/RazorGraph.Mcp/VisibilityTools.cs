@@ -9,7 +9,7 @@ using RazorGraph.Core.Query;
 /// against observed consumers.
 /// </summary>
 [McpServerToolType]
-public sealed class VisibilityTools(GraphStore store)
+internal sealed class VisibilityTools(GraphStore store)
 {
     /// <summary>
     /// Carried in every response, not just the tool description: a caller that

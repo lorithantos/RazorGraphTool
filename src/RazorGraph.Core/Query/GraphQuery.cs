@@ -20,7 +20,7 @@ public sealed class GraphQuery
     /// <summary>
     /// Find nodes by type, optionally filtered by name substring.
     /// </summary>
-    public IEnumerable<GraphNode> FindNodes(NodeType type, string? nameContains = null)
+    internal IEnumerable<GraphNode> FindNodes(NodeType type, string? nameContains = null)
     {
         var query = _graph.NodesOfType(type);
         if (!string.IsNullOrWhiteSpace(nameContains))
@@ -75,7 +75,7 @@ public sealed class GraphQuery
     /// <summary>
     /// Get all nodes that point TO this node via given edge types.
     /// </summary>
-    public IEnumerable<(GraphEdge Edge, GraphNode Source)> GetPredecessors(
+    internal IEnumerable<(GraphEdge Edge, GraphNode Source)> GetPredecessors(
         string nodeId,
         params EdgeType[] edgeTypes)
     {

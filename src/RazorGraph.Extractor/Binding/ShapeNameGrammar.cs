@@ -25,7 +25,7 @@ namespace RazorGraph.Extractor.Binding;
 /// Confirmed against OrchardCore's own debug output, which prints the binding it
 /// chose: <c>bindings:Menu__Main =&gt; Themes/Contoso/Views/Menu-Main.cshtml</c>.
 /// </summary>
-public static class ShapeNameGrammar
+internal static class ShapeNameGrammar
 {
     /// <summary>
     /// Template file names (no extension) that could bind this shape, most

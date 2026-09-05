@@ -121,7 +121,7 @@ public static class GraphSerializer
     /// Load a graph, discarding the format report. For round-trips and callers
     /// with nowhere to show a caveat; an unsupported version still throws.
     /// </summary>
-    public static CodeGraph FromJson(string json) => Read(json).Graph;
+    internal static CodeGraph FromJson(string json) => Read(json).Graph;
 
     private static CodeGraph ToGraph(GraphDto dto, GraphFormatAssessment assessment)
     {
@@ -240,7 +240,7 @@ public static class GraphSerializer
     /// Export a subgraph (set of nodes + their interconnecting edges) as a compact
     /// research.json-compatible document for LLM consumption.
     /// </summary>
-    public static string ToResearchDocument(CodeGraph graph, IEnumerable<string> nodeIds, string query, double relevanceThreshold = 0.0) =>
+    internal static string ToResearchDocument(CodeGraph graph, IEnumerable<string> nodeIds, string query, double relevanceThreshold = 0.0) =>
         ToResearchDocument(graph, nodeIds.ToDictionary(id => id, _ => 1.0), query, relevanceThreshold);
 
     /// <summary>

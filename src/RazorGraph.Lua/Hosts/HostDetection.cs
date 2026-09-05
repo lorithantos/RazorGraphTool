@@ -5,9 +5,9 @@ namespace RazorGraph.Lua.Hosts;
 /// caller, never silent: a misdetected host uses the wrong reference function and
 /// produces a graph that is empty for a structural reason no one can see.
 /// </summary>
-public static class HostDetection
+internal static class HostDetection
 {
-    public sealed record Detection(ILuaHost Host, string Evidence);
+    internal sealed record Detection(ILuaHost Host, string Evidence);
 
     public static Detection Detect(string rootPath)
     {

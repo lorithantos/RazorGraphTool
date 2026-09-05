@@ -32,7 +32,7 @@ using System.Text.Json;
 /// and any other provider-supplied key). Only the names are kept: this pass needs
 /// to know whether a rule is conditional, not to evaluate it.
 /// </param>
-public sealed record PlacementEntry(
+internal sealed record PlacementEntry(
     string ShapeType,
     string? Place,
     string? DisplayType,
@@ -78,7 +78,7 @@ public sealed record PlacementEntry(
 /// runtime reads them with comments skipped and trailing commas allowed; this
 /// reader matches, because parsing the corpus is the whole job.
 /// </summary>
-public static class PlacementReader
+internal static class PlacementReader
 {
     /// <summary>The file name OrchardCore looks for in an extension's root.</summary>
     public const string FileName = "placement.json";

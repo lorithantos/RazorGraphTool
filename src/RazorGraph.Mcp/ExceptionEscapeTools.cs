@@ -12,7 +12,7 @@ using RazorGraph.Core.Query;
 /// as data — the caveats list is part of every response.
 /// </summary>
 [McpServerToolType]
-public sealed class ExceptionEscapeTools(GraphStore store)
+internal sealed class ExceptionEscapeTools(GraphStore store)
 {
     private static readonly string[] EntryPointKinds =
     {

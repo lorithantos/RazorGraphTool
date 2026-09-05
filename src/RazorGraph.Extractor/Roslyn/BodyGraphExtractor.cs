@@ -16,7 +16,7 @@ using Microsoft.CodeAnalysis.Operations;
 /// foreach loops is branch edges, not regions, so "how deep is this buried"
 /// (the christmas-tree question) is a syntax fact, not a CFG fact.
 /// </summary>
-public static class BodyGraphExtractor
+internal static class BodyGraphExtractor
 {
     /// <summary>
     /// Maximum syntactic nesting depth of a method body: how many indentation

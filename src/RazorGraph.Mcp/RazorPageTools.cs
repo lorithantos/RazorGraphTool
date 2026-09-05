@@ -10,7 +10,7 @@ using RazorGraph.Core.Query;
 /// where server-prepared data leaks into client JavaScript.
 /// </summary>
 [McpServerToolType]
-public sealed class RazorPageTools(GraphStore store)
+internal sealed class RazorPageTools(GraphStore store)
 {
     [McpServerTool(Name = "render_tree")]
     [Description("Render dependencies of a Razor page: layout, partials, sections, and components, traversed to depth 5.")]

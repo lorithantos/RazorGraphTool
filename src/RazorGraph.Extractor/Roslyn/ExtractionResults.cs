@@ -13,7 +13,7 @@ using RazorGraph.Core.Graph;
 /// rather than a tuple so the two ids cannot be swapped silently at a call
 /// site.
 /// </summary>
-public sealed record CallSiteInfo(
+internal sealed record CallSiteInfo(
     string FromId,
     string ToId,
     IReadOnlyList<string> GuardedBy,
@@ -24,9 +24,9 @@ public sealed record CallSiteInfo(
 /// One resource a method disposes implicitly, and whether the disposal is
 /// await using — which resolves DisposeAsync rather than Dispose.
 /// </summary>
-public readonly record struct DisposedResource(ITypeSymbol Type, bool IsAsync);
+internal readonly record struct DisposedResource(ITypeSymbol Type, bool IsAsync);
 
-public sealed class SymbolInfo
+internal sealed class SymbolInfo
 {
     public required string Id { get; init; }
     public required NodeType Type { get; init; }
@@ -101,7 +101,7 @@ public sealed class SymbolInfo
 /// so its presence means the compilation had errors, which is a finding about the
 /// build rather than about the code.
 /// </param>
-public sealed record AttributeUsage(
+internal sealed record AttributeUsage(
     string FullName,
     string Name,
     string? Assembly,
@@ -162,7 +162,7 @@ public sealed record AttributeUsage(
 /// the in-solution types that declaration mentions — the raw material for the
 /// References edges that make "who uses this type" answerable for DTOs.
 /// </summary>
-public sealed record MemberDetail
+internal sealed record MemberDetail
 {
     public required string Id { get; init; }
     public required string Name { get; init; }
@@ -192,7 +192,7 @@ public sealed record MemberDetail
 /// One read or write of a property or field, from the node that performs it.
 /// A named type rather than a tuple for the same reason as CallSiteInfo.
 /// </summary>
-public sealed record MemberAccessInfo(
+internal sealed record MemberAccessInfo(
     string FromId,
     string ToId,
     bool IsRead,
@@ -202,7 +202,7 @@ public sealed record MemberAccessInfo(
 /// A method as a graph node: identity, location, and the shape a reader needs to
 /// decide whether to open the file.
 /// </summary>
-public sealed class MethodDetail
+internal sealed class MethodDetail
 {
     public required string Id { get; init; }
     public required string Name { get; init; }
@@ -282,7 +282,7 @@ public sealed class MethodDetail
 /// narrowing it is not. Ordinal rides along as data, from the unreduced
 /// original definition so an extension method's this parameter keeps its slot.
 /// </summary>
-public sealed record ParameterDetail(
+internal sealed record ParameterDetail(
     string Id,
     string Name,
     int Ordinal,
@@ -300,9 +300,9 @@ public sealed record ParameterDetail(
 /// set-membership test instead of a name heuristic. Conditional means every
 /// local catch that would take it carries a when filter.
 /// </summary>
-public sealed record ThrownType(string Type, IReadOnlyList<string> AncestorChain, bool Conditional);
+internal sealed record ThrownType(string Type, IReadOnlyList<string> AncestorChain, bool Conditional);
 
-public sealed class PropertyInfo
+internal sealed class PropertyInfo
 {
     public string Name { get; set; } = string.Empty;
     public string Type { get; set; } = string.Empty;
@@ -310,7 +310,7 @@ public sealed class PropertyInfo
     public bool HasBindProperty { get; set; }
 }
 
-public sealed class MethodInfo
+internal sealed class MethodInfo
 {
     public string Name { get; set; } = string.Empty;
     public string ReturnType { get; set; } = string.Empty;

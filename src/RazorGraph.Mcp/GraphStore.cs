@@ -14,7 +14,7 @@ using RazorGraph.Core.Graph;
 /// change: with one slot per id, two builds can run at once without racing for
 /// the same field.
 /// </summary>
-public sealed class GraphStore
+internal sealed class GraphStore
 {
     private readonly ConcurrentDictionary<string, GraphEntry> _graphs =
         new(StringComparer.OrdinalIgnoreCase);
@@ -24,7 +24,7 @@ public sealed class GraphStore
     private readonly object _currentGate = new();
     private string? _currentId;
 
-    public sealed record GraphEntry(string Id, CodeGraph Graph, string Source, DateTimeOffset LoadedAt);
+    internal sealed record GraphEntry(string Id, CodeGraph Graph, string Source, DateTimeOffset LoadedAt);
 
     /// <summary>
     /// Register a graph and make it the default for calls that omit graphId.

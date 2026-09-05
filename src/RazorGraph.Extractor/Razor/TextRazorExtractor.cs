@@ -7,7 +7,7 @@ using System.Text.RegularExpressions;
 /// RazorExtractor. Serves as the fallback when the internal Razor syntax API
 /// throws; heuristic by design, adequate for graph construction.
 /// </summary>
-public sealed class TextRazorExtractor
+internal sealed class TextRazorExtractor
 {
     private readonly string? _idScope;
 
