@@ -170,6 +170,17 @@ Calls edge to the resource's `Dispose`/`DisposeAsync`. Methods whose bodies nest
 a `bodyDepth` property stamped at build time, which feeds the deep-nesting report
 (`deep_methods` / `query --deep`).
 
+**A node says what a person can change about it.** Type nodes carry `isInterface` —
+interfaces are `Class` nodes unless DI registration promotes them to
+`ServiceInterface`, so without the flag most of a codebase's interfaces are
+indistinguishable from classes. Method nodes carry `isOverride` and
+`isPrimaryConstructor`, because neither has a modifier of its own: an override must
+match the base declaration, and a primary constructor *is* the type header. These
+are what let `excess_visibility` offer only edits that exist. A node's `line` is its
+declaration's, not its first attribute's — attributes are part of the declaration
+node rather than leading trivia, so a graph built before this pointed one or more
+lines high on every attributed declaration.
+
 **Escape analysis is static reachability over in-solution code.**
 `exception_escapes` (CLI: `query --escapes`) reports throwing operations that can reach
 an application entry point — declared `static Main`, Razor page handlers, controller
