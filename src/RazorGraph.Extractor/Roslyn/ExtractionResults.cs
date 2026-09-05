@@ -286,6 +286,13 @@ internal sealed class MethodDetail
     /// <summary>Ids of in-solution interface methods this method implements; see SymbolClassifier.InSolutionImplementedMembers.</summary>
     public List<string> ImplementsIds { get; init; } = new();
 
+    /// <summary>
+    /// Ids of the in-solution declarations this method overrides, nearest
+    /// first; see SymbolClassifier.InSolutionOverriddenMembers. The class
+    /// twin of <see cref="ImplementsIds"/>.
+    /// </summary>
+    public List<string> OverridesIds { get; init; } = new();
+
     /// <summary>Exception types this HTTP boundary absorbs firmly; see ExceptionFlow.BoundaryCatchSets.</summary>
     public List<string> BoundaryCatches { get; init; } = new();
 

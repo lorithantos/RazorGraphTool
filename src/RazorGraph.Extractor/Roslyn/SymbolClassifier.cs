@@ -561,6 +561,7 @@ internal static class SymbolClassifier
                     SignatureTypeFullNames = SignatureTypes(m, inScope),
                     ExtendsTypeFullName = ExtendedTypeOf(m),
                     ImplementsIds = InSolutionImplementedMembers(m, inScope),
+                    OverridesIds = InSolutionOverriddenMembers(m, inScope),
                     BoundaryCatches = boundaryCatches,
                     BoundaryCatchesFiltered = boundaryFiltered,
                     FilePath = mapped?.Path ?? m.Locations.FirstOrDefault()?.SourceTree?.FilePath,
@@ -901,6 +902,36 @@ internal static class SymbolClassifier
                         m.ContainingType.FindImplementationForInterfaceMember(member), m))
                     ids.Add(SymbolIds.MethodId(member));
             }
+        }
+        return ids;
+    }
+
+    /// <summary>
+    /// Ids of the in-solution declarations this method overrides — every step
+    /// up the chain, not just the immediate parent.
+    /// </summary>
+    /// <remarks>
+    /// The class-dispatch twin of <see cref="InSolutionImplementedMembers"/>,
+    /// and the join coverage was missing. A test calls the abstract
+    /// declaration, the body that runs is the override, and without this the
+    /// override reports zero tests — a confident "untested" for the most
+    /// exercised code in a repository, since a doctrine or strategy layer is
+    /// overrides all the way down.
+    /// <para>
+    /// The whole chain, because C# allows an override to be overridden again:
+    /// a test reaching the abstract root must reach the leaf that actually
+    /// runs, and stopping at one hop would report the middle of a three-deep
+    /// hierarchy as covered and the leaf as untested. Out-of-solution bases
+    /// stop the walk, because an edge to a framework method points at nothing.
+    /// </para>
+    /// </remarks>
+    private static List<string> InSolutionOverriddenMembers(IMethodSymbol m, IReadOnlySet<string> inScope)
+    {
+        var ids = new List<string>();
+        for (var baseMethod = m.OverriddenMethod; baseMethod is not null; baseMethod = baseMethod.OverriddenMethod)
+        {
+            if (baseMethod.ContainingAssembly?.Name is not { } assembly || !inScope.Contains(assembly)) break;
+            ids.Add(SymbolIds.MethodId(baseMethod));
         }
         return ids;
     }

@@ -37,12 +37,13 @@ internal sealed class CoverageTools(GraphStore store)
     /// <summary>
     /// What an empty coverage answer must say. A zero used to read as "untested",
     /// and on MVVM code it was an argument for writing tests that already existed:
-    /// the walk had stopped one dispatch step short. Interface dispatch is followed
-    /// now; the steps still not followed are named, so the reader can ask the
-    /// right question instead of trusting the empty one.
+    /// the walk had stopped one dispatch step short. BOTH dispatch mechanisms are
+    /// followed now — interface since 2026-09-04, class overrides since
+    /// 2026-09-05 — and the steps still not followed are named, so the reader can
+    /// ask the right question instead of trusting the empty one.
     /// </summary>
     internal const string UnreachedCaveat =
-        "No test's call chain reaches this method through Calls edges or interface dispatch. That is not proof it is untested: property accessor bodies (including source-generated setters), virtual overrides reached through a base-class call, stored-and-forwarded delegates, and reflection are not followed. Read the method body for those before treating this as a target for new tests.";
+        "No test's call chain reaches this method through Calls edges, interface dispatch, or a base-class override. That is not proof it is untested: property accessor bodies (including source-generated setters), stored-and-forwarded delegates, and reflection are not followed. Read the method body for those before treating this as a target for new tests.";
 
     [McpServerTool(Name = "covered_methods")]
     [Description("Production methods a given test method exercises, nearest first. depth=1 means the test calls it directly.")]

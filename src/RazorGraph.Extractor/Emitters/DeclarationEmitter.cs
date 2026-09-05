@@ -127,6 +127,8 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
                 node.SetProperty("entryPointKind", entryPointKind);
             if (method.ImplementsIds.Count > 0)
                 node.SetProperty("implementsMethods", method.ImplementsIds);
+            if (method.OverridesIds.Count > 0)
+                node.SetProperty("overridesMethods", method.OverridesIds);
             if (method.BoundaryCatches.Count > 0)
                 node.SetProperty("boundaryCatches", method.BoundaryCatches);
             if (method.BoundaryCatchesFiltered.Count > 0)
@@ -323,6 +325,40 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
                         ToId = interfaceMethodId,
                         Type = EdgeType.Implements
                     });
+                }
+    }
+
+    /// <summary>
+    /// Method-level Overrides edges, override → the declaration it replaces.
+    /// The class-dispatch twin of <see cref="AddMethodImplementsEdges"/>, and
+    /// the join coverage was missing: a caller binds to the base or abstract
+    /// declaration, the body that runs is the override, and without this edge
+    /// every override in a solution reports zero tests.
+    /// </summary>
+    /// <remarks>
+    /// Runs in the same pass and for the same reason: the base declaration may
+    /// belong to a project loaded later, so both ends must already be nodes.
+    /// Carries <c>depth</c> because the chain can be several deep — 1 is the
+    /// immediate parent — so a consumer wanting direct replacement only can
+    /// filter, exactly as Covers edges carry their own depth.
+    /// </remarks>
+    internal void AddMethodOverridesEdges(IReadOnlyList<SymbolInfo> symbols)
+    {
+        foreach (var sym in symbols)
+            foreach (var method in sym.MethodNodes)
+                for (var i = 0; i < method.OverridesIds.Count; i++)
+                {
+                    var baseMethodId = method.OverridesIds[i];
+                    if (!graph.HasNode(method.Id) || !graph.HasNode(baseMethodId)) continue;
+
+                    var edge = new GraphEdge
+                    {
+                        FromId = method.Id,
+                        ToId = baseMethodId,
+                        Type = EdgeType.Overrides
+                    };
+                    edge.Properties["depth"] = i + 1;
+                    graph.AddEdge(edge);
                 }
     }
 

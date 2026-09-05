@@ -141,7 +141,7 @@ states which kind of absence it is, once, per response.
 `ViewDataKey`, `Middleware`, `Route`, `HtmlElement`, `TagHelperInvocation`,
 `JavaScriptFile`, `CssFile`.
 
-**Edges** — structural (`Contains`, `Inherits`, `Implements`, `DependsOn`, `References`
+**Edges** — structural (`Contains`, `Inherits`, `Implements`, `Overrides`, `DependsOn`, `References`
 — a page referencing a script or stylesheet), rendering
 (`PageServedBy`, `UsesLayout`, `RendersPartial`, `RendersComponent`, `DefinesSection`,
 `ReturnsView`), data flow (`HasModel`, `BindsTo`, `Reads`, `Writes`, `Calls`,
@@ -171,13 +171,25 @@ test method to production code its call chain reaches — the full call closure,
 fixed horizon, carrying on each edge the depth it was reached at, so a consumer who
 wants direct exercise alone filters on depth. Traversal seeds from the test and from its
 class's lifecycle hooks and constructor alike: the framework runs those around every
-test, so work done there is exercised even though no test calls it. Interface dispatch
-is widened the same way escapes widen it: a test that calls `I.M` reaches every
-in-solution implementation of `I.M` one hop further on, because the implementation is
-what runs. Not followed: property accessor bodies (source-generated setters included),
-virtual overrides reached through a base-class call, stored-and-forwarded delegates, and
-reflection — an empty `covering_tests` answer names these in its `caveat` rather than
-reading as proof. A "covered" method
+test, so work done there is exercised even though no test calls it. **Both dispatch
+mechanisms are widened**: a test that calls `I.M` reaches every in-solution
+implementation of `I.M`, and a test that calls an abstract or virtual declaration
+reaches every in-solution override of it, because the override is what runs.
+Method-level `Implements` and `Overrides` edges carry the two joins, and `Overrides`
+spans the whole chain, so a test reaching an abstract root also reaches a leaf two
+levels below it. Not followed: property accessor bodies (source-generated setters
+included), stored-and-forwarded delegates, and reflection — an empty `covering_tests`
+answer names these in its `caveat` rather than reading as proof.
+
+> Class overrides were not widened until 2026-09-05, and the cost was not a smaller
+> answer but a wrong one: every override in a solution reported zero covering tests, so
+> a doctrine or strategy layer — overrides all the way down — read as entirely untested
+> while being the most exercised code in the repository. On gamehub one such method went
+> from 0 to 130, and `uncovered_methods` was naming every override in the solution.
+> Rebuild any graph saved before that date before trusting a coverage answer about an
+> override.
+
+A "covered" method
 is one some test *can* reach — not one a test asserted on. Edges are only emitted across
 a project boundary, so `build_solution` is required; `uncovered_methods` excludes
 bodiless interface and abstract declarations, which never bind a call and would
@@ -286,7 +298,10 @@ the lambda's container) `callback`. Interface dispatch widens to in-solution
 implementations — callers bind to the interface, the throw lives in the
 implementation, and the DI-default architecture of ASP.NET depends on that join
 (method-level `Implements` edges carry it) — while class virtual overrides are not
-widened. Middleware is its own entry kind (`IMiddleware` or convention
+widened, even though the `Overrides` edges coverage uses are now in the graph. That
+asymmetry is deliberate for now and worth knowing: widening coverage removes false
+"untested" claims, while widening escapes manufactures new escape paths, so the two
+carry opposite risks and the second wants its own evidence. Middleware is its own entry kind (`IMiddleware` or convention
 `*Middleware.Invoke[Async](HttpContext, …)`), and middleware that catches around
 `next` is an **exception boundary**: its catch set is recorded
 (`boundaryCatches`/`boundaryCatchesFiltered`, `IExceptionHandler` as a conditional

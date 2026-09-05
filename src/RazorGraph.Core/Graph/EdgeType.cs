@@ -7,6 +7,15 @@ public enum EdgeType
     Inherits,
     Implements,
 
+    // Method-level override: from the override to the base or abstract
+    // declaration it replaces. The class-dispatch twin of Implements, and
+    // deliberately NOT folded into it — "what interfaces does this implement"
+    // is a question people ask of Implements, and answering it with overrides
+    // mixed in would be a fuller answer that is also a wrong one. Inherits is
+    // class-to-class and cannot stand in: a walk that wants to know which body
+    // runs needs the member-to-member relation.
+    Overrides,
+
     // Razor rendering
     PageServedBy,
     UsesLayout,

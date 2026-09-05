@@ -217,6 +217,7 @@ public sealed class GraphBuilder : IAsyncDisposable
 
         _declarations.AddExtensionEdges(_symbols);
         _declarations.AddMethodImplementsEdges(_symbols);
+        _declarations.AddMethodOverridesEdges(_symbols);
 
         foreach (var sym in symbols)
         {

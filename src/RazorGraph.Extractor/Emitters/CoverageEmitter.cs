@@ -115,16 +115,34 @@ internal sealed class CoverageEmitter(CodeGraph graph)
 
     /// <summary>
     /// Where a call from this method can land: what it calls, and -- when it is
-    /// an interface member -- every body that implements it. Implements edges
-    /// point implementation → interface, so the dispatch step is an incoming
-    /// edge read the other way, the same join EscapeEmitter.CallerEdges makes.
+    /// a declaration something else dispatches to -- every body that might run
+    /// instead.
     /// </summary>
+    /// <remarks>
+    /// Both dispatch mechanisms, because a caller cannot tell them apart and
+    /// neither can a test. Implements and Overrides edges both point body →
+    /// declaration, so the dispatch step is an incoming edge read the other
+    /// way; the same join EscapeEmitter.CallerEdges makes for interfaces.
+    /// <para>
+    /// Overrides was the missing half until 2026-09-05, and its absence was not
+    /// a smaller answer but a wrong one: a test calling an abstract declaration
+    /// reached nothing, so every override in a solution reported zero tests.
+    /// On a doctrine or strategy layer -- overrides all the way down -- that is
+    /// the whole layer reading as untested while being the most exercised code
+    /// in the repository.
+    /// </para>
+    /// <para>
+    /// Conservative in the same direction as interface dispatch: a call to a
+    /// base declaration reaches EVERY in-solution override of it, because
+    /// reachability cannot say which one the runtime picked.
+    /// </para>
+    /// </remarks>
     private IEnumerable<string> Steps(string id)
     {
         foreach (var edge in graph.Outgoing(id))
             if (edge.Type == EdgeType.Calls) yield return edge.ToId;
 
         foreach (var edge in graph.Incoming(id))
-            if (edge.Type == EdgeType.Implements) yield return edge.FromId;
+            if (edge.Type is EdgeType.Implements or EdgeType.Overrides) yield return edge.FromId;
     }
 }

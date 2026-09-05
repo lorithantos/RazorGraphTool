@@ -207,7 +207,12 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
             .ToList();
 
         Assert.Equal(
-            new[] { "Cache_SeedsItself", "Greet_ThroughTheInterface", "List_ReturnsSortedCatalogs", "Preload_CountsCatalogs", "Warm_IsPositive" },
+            new[]
+            {
+                "Advance_ThroughARunnerThatHoldsTheBase", "Advance_ThroughTheBaseDeclaration",
+                "Cache_SeedsItself", "Greet_ThroughTheInterface", "List_ReturnsSortedCatalogs",
+                "Preload_CountsCatalogs", "Warm_IsPositive"
+            },
             tests.OrderBy(t => t, StringComparer.Ordinal));
         // NotATest calls production code but carries no attribute, and
         // InitializeAsync is a lifecycle hook, not a test.
@@ -930,6 +935,73 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
             .Select(e => _solutionGraph.GetNode(e.ToId)!.Name)
             .ToHashSet();
         Assert.All(advertised, name => Assert.Contains(name, contained));
+    }
+
+    // ---- Class dispatch: coverage across an override ---------------------------
+
+    // The twin of the interface case. Nothing calls either override by name, so
+    // every assertion here fails unless the walk crosses the override relation.
+    // Until 2026-09-05 it did not, and the result was not a smaller answer but a
+    // wrong one: every override in a solution reported zero tests.
+
+    private const string AbstractAdvance = "m:SampleLib.Doctrine.Advance(int)";
+    private const string PatrolAdvance = "m:SampleLib.PatrolDoctrine.Advance(int)";
+    private const string EscortAdvance = "m:SampleLib.EscortDoctrine.Advance(int)";
+
+    [Fact]
+    public void Overrides_CarryMethodLevelOverridesEdges()
+    {
+        // The edge the graph did not have. Inherits is class-to-class and
+        // cannot say which body runs.
+        Assert.True(HasEdge(_solutionGraph!, PatrolAdvance, EdgeType.Overrides, AbstractAdvance));
+        Assert.True(HasEdge(_solutionGraph!, EscortAdvance, EdgeType.Overrides, PatrolAdvance));
+
+        // The whole chain, not just one hop: the leaf reaches the root too, so a
+        // caller of the root reaches the leaf that actually runs.
+        Assert.True(HasEdge(_solutionGraph!, EscortAdvance, EdgeType.Overrides, AbstractAdvance));
+
+        var direct = _solutionGraph!.Outgoing(EscortAdvance)
+            .Single(e => e.Type == EdgeType.Overrides && e.ToId == PatrolAdvance);
+        Assert.Equal(1, direct.GetProperty<int>("depth"));
+    }
+
+    [Fact]
+    public void Overrides_AreNotReportedAsInterfaceImplementations()
+    {
+        // Deliberately a separate edge type. "What interfaces does this
+        // implement" is a question people ask of Implements, and answering it
+        // with overrides mixed in would be a fuller answer that is also wrong.
+        Assert.DoesNotContain(_solutionGraph!.Outgoing(PatrolAdvance), e => e.Type == EdgeType.Implements);
+    }
+
+    [Fact]
+    public void CoveringTests_ReachTheOverrideThatActuallyRan()
+    {
+        // The acceptance test for the whole change. Both tests bind to the
+        // abstract declaration; neither names an override.
+        var query = new GraphQuery(_solutionGraph!);
+
+        var onAbstract = query.GetCoveringTests(AbstractAdvance).ToList();
+        Assert.NotEmpty(onAbstract);
+
+        var onOverride = query.GetCoveringTests(PatrolAdvance).ToList();
+        Assert.Contains(onOverride, t => t.Test.Name == "Advance_ThroughTheBaseDeclaration");
+
+        // And the leaf, two hops from the declaration the test called.
+        var onLeaf = query.GetCoveringTests(EscortAdvance).ToList();
+        Assert.NotEmpty(onLeaf);
+    }
+
+    [Fact]
+    public void UncoveredMethods_NoLongerListsEveryOverride()
+    {
+        // The sibling that shares the walk, and the one someone acts on: it
+        // used to name every override in the solution as untested.
+        var query = new GraphQuery(_solutionGraph!);
+        var uncovered = query.FindUncoveredMethods("SampleLib").Select(m => m.Id).ToList();
+
+        Assert.DoesNotContain(PatrolAdvance, uncovered);
+        Assert.DoesNotContain(EscortAdvance, uncovered);
     }
 
     // ---- The span a reader needs ----------------------------------------------
