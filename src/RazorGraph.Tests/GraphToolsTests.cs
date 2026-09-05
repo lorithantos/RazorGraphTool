@@ -70,6 +70,185 @@ public class GraphToolsTests
         Assert.Contains("nameContains", message, StringComparison.Ordinal);
     }
 
+    // ---- get_node: narrow by default -----------------------------------------
+
+    // The shape that provoked this: one Calls edge worth reading, buried under a
+    // hundred-odd Covers edges nobody asked for. The full answer to a question
+    // about the Calls edge used to cost every Covers row.
+
+    [Fact]
+    public void GetNode_ByDefault_ListsOutgoingAndOnlySummarisesIncoming()
+    {
+        var tools = new GraphNavigationTools(StoreOver(WellCoveredGraph()));
+
+        using var doc = JsonDocument.Parse(tools.GetNode(CoveredMethodId));
+        var outgoing = doc.RootElement.GetProperty("outgoing");
+        var incoming = doc.RootElement.GetProperty("incoming");
+
+        Assert.True(outgoing.GetProperty("expanded").GetBoolean());
+        Assert.Equal(1, outgoing.GetProperty("edges").GetArrayLength());
+
+        // Summarised: the shape is visible, the rows are not.
+        Assert.False(incoming.GetProperty("expanded").GetBoolean());
+        Assert.False(incoming.TryGetProperty("edges", out _));
+
+        // Nothing is hidden — the totals are still reported.
+        Assert.Equal(119, incoming.GetProperty("total").GetInt32());
+        var byType = incoming.GetProperty("byType").EnumerateArray()
+            .ToDictionary(e => e.GetProperty("type").GetString()!, e => e.GetProperty("count").GetInt32());
+        Assert.Equal(118, byType["Covers"]);
+        Assert.Equal(1, byType["Calls"]);
+    }
+
+    [Fact]
+    public void GetNode_Default_CostsAFractionOfTheFullAnswer()
+    {
+        // The point of the change, asserted as a ratio rather than a byte count
+        // so it cannot go flaky on formatting.
+        var tools = new GraphNavigationTools(StoreOver(WellCoveredGraph()));
+
+        var narrow = tools.GetNode(CoveredMethodId).Length;
+        var wide = tools.GetNode(CoveredMethodId, edges: "all", limit: 1000).Length;
+
+        Assert.True(narrow * 10 < wide, $"narrow {narrow} vs wide {wide}: expected an order of magnitude");
+    }
+
+    [Fact]
+    public void GetNode_EdgesIncoming_ReturnsTheRows()
+    {
+        var tools = new GraphNavigationTools(StoreOver(WellCoveredGraph()));
+
+        using var doc = JsonDocument.Parse(tools.GetNode(CoveredMethodId, edges: "incoming", limit: 1000));
+        var incoming = doc.RootElement.GetProperty("incoming");
+
+        Assert.True(incoming.GetProperty("expanded").GetBoolean());
+        Assert.Equal(119, incoming.GetProperty("edges").GetArrayLength());
+        Assert.False(incoming.GetProperty("truncated").GetBoolean());
+    }
+
+    [Fact]
+    public void GetNode_EdgeType_NarrowsToTheOneEdgeThatWasWanted()
+    {
+        // The whole point: reach the single Calls edge without paying for 118
+        // Covers rows to find it.
+        var tools = new GraphNavigationTools(StoreOver(WellCoveredGraph()));
+
+        using var doc = JsonDocument.Parse(
+            tools.GetNode(CoveredMethodId, edges: "incoming", edgeType: "Calls"));
+        var incoming = doc.RootElement.GetProperty("incoming");
+
+        var edge = Assert.Single(incoming.GetProperty("edges").EnumerateArray());
+        Assert.Equal("Calls", edge.GetProperty("type").GetString());
+        Assert.Equal("m:Web.Caller.Invoke()", edge.GetProperty("from").GetString());
+    }
+
+    [Fact]
+    public void GetNode_EdgeTypeFilter_DoesNotChangeWhatTheOtherSideReports()
+    {
+        // Written after the first real call caught it: the filter was applied
+        // before the summary, so asking for one incoming type reported the
+        // OUTGOING side as total 0 on a node that has an outgoing edge. A
+        // narrowing argument must not change what the unasked-for half claims
+        // about itself — that is a confident wrong answer, not a smaller one.
+        var tools = new GraphNavigationTools(StoreOver(WellCoveredGraph()));
+
+        using var doc = JsonDocument.Parse(
+            tools.GetNode(CoveredMethodId, edges: "incoming", edgeType: "Covers"));
+
+        var outgoing = doc.RootElement.GetProperty("outgoing");
+        Assert.Equal(1, outgoing.GetProperty("total").GetInt32());
+        Assert.Equal("Calls", outgoing.GetProperty("byType")[0].GetProperty("type").GetString());
+
+        // And the expanded side reports the whole side's total beside the
+        // filtered count, so "118 of 119" is legible rather than implied.
+        var incoming = doc.RootElement.GetProperty("incoming");
+        Assert.Equal(119, incoming.GetProperty("total").GetInt32());
+        Assert.Equal(118, incoming.GetProperty("matching").GetInt32());
+        Assert.Equal("Covers", incoming.GetProperty("filteredTo").GetString());
+    }
+
+    [Fact]
+    public void GetNode_Limit_ReportsThatItBit()
+    {
+        var tools = new GraphNavigationTools(StoreOver(WellCoveredGraph()));
+
+        using var doc = JsonDocument.Parse(tools.GetNode(CoveredMethodId, edges: "incoming", limit: 10));
+        var incoming = doc.RootElement.GetProperty("incoming");
+
+        Assert.Equal(10, incoming.GetProperty("returned").GetInt32());
+        Assert.Equal(119, incoming.GetProperty("total").GetInt32());
+        Assert.True(incoming.GetProperty("truncated").GetBoolean());
+    }
+
+    [Fact]
+    public void GetNode_AvailableFields_NamesTheExpansionsThisNodeCanTake()
+    {
+        // The menu is derived from the node, not a static list: a caller can
+        // only ask for an edge type that is actually there.
+        var tools = new GraphNavigationTools(StoreOver(WellCoveredGraph()));
+
+        using var doc = JsonDocument.Parse(tools.GetNode(CoveredMethodId));
+        var fields = doc.RootElement.GetProperty("availableFields");
+
+        var edges = fields.GetProperty("edges").EnumerateArray().Select(e => e.GetString()).ToList();
+        Assert.Equal(["none", "outgoing", "incoming", "all"], edges);
+
+        var types = fields.GetProperty("edgeType").EnumerateArray().Select(e => e.GetString()).ToList();
+        Assert.Equal(["Calls", "Covers"], types);
+    }
+
+    [Fact]
+    public void GetNode_UnknownEdgeType_IsRefusedNamingWhatTheNodeHas()
+    {
+        // Never an empty expansion: "no Implements edges" and "you typed it
+        // wrong" would read identically, and the first is a real conclusion.
+        var tools = new GraphNavigationTools(StoreOver(WellCoveredGraph()));
+
+        var message = Assert.Throws<McpException>(
+            () => tools.GetNode(CoveredMethodId, edges: "incoming", edgeType: "Implements")).Message;
+
+        Assert.Contains("Implements", message, StringComparison.Ordinal);
+        Assert.Contains("Calls", message, StringComparison.Ordinal);
+        Assert.Contains("Covers", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GetNode_UnknownEdgesValue_IsRefusedNamingTheValidOnes()
+    {
+        var tools = new GraphNavigationTools(StoreOver(WellCoveredGraph()));
+
+        var message = Assert.Throws<McpException>(
+            () => tools.GetNode(CoveredMethodId, edges: "both")).Message;
+
+        Assert.Contains("none, outgoing, incoming, all", message, StringComparison.Ordinal);
+    }
+
+    private const string CoveredMethodId = "m:Web.Doctrine.Advance()";
+
+    /// <summary>
+    /// One method with a single outgoing call, one incoming call, and 118
+    /// incoming Covers edges — the real proportions of a well-tested method.
+    /// </summary>
+    private static CodeGraph WellCoveredGraph()
+    {
+        var graph = new CodeGraph();
+        graph.AddNode(new GraphNode { Id = CoveredMethodId, Type = NodeType.Method, Name = "Advance" });
+        graph.AddNode(new GraphNode { Id = "m:Web.Doctrine.Step()", Type = NodeType.Method, Name = "Step" });
+        graph.AddNode(new GraphNode { Id = "m:Web.Caller.Invoke()", Type = NodeType.Method, Name = "Invoke" });
+
+        graph.AddEdge(new GraphEdge { FromId = CoveredMethodId, ToId = "m:Web.Doctrine.Step()", Type = EdgeType.Calls });
+        graph.AddEdge(new GraphEdge { FromId = "m:Web.Caller.Invoke()", ToId = CoveredMethodId, Type = EdgeType.Calls });
+
+        for (var i = 0; i < 118; i++)
+        {
+            var testId = $"m:Web.Tests.DoctrineTests.Case{i}()";
+            graph.AddNode(new GraphNode { Id = testId, Type = NodeType.Method, Name = $"Case{i}" });
+            graph.AddEdge(new GraphEdge { FromId = testId, ToId = CoveredMethodId, Type = EdgeType.Covers });
+        }
+
+        return graph;
+    }
+
     private static GraphStore StoreOver(CodeGraph graph)
     {
         var store = new GraphStore();

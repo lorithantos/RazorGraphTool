@@ -77,6 +77,21 @@ Results are compact JSON — the consumer is a model, not a terminal — and sea
 a `{ returned, totalMatches, truncated }` envelope. Check `truncated` before concluding
 you have seen everything.
 
+**`get_node` is narrow by default**, because context is the resource that runs out.
+It returns the node, its outgoing edges as rows, and its incoming edges *summarised by
+type with counts*. That summary is usually the answer: "130 tests reach this" is what a
+caller used to pay for 130 rows to learn. Expansion is opt-in — `edges` picks a side
+(`none`, `outgoing`, `incoming`, `all`), `edgeType` narrows it to one type, `limit` caps
+the rows. Every result carries an `availableFields` block naming the expansions *that
+node* can take, so the counts tell you whether to look further and the menu tells you
+what to ask for. An unknown edge type is refused, naming the types the node has, rather
+than answered with an empty list that reads as "nothing points at this".
+
+`total` and `byType` always describe the whole side. `edgeType` narrows the rows only,
+and a filtered expansion reports `filteredTo` and `matching` beside the unfiltered
+total — a narrowing argument must never change what the unasked-for half of an answer
+claims about itself.
+
 > The server runs from the published `.mcp-bin` copy, not live build output, so
 > ordinary `dotnet build` keeps working while a session is attached. Code changes reach
 > the tools after a re-publish and a restart of the HTTP server; sessions reconnect on

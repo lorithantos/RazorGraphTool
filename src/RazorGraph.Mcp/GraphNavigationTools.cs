@@ -54,39 +54,67 @@ internal sealed class GraphNavigationTools(GraphStore store)
     }
 
     [McpServerTool(Name = "get_node")]
-    [Description("Full details of one node by id — properties, labels, and all one-hop outgoing and incoming edges with their targets. Ids come from find_nodes / other queries.")]
+    [Description("One node by id: its properties, its OUTGOING edges in full, and its INCOMING edges summarised by type with counts. Narrow on purpose. Incoming Covers edges make a well-tested method's full edge list the most expensive answer in the tool surface, and the summary is usually the thing that was wanted anyway — \"118 tests reach this\" is what a caller was paying for 118 rows to learn. Every result carries availableFields naming the expansions THIS node can take, so read the counts, then ask for the one list you need: edges=incoming|outgoing|all|none, optionally narrowed with edgeType. Ids come from find_nodes.")]
     public string GetNode(
         [Description("Node id")] string id,
+        [Description("Which side to return in full rather than summarised: \"outgoing\" (default), \"incoming\", \"all\", or \"none\" for counts on both sides. The summarised side always still reports its total and its per-type counts, so nothing is hidden — only the rows are withheld.")] string? edges = null,
+        [Description("Restrict the expanded side to one edge type, e.g. Calls. availableFields.edgeType names the types this node actually carries; anything else is refused with that list rather than answered with an empty one.")] string? edgeType = null,
+        [Description("Cap on each expanded list (default 100). The side reports returned and truncated when it bites.")] int limit = 100,
         [Description(ToolArguments.GraphIdDescription)] string? graphId = null)
     {
         var graph = store.Require(graphId).Graph;
         var node = graph.GetNode(id) ?? throw new McpException($"Node not found: {id}. Use find_nodes to discover ids.");
 
-        var outgoing = graph.Outgoing(id).Select(e => new
-        {
-            type = e.DisplayType,
-            to = e.ToId,
-            toName = graph.GetNode(e.ToId)?.Name,
-            toType = graph.GetNode(e.ToId)?.DisplayType,
-            properties = e.Properties.Count > 0 ? e.Properties : null
-        }).ToList();
+        var (expandOut, expandIn) = ParseExpansion(edges);
 
-        var incoming = graph.Incoming(id).Select(e => new
+        var outEdges = graph.Outgoing(id).ToList();
+        var inEdges = graph.Incoming(id).ToList();
+
+        // Refuse an unknown edge type rather than returning an empty list: an
+        // empty expansion reads as "nothing points at this", which is the exact
+        // wrong conclusion and indistinguishable from a typo.
+        var present = outEdges.Concat(inEdges)
+            .Select(e => e.DisplayType)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(t => t, StringComparer.Ordinal)
+            .ToList();
+
+        if (!string.IsNullOrWhiteSpace(edgeType)
+            && !present.Contains(edgeType, StringComparer.OrdinalIgnoreCase))
         {
-            type = e.DisplayType,
-            from = e.FromId,
-            fromName = graph.GetNode(e.FromId)?.Name,
-            fromType = graph.GetNode(e.FromId)?.DisplayType,
-            properties = e.Properties.Count > 0 ? e.Properties : null
-        }).ToList();
+            throw new McpException(
+                $"This node carries no '{edgeType}' edge. It has: {(present.Count == 0 ? "none at all" : string.Join(", ", present))}.");
+        }
 
         // The node a caller is about to open at lineStart..lineEnd is exactly the
         // one worth flagging, so get_node carries it even though it is one node.
         return ToolResponses.ToJson(new
         {
             node = ToolResponses.NodeDetail(node, new GraphFreshness(graph)),
-            outgoing,
-            incoming
+            outgoing = Side(outEdges, expandOut, edgeType, limit, e => new
+            {
+                type = e.DisplayType,
+                to = e.ToId,
+                toName = graph.GetNode(e.ToId)?.Name,
+                toType = graph.GetNode(e.ToId)?.DisplayType,
+                properties = e.Properties.Count > 0 ? e.Properties : null
+            }),
+            incoming = Side(inEdges, expandIn, edgeType, limit, e => new
+            {
+                type = e.DisplayType,
+                from = e.FromId,
+                fromName = graph.GetNode(e.FromId)?.Name,
+                fromType = graph.GetNode(e.FromId)?.DisplayType,
+                properties = e.Properties.Count > 0 ? e.Properties : null
+            }),
+            availableFields = new
+            {
+                edges = new[] { "none", "outgoing", "incoming", "all" },
+                edgeType = present,
+                note = "Arguments to get_node. 'edges' chooses which side comes back as rows; "
+                     + "'edgeType' narrows that side to one type. A summarised side still reports "
+                     + "its total and per-type counts."
+            }
         });
     }
 
@@ -106,6 +134,80 @@ internal sealed class GraphNavigationTools(GraphStore store)
             .Select(t => new { depth = t.Depth, edgeType = t.Edge.DisplayType, node = ToolResponses.NodeSummary(t.Node) })
             .ToList();
         return ToolResponses.ToJson(new { startId, maxDepth, direction = dir.ToString(), returned = items.Count, items });
+    }
+
+    private static bool Same(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Which sides come back as rows. Outgoing by default, because "what does
+    /// this call" is small and is the question that brought most callers here;
+    /// incoming is the side that explodes, so it is opt-in.
+    /// </summary>
+    private static (bool Outgoing, bool Incoming) ParseExpansion(string? edges) =>
+        (edges ?? "outgoing").Trim().ToLowerInvariant() switch
+        {
+            "outgoing" or "" => (true, false),
+            "incoming" => (false, true),
+            "all" => (true, true),
+            "none" => (false, false),
+            var other => throw new McpException(
+                $"Unknown edges value '{other}'. Use one of: none, outgoing, incoming, all.")
+        };
+
+    /// <summary>
+    /// One side of a node's edges: always the whole side's total and per-type
+    /// counts, and the rows only when this side was expanded.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="edgeType"/> narrows the ROWS and never the counts. It was
+    /// briefly written the other way, and the first real call showed why that is
+    /// wrong: asking for the one incoming Calls edge reported the outgoing side
+    /// as <c>total: 0</c> on a node that has an outgoing edge, because the
+    /// filter had been applied before the summary. A reader would have concluded
+    /// the node calls nothing. A narrowing argument must not be able to change
+    /// what the unasked-for half claims about itself.
+    /// </remarks>
+    private static object Side<T>(
+        IReadOnlyList<GraphEdge> edges, bool expand, string? edgeType, int limit, Func<GraphEdge, T> project)
+    {
+        var byType = edges
+            .GroupBy(e => e.DisplayType, StringComparer.Ordinal)
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key, StringComparer.Ordinal)
+            .Select(g => new { type = g.Key, count = g.Count() })
+            .ToList();
+
+        if (!expand)
+        {
+            return new
+            {
+                total = edges.Count,
+                byType,
+                expanded = false,
+                filteredTo = (string?)null,
+                matching = (int?)null,
+                edges = (object?)null,
+                returned = (int?)null,
+                truncated = (bool?)null
+            };
+        }
+
+        var rows = string.IsNullOrWhiteSpace(edgeType)
+            ? edges
+            : edges.Where(e => Same(e.DisplayType, edgeType)).ToList();
+        var page = rows.Take(Math.Max(1, limit)).Select(project).ToList();
+
+        return new
+        {
+            total = edges.Count,
+            byType,
+            expanded = true,
+            filteredTo = string.IsNullOrWhiteSpace(edgeType) ? null : edgeType,
+            matching = string.IsNullOrWhiteSpace(edgeType) ? (int?)null : rows.Count,
+            edges = (object)page,
+            returned = (int?)page.Count,
+            truncated = (bool?)(rows.Count > page.Count)
+        };
     }
 
     [McpServerTool(Name = "find_path")]
