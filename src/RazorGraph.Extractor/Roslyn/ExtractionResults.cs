@@ -51,6 +51,13 @@ public sealed class SymbolInfo
     /// </summary>
     public bool IsPublic { get; init; }
 
+    /// <summary>
+    /// Whether the declaration is an interface. Interfaces are Class nodes unless DI
+    /// registration promotes them to ServiceInterface, so without this flag thirty
+    /// of an app's thirty-seven interfaces were indistinguishable from classes.
+    /// </summary>
+    public bool IsInterface { get; init; }
+
     public string? BaseType { get; init; }
     public List<string> ImplementedInterfaces { get; init; } = new();
     public List<string> InjectedServices { get; init; } = new();

@@ -243,6 +243,27 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void TypeNodes_SayWhetherTheyAreInterfaces()
+    {
+        // An interface that DI never registers is a plain Class node, so without
+        // the flag it reads as a class: measured 30 of 37 on one app. The flag is
+        // stamped on every type, so a graph built before it existed is told apart
+        // from a class by the property being absent rather than false.
+        var plainInterface = Type(_solutionGraph!, "SampleLib.IGreeter");
+        var registeredInterface = Type(_solutionGraph!, "SampleLib.ICatalogStore");
+        var implementation = Type(_solutionGraph!, "SampleLib.Greeter");
+
+        Assert.Equal(NodeType.Class, plainInterface.Type);
+        Assert.True(plainInterface.GetProperty<bool>("isInterface"));
+        Assert.True(registeredInterface.GetProperty<bool>("isInterface"));
+        Assert.False(implementation.GetProperty<bool>("isInterface"));
+        Assert.True(implementation.Properties.ContainsKey("isInterface"));
+    }
+
+    private static GraphNode Type(CodeGraph graph, string fullName) =>
+        graph.Nodes.Single(n => n.GetProperty<string>("fullName") == fullName);
+
+    [Fact]
     public void CoversEdges_FollowInterfaceDispatch()
     {
         // The test binds to IGreeter.Greet and never names Greeter.Greet. Coverage

@@ -63,6 +63,9 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
         // internal one, and every question about a type's reach has to fall
         // back to reading source.
         node.SetProperty("isPublic", sym.IsPublic);
+        // Always stamped, like isPublic: on a graph built before the flag existed the
+        // property is absent, which is distinguishable from false.
+        node.SetProperty("isInterface", sym.IsInterface);
         if (sym.Project != null) node.SetProperty("project", sym.Project);
         if (sym.BaseType != null) node.SetProperty("baseType", sym.BaseType);
         if (sym.GeneratedFrom != null) node.SetProperty("generatedFrom", sym.GeneratedFrom);
