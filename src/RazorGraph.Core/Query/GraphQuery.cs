@@ -291,10 +291,24 @@ public sealed class GraphQuery
         // decision into forty lines of worklist.
         var reportedTypes = candidates.Where(IsDeclaredType).Select(n => n.Id).ToHashSet(StringComparer.Ordinal);
 
+        // Two more member cases carry no action, learned by running the result
+        // as an edit plan on this repo. A public member of a type that is not
+        // itself public (a private nested record's synthesized constructor) is
+        // already unreachable; and an interface member takes no modifier at all,
+        // so the only narrowing available is the interface's own, which is
+        // reported in its own right when nothing external needs it.
+        bool Narrowable(GraphNode member)
+        {
+            if (!ownerOf.TryGetValue(member.Id, out var ownerId)) return true;
+            if (reportedTypes.Contains(ownerId)) return false;
+            if (_graph.GetNode(ownerId) is not { } owner) return true;
+            if (!owner.GetProperty<bool>("isPublic")) return false;
+            var ownerIsInterface = owner.GetProperty<bool>("isInterface") || owner.Type == NodeType.ServiceInterface;
+            return !(ownerIsInterface && member.GetProperty<bool>("isAbstract"));
+        }
+
         return candidates
-            .Where(n => IsDeclaredType(n)
-                        || !ownerOf.TryGetValue(n.Id, out var owner)
-                        || !reportedTypes.Contains(owner))
+            .Where(n => IsDeclaredType(n) || Narrowable(n))
             .Select(n => new ExcessVisibility(
                 n,
                 consumers.TryGetValue(n.Id, out var seen) ? seen.ToList() : Array.Empty<string>()))

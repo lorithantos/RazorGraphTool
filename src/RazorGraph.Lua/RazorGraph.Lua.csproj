@@ -37,4 +37,10 @@
     <ProjectReference Include="..\RazorGraph.Core\RazorGraph.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Tests reach internals directly; nothing else does. A type is not made
+         public merely to be testable. -->
+    <InternalsVisibleTo Include="RazorGraph.Tests" />
+  </ItemGroup>
+
 </Project>

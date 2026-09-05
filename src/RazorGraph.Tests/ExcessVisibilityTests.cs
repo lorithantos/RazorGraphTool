@@ -227,4 +227,46 @@ public class ExcessVisibilityTests
 
         Assert.All(found, r => Assert.Equal("Lib", r.Node.GetProperty<string>("project")));
     }
+
+    [Fact]
+    public void Excludes_PublicMembersOfTypesThatAreNotPublic()
+    {
+        // A private nested record's synthesized constructor is declared public
+        // and reaches nothing: there is no edit to make. Found by turning the
+        // result into an edit plan and reading "private sealed record" at the
+        // line the plan wanted to narrow.
+        var g = BuildGraph();
+        g.AddNode(Type("type:Lib.Hidden", "Hidden", "Lib", isPublic: false));
+        g.AddNode(Method("m:Lib.Hidden..ctor()", ".ctor", "Lib"));
+        Contains(g, "type:Lib.Hidden", "m:Lib.Hidden..ctor()");
+
+        Assert.DoesNotContain("m:Lib.Hidden..ctor()",
+            new GraphQuery(g).FindExcessVisibility("Lib").Select(r => r.Node.Id));
+    }
+
+    [Fact]
+    public void Excludes_InterfaceMembers_WhenTheInterfaceItselfIsRequired()
+    {
+        // An interface member takes no modifier, so the only narrowing is the
+        // interface's own. IPort is required (App calls Close through it), so
+        // Open -- which nothing external calls -- must not be offered either.
+        var g = BuildGraph();
+        var port = Type("type:Lib.IPort", "IPort", "Lib");
+        port.SetProperty("isInterface", true);
+        g.AddNode(port);
+        var open = Method("m:Lib.IPort.Open()", "Open", "Lib");
+        open.SetProperty("isAbstract", true);
+        g.AddNode(open);
+        var close = Method("m:Lib.IPort.Close()", "Close", "Lib");
+        close.SetProperty("isAbstract", true);
+        g.AddNode(close);
+        Contains(g, "type:Lib.IPort", "m:Lib.IPort.Open()");
+        Contains(g, "type:Lib.IPort", "m:Lib.IPort.Close()");
+        Calls(g, "m:App.Caller.Go()", "m:Lib.IPort.Close()");
+
+        var found = new GraphQuery(g).FindExcessVisibility("Lib").Select(r => r.Node.Id).ToList();
+
+        Assert.DoesNotContain("type:Lib.IPort", found);
+        Assert.DoesNotContain("m:Lib.IPort.Open()", found);
+    }
 }

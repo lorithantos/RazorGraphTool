@@ -34,4 +34,10 @@
     <ProjectReference Include="..\RazorGraph.Lua\RazorGraph.Lua.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Tests reach internals directly; nothing else does. A type is not made
+         public merely to be testable. -->
+    <InternalsVisibleTo Include="RazorGraph.Tests" />
+  </ItemGroup>
+
 </Project>
