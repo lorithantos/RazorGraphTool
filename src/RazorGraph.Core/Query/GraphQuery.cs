@@ -258,62 +258,102 @@ public sealed class GraphQuery
             if (ownerOf.TryGetValue(edge.ToId, out var owner)) required.Add(owner);
         }
 
-        // Propagate to a fixed point: anything a required method's signature
-        // names, and the type holding a required member, is required too.
-        var signatureRefs = _graph.Edges
-            .Where(e => e.Type == EdgeType.References && e.GetProperty<bool>("signature"))
+        // What a member exposes: a method's return and parameter types
+        // (signature=true) and a property's or field's declared type.
+        var exposes = _graph.Edges
+            .Where(e => e.Type == EdgeType.References)
+            .Where(e => e.GetProperty<bool>("signature")
+                        || _graph.GetNode(e.FromId)?.Type is NodeType.Property or NodeType.Field)
             .ToList();
 
+        bool InProject(GraphNode n) => project == null ||
+            string.Equals(n.GetProperty<string>("project"), project, StringComparison.OrdinalIgnoreCase);
+
+        bool IsInterface(GraphNode n) => n.GetProperty<bool>("isInterface") || n.Type == NodeType.ServiceInterface;
+
+        // The fixed point has two halves, and the second is what makes the result
+        // compile when applied. First: anything a required member exposes, and
+        // the type holding a required member, is required. Second: anything that
+        // will STAY public once the report is applied -- a property of a required
+        // type, an interface member, a member outside the requested project, a
+        // member of a type not being reported -- pins what it exposes just as a
+        // required member does, because the compiler will hold it to the same
+        // accessibility rule. Measured on this repo before the second half: 24 of
+        // 105 offered narrowings failed CS0050/51/53 for exactly this reason.
+        List<GraphNode> reported;
         bool grew;
         do
         {
             grew = false;
-            foreach (var edge in signatureRefs)
+            foreach (var edge in exposes)
                 if (required.Contains(edge.FromId) && required.Add(edge.ToId))
                     grew = true;
 
             foreach (var (child, owner) in ownerOf)
                 if (required.Contains(child) && required.Add(owner))
                     grew = true;
+
+            reported = Report();
+            var reportedIds = reported.Select(n => n.Id).ToHashSet(StringComparer.Ordinal);
+
+            foreach (var edge in exposes)
+                if (StaysPublic(edge.FromId, reportedIds) && required.Add(edge.ToId))
+                    grew = true;
         }
         while (grew);
 
-        var candidates = _graph.Nodes
-            .Where(n => n.GetProperty<bool>("isPublic"))
-            .Where(n => project == null ||
-                        string.Equals(n.GetProperty<string>("project"), project, StringComparison.OrdinalIgnoreCase))
-            .Where(n => !required.Contains(n.Id))
-            .Where(n => includeMembers || IsDeclaredType(n) || n.Type == NodeType.Method)
-            .ToList();
-
-        // A member whose own type is already reported adds nothing: narrowing
-        // the type narrows everything inside it, and listing both turns one
-        // decision into forty lines of worklist.
-        var reportedTypes = candidates.Where(IsDeclaredType).Select(n => n.Id).ToHashSet(StringComparer.Ordinal);
-
-        // Two more member cases carry no action, learned by running the result
-        // as an edit plan on this repo. A public member of a type that is not
-        // itself public (a private nested record's synthesized constructor) is
-        // already unreachable; and an interface member takes no modifier at all,
-        // so the only narrowing available is the interface's own, which is
-        // reported in its own right when nothing external needs it.
-        bool Narrowable(GraphNode member)
-        {
-            if (!ownerOf.TryGetValue(member.Id, out var ownerId)) return true;
-            if (reportedTypes.Contains(ownerId)) return false;
-            if (_graph.GetNode(ownerId) is not { } owner) return true;
-            if (!owner.GetProperty<bool>("isPublic")) return false;
-            var ownerIsInterface = owner.GetProperty<bool>("isInterface") || owner.Type == NodeType.ServiceInterface;
-            return !(ownerIsInterface && member.GetProperty<bool>("isAbstract"));
-        }
-
-        return candidates
-            .Where(n => IsDeclaredType(n) || Narrowable(n))
+        return reported
             .Select(n => new ExcessVisibility(
                 n,
                 consumers.TryGetValue(n.Id, out var seen) ? seen.ToList() : Array.Empty<string>()))
             .OrderBy(r => r.Node.DisplayType, StringComparer.Ordinal)
             .ThenBy(r => r.Node.Name, StringComparer.Ordinal);
+
+        // Reachable from outside once the report is applied: declared public,
+        // every type up the containment chain public and not itself narrowed.
+        bool StaysPublic(string id, HashSet<string> reportedIds)
+        {
+            for (var cursor = id; ; )
+            {
+                if (reportedIds.Contains(cursor)) return false;
+                if (_graph.GetNode(cursor) is not { } node || !node.GetProperty<bool>("isPublic")) return false;
+                if (!ownerOf.TryGetValue(cursor, out var owner)) return true;
+                cursor = owner;
+            }
+        }
+
+        List<GraphNode> Report()
+        {
+            var candidates = _graph.Nodes
+                .Where(n => n.GetProperty<bool>("isPublic"))
+                .Where(InProject)
+                .Where(n => !required.Contains(n.Id))
+                .Where(n => includeMembers || IsDeclaredType(n) || n.Type == NodeType.Method)
+                .ToList();
+
+            // A member whose own type is already reported adds nothing: narrowing
+            // the type narrows everything inside it, and listing both turns one
+            // decision into forty lines of worklist.
+            var reportedTypes = candidates.Where(IsDeclaredType).Select(n => n.Id).ToHashSet(StringComparer.Ordinal);
+
+            // Two more member cases carry no action, learned by running the result
+            // as an edit plan on this repo. A public member of a type that is not
+            // itself public (a private nested record's synthesized constructor) is
+            // already unreachable; and an interface member -- abstract or with a
+            // default body -- takes no modifier at all, so the only narrowing
+            // available is the interface's own, reported in its own right when
+            // nothing external needs it.
+            bool Narrowable(GraphNode member)
+            {
+                if (!ownerOf.TryGetValue(member.Id, out var ownerId)) return true;
+                if (reportedTypes.Contains(ownerId)) return false;
+                if (_graph.GetNode(ownerId) is not { } owner) return true;
+                if (!owner.GetProperty<bool>("isPublic")) return false;
+                return !IsInterface(owner);
+            }
+
+            return candidates.Where(n => IsDeclaredType(n) || Narrowable(n)).ToList();
+        }
     }
 
     /// <summary>

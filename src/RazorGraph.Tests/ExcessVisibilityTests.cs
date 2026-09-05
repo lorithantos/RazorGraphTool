@@ -269,4 +269,71 @@ public class ExcessVisibilityTests
         Assert.DoesNotContain("type:Lib.IPort", found);
         Assert.DoesNotContain("m:Lib.IPort.Open()", found);
     }
+
+    [Fact]
+    public void Excludes_InterfaceMembersWithDefaultBodies()
+    {
+        // A default-bodied interface member is not abstract, and it still takes
+        // no modifier. Found as four ILuaHost members offered on this repo.
+        var g = BuildGraph();
+        var port = Type("type:Lib.IPort", "IPort", "Lib");
+        port.SetProperty("isInterface", true);
+        g.AddNode(port);
+        g.AddNode(Method("m:Lib.IPort.Describe()", "Describe", "Lib"));
+        Contains(g, "type:Lib.IPort", "m:Lib.IPort.Describe()");
+        Calls(g, "m:App.Caller.Go()", "m:Lib.IPort.Describe()");
+
+        Assert.DoesNotContain("m:Lib.IPort.Describe()",
+            new GraphQuery(g).FindExcessVisibility("Lib").Select(r => r.Node.Id));
+    }
+
+    [Fact]
+    public void Pins_TypesExposedByPropertiesOfRequiredTypes()
+    {
+        // Used stays public (App calls it). Its Shape property is not reported
+        // -- properties never are by default -- so it stays public too, and the
+        // compiler will refuse a public property of an internal type (CS0053).
+        // Before this rule the audit offered Shape and the build rejected it.
+        var g = BuildGraph();
+        g.AddNode(Type("type:Lib.Shape", "Shape", "Lib"));
+        var prop = new GraphNode { Id = "prop:Lib.Used.Shape", Type = NodeType.Property, Name = "Shape" };
+        prop.SetProperty("project", "Lib");
+        prop.SetProperty("isPublic", true);
+        g.AddNode(prop);
+        Contains(g, "type:Lib.Used", "prop:Lib.Used.Shape");
+        g.AddEdge(new GraphEdge { FromId = "prop:Lib.Used.Shape", ToId = "type:Lib.Shape", Type = EdgeType.References });
+
+        var found = new GraphQuery(g).FindExcessVisibility("Lib").Select(r => r.Node.Id).ToList();
+
+        Assert.DoesNotContain("type:Lib.Shape", found);
+        // The rule is about what STAYS public: a property of a type that is
+        // itself narrowed pins nothing, so the same shape on Unused still reports.
+        Assert.Contains("type:Lib.Unused", found);
+    }
+
+    [Fact]
+    public void Pins_TypesExposedByInterfaceMembers()
+    {
+        // IPort is required through Close. Open is never called from outside,
+        // but it cannot be narrowed (no modifier), so the Packet it returns
+        // stays exposed and must not be offered (CS0050 otherwise).
+        var g = BuildGraph();
+        var port = Type("type:Lib.IPort", "IPort", "Lib");
+        port.SetProperty("isInterface", true);
+        g.AddNode(port);
+        g.AddNode(Type("type:Lib.Packet", "Packet", "Lib"));
+        var open = Method("m:Lib.IPort.Open()", "Open", "Lib");
+        open.SetProperty("isAbstract", true);
+        g.AddNode(open);
+        var close = Method("m:Lib.IPort.Close()", "Close", "Lib");
+        close.SetProperty("isAbstract", true);
+        g.AddNode(close);
+        Contains(g, "type:Lib.IPort", "m:Lib.IPort.Open()");
+        Contains(g, "type:Lib.IPort", "m:Lib.IPort.Close()");
+        Calls(g, "m:App.Caller.Go()", "m:Lib.IPort.Close()");
+        SignatureRef(g, "m:Lib.IPort.Open()", "type:Lib.Packet");
+
+        Assert.DoesNotContain("type:Lib.Packet",
+            new GraphQuery(g).FindExcessVisibility("Lib").Select(r => r.Node.Id));
+    }
 }
