@@ -226,6 +226,10 @@ public sealed class GraphBuilder : IAsyncDisposable
 
         _usage.AddCallEdges(_roslyn.ExtractCallSites());
         _usage.AddMemberAccessEdges(_roslyn.ExtractMemberAccesses());
+        // After every declaration is a node: the name index a quoted string is
+        // matched against is built from the graph, so anything emitted later
+        // would be invisible to it.
+        _usage.AddQuotesEdges(_roslyn.ExtractQuotedNames());
         _usage.AddCallbackEntryPoints(_roslyn.ExtractCallbackTargets());
         _escapes.AddExceptionEscapeEdges(_declarations.MethodThrows);
     }

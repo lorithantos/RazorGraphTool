@@ -445,6 +445,23 @@ public sealed class RoslynExtractor : IAsyncDisposable
     }
 
     /// <summary>
+    /// Every string a member produces, attributed to that member; see
+    /// QuotedNameScanner. Unfiltered -- whether a string NAMES anything is the
+    /// emitter's question, because only it holds the whole solution's names.
+    /// </summary>
+    internal IEnumerable<QuotedName> ExtractQuotedNames()
+    {
+        if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
+
+        foreach (var (root, model) in _loaded.SelectMany(
+                     l => l.Compilation.SyntaxTrees.Select(t => (t.GetRoot(), l.Compilation.GetSemanticModel(t)))))
+        {
+            foreach (var quoted in QuotedNameScanner.TreeQuotedNames(root, model))
+                yield return quoted;
+        }
+    }
+
+    /// <summary>
     /// Methods that out-of-solution code can call back into; see
     /// CallSiteScanner.CallbackTargets.
     /// </summary>

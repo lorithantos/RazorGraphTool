@@ -64,6 +64,19 @@ public enum EdgeType
     Produces,
     BoundBy,
 
+    // Naming by string. Emitted from the code that produces a string to the declared node
+    // whose NAME that string matches, carrying the value, the line, and the provenance --
+    // nameof, a typed literal, an attribute argument, or an interpolated segment.
+    //
+    // The provenance is the finding, not decoration: nameof survives a rename and a typed
+    // literal does not, so the identical coupling is a fact in one case and a latent break
+    // in the other. Only strings that match a declared name are edges at all; the rest are
+    // prose, and indexing them would bury the signal under every message in the codebase.
+    //
+    // This is the general form of what DomSelectedBy and ViewDataReadBy do for one boundary
+    // each: state crossing a seam by name, where a rename breaks one side silently.
+    Quotes,
+
     // Annotation. Emitted from a decorated node -- type, method, property, field, parameter or
     // project -- to the attribute's type, carrying the arguments as written, the line, and which
     // target the attribute actually hit. One edge per USAGE, not per attribute type: [Theory]

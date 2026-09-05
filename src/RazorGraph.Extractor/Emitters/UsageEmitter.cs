@@ -47,6 +47,66 @@ internal sealed class UsageEmitter(CodeGraph graph)
         }
     }
 
+    /// <summary>
+    /// Emits Quotes edges: from the code that produces a string to the declared
+    /// node whose name that string matches.
+    ///
+    /// MATCHING IS BY NAME, which is the whole idea and also the whole risk. A
+    /// string that matches nothing declared is dropped -- that is what keeps a
+    /// report about coupling from becoming an index of every message in the
+    /// codebase. A string that matches several declarations gets an edge to each,
+    /// because the graph cannot know which one the author meant and guessing
+    /// would turn a reported fact into a reported opinion.
+    ///
+    /// Runs after every declaration is a node, and on a solution build that means
+    /// the index spans projects -- which is the point. The question worth asking
+    /// is whether a project names another project's vocabulary without
+    /// referencing it, and no per-project analyzer can ask it: compiling the
+    /// quoting project, the quoted names are not in scope. That absence is the
+    /// seam working correctly, and it is exactly what blocks the check.
+    /// </summary>
+    internal void AddQuotesEdges(IEnumerable<QuotedName> quoted)
+    {
+        var byName = graph.Nodes
+            .Where(Nameable)
+            .GroupBy(n => n.Name, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Select(n => n.Id).ToList(), StringComparer.Ordinal);
+
+        // One edge per (source, target, provenance). The same name typed twice in
+        // one method is one coupling; a name that is both a nameof and a literal
+        // in the same method is two facts, because only one of them will survive
+        // a rename.
+        var seen = new HashSet<(string From, string To, string Provenance)>();
+
+        foreach (var quote in quoted)
+        {
+            if (!graph.HasNode(quote.FromId)) continue;
+            if (!byName.TryGetValue(quote.Value, out var targets)) continue;
+
+            foreach (var toId in targets)
+            {
+                // A declaration naming itself -- a property whose attribute
+                // repeats its own name -- is not coupling between two places.
+                if (toId == quote.FromId) continue;
+                if (!seen.Add((quote.FromId, toId, quote.Provenance))) continue;
+
+                var edge = new GraphEdge { FromId = quote.FromId, ToId = toId, Type = EdgeType.Quotes };
+                edge.Properties["value"] = quote.Value;
+                edge.Properties["provenance"] = quote.Provenance;
+                edge.Properties["line"] = quote.Line;
+                graph.AddEdge(edge);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Nodes whose name a string could plausibly be naming. Constructors are
+    /// excluded: ".ctor" is an id spelling, never something anyone types.
+    /// </summary>
+    private static bool Nameable(GraphNode node) =>
+        node.Type is not (NodeType.Project or NodeType.Parameter)
+        && !node.Name.StartsWith('.');
+
     internal void AddMemberAccessEdges(IEnumerable<MemberAccessInfo> accesses)
     {
         // One Reads and/or one Writes edge per accessor→member pair, matching

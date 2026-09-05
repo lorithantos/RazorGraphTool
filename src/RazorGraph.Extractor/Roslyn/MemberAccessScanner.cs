@@ -41,73 +41,13 @@ internal static class MemberAccessScanner
             var toId = SymbolIds.MemberId(def);
             var (isRead, isWrite) = ClassifyAccess(TopAccessExpression(name));
 
-            foreach (var fromId in AccessAttribution(name, model))
+            foreach (var fromId in SyntaxAttribution.OwningNodeIds(name, model))
             {
                 if (fromId == toId) continue; // self-access adds no navigational value
                 yield return new MemberAccessInfo(fromId, toId, isRead, isWrite);
             }
         }
     }
-
-    /// <summary>
-    /// The node ids an access at <paramref name="site"/> belongs to. Usually
-    /// one; every instance ctor for a member-initializer access (the same
-    /// overapproximation CallSiteScanner.InitializerCallSites documents); none
-    /// when the access sits somewhere with no node to own it.
-    /// </summary>
-    private static IEnumerable<string> AccessAttribution(SyntaxNode site, SemanticModel model)
-    {
-        for (var node = site.Parent; node != null; node = node.Parent)
-        {
-            switch (node)
-            {
-                // A member initializer runs in the instance ctors, not in the
-                // member it initializes. Locals' and parameters' EqualsValue
-                // clauses fall through to the enclosing method instead.
-                case EqualsValueClauseSyntax { Parent: PropertyDeclarationSyntax prop } clause
-                    when prop.Initializer == clause:
-                    return prop.Modifiers.Any(SyntaxKind.StaticKeyword)
-                        ? Enumerable.Empty<string>()
-                        : InstanceCtorIds(prop, model);
-
-                case EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax { Parent.Parent: FieldDeclarationSyntax field } }:
-                    return field.Modifiers.Any(SyntaxKind.StaticKeyword)
-                        ? Enumerable.Empty<string>()
-                        : InstanceCtorIds(field, model);
-
-                case BaseMethodDeclarationSyntax methodDecl:
-                    return model.GetDeclaredSymbol(methodDecl) is IMethodSymbol m
-                        ? new[] { SymbolIds.MethodId(m) }
-                        : Enumerable.Empty<string>();
-
-                // Accessor bodies, expression bodies, and indexers all live
-                // under a BasePropertyDeclaration. Events land here too and
-                // yield nothing — they are not graph nodes.
-                case BasePropertyDeclarationSyntax propDecl:
-                    return model.GetDeclaredSymbol(propDecl) is IPropertySymbol p
-                        ? new[] { SymbolIds.MemberId(p) }
-                        : Enumerable.Empty<string>();
-
-                // Reaching the compilation unit means no member declaration owns
-                // the access — it is a top-level statement, and the code that
-                // runs it is the synthesized entry point. Last case in the walk,
-                // so an access inside any real member has already returned; and
-                // DeclaredMethod answers null for a unit with no global
-                // statements, which is every ordinary file.
-                case CompilationUnitSyntax unit:
-                    return TopLevelProgram.DeclaredMethod(unit, model) is { } entryPoint
-                        ? new[] { SymbolIds.MethodId(entryPoint) }
-                        : Enumerable.Empty<string>();
-            }
-        }
-        return Enumerable.Empty<string>();
-    }
-
-    private static IEnumerable<string> InstanceCtorIds(SyntaxNode memberDecl, SemanticModel model) =>
-        memberDecl.FirstAncestorOrSelf<TypeDeclarationSyntax>() is { } typeDecl
-        && model.GetDeclaredSymbol(typeDecl) is INamedTypeSymbol type
-            ? type.InstanceConstructors.Select(SymbolIds.MethodId).Distinct()
-            : Enumerable.Empty<string>();
 
     /// <summary>
     /// The outermost expression this name participates in as a value: the

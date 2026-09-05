@@ -263,6 +263,81 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     private static GraphNode Type(CodeGraph graph, string fullName) =>
         graph.Nodes.Single(n => n.GetProperty<string>("fullName") == fullName);
 
+    // ---- Quoted names --------------------------------------------------------
+
+    /// <summary>Quotes edges out of one method of the NameCoupling fixture.</summary>
+    private static List<GraphEdge> QuotesFrom(string method) =>
+        _solutionGraph!.Outgoing(Method(_solutionGraph, "SampleWeb.NameCoupling", method).Id)
+            .Where(e => e.Type == EdgeType.Quotes)
+            .ToList();
+
+    [Fact]
+    public void QuotesEdges_LinkATypedNameToTheDeclarationItNames()
+    {
+        // "CatalogStore" is a string in SampleWeb naming a type in SampleLib.
+        // Nothing in the compiler's model connects the two, which is the point:
+        // renaming the type leaves this string spelling the old name.
+        var edge = Assert.Single(QuotesFrom("TypedName"));
+
+        Assert.Equal(Type(_solutionGraph!, "SampleLib.CatalogStore").Id, edge.ToId);
+        Assert.Equal("CatalogStore", edge.GetProperty<string>("value"));
+        Assert.Equal("literal", edge.GetProperty<string>("provenance"));
+        Assert.True(edge.GetProperty<int>("line") > 0);
+    }
+
+    [Fact]
+    public void QuotesEdges_TellTheSafeFormFromTheBreakableOne()
+    {
+        // nameof(SampleLib.CatalogStore) is the identical coupling to the string
+        // above and is not a defect, because a rename rewrites it. An IL reader
+        // cannot separate them; this is why the scan is over syntax.
+        var edge = Assert.Single(QuotesFrom("SafeName"));
+
+        Assert.Equal(Type(_solutionGraph!, "SampleLib.CatalogStore").Id, edge.ToId);
+        Assert.Equal("nameof", edge.GetProperty<string>("provenance"));
+    }
+
+    [Fact]
+    public void QuotesEdges_CoverInterpolatedSegmentsAndAttributeArguments()
+    {
+        var interpolated = Assert.Single(QuotesFrom("Interpolated"));
+        Assert.Equal("Normalize", interpolated.GetProperty<string>("value"));
+        Assert.Equal("interpolated", interpolated.GetProperty<string>("provenance"));
+
+        // An attribute argument fails differently: the build stays green and the
+        // framework binding silently stops happening.
+        var attributed = Assert.Single(QuotesFrom("Attributed"));
+        Assert.Equal("PriceBook", attributed.GetProperty<string>("value"));
+        Assert.Equal("attributeArgument", attributed.GetProperty<string>("provenance"));
+    }
+
+    [Fact]
+    public void QuotesEdges_IgnoreStringsThatNameNothing()
+    {
+        // Prose is most of the strings in any codebase. Indexing it would bury
+        // every real finding under every message in the solution.
+        Assert.Empty(QuotesFrom("Prose"));
+    }
+
+    [Fact]
+    public void FindQuotedSymbols_DefaultsToTheBreakableCrossProjectSet()
+    {
+        var query = new GraphQuery(_solutionGraph!);
+
+        var breakable = query.FindQuotedSymbols().ToList();
+        Assert.Contains(breakable, q => q.Value == "CatalogStore" && q.Provenance == "literal");
+        Assert.DoesNotContain(breakable, q => q.Provenance == "nameof");
+
+        // The safe form is present in the graph either way; only the report hides it.
+        Assert.Contains(query.FindQuotedSymbols(includeSafe: true), q => q.Provenance == "nameof");
+
+        // Scoping to the quoting side's project is by the FROM node.
+        Assert.All(query.FindQuotedSymbols(project: "SampleWeb"),
+            q => Assert.Equal("SampleWeb", q.From.GetProperty<string>("project")));
+        Assert.DoesNotContain(query.FindQuotedSymbols(project: "SampleLib"),
+            q => q.From.GetProperty<string>("declaringType") == "SampleWeb.NameCoupling");
+    }
+
     [Fact]
     public void AttributedDeclarations_ReportTheirOwnLine_NotTheAttributes()
     {

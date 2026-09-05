@@ -199,6 +199,17 @@ internal sealed record MemberAccessInfo(
     bool IsWrite);
 
 /// <summary>
+/// One string a member produces, before anything has decided whether it names
+/// something. ToId is absent on purpose: matching needs the solution-wide name
+/// index, which exists only once every declaration is a node.
+/// </summary>
+internal sealed record QuotedName(
+    string FromId,
+    string Value,
+    string Provenance,
+    int Line);
+
+/// <summary>
 /// A method as a graph node: identity, location, and the shape a reader needs to
 /// decide whether to open the file.
 /// </summary>

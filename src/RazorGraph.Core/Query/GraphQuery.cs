@@ -166,6 +166,53 @@ public sealed class GraphQuery
     }
 
     /// <summary>
+    /// One place code names a declared symbol with a string: who names it, what
+    /// is named, the text, where, and in which form.
+    /// </summary>
+    public sealed record QuotedSymbol(
+        GraphNode From, GraphNode To, string Value, string Provenance, int Line);
+
+    /// <summary>
+    /// Where code names a declared symbol with a string rather than referencing
+    /// it. The coupling is real and the compiler cannot see it, so a rename
+    /// breaks one side and nothing reports it until the behaviour is wrong.
+    ///
+    /// Two filters, both defaulting to the high-signal answer rather than the
+    /// complete one. nameof is excluded because it survives a rename: it is the
+    /// same coupling in the form that is not a latent break, and listing it
+    /// beside the breakable forms makes the report read as noise. Same-project
+    /// naming is excluded because a seam is the question — a project naming
+    /// another project's vocabulary without referencing it is the case no
+    /// per-compilation analyzer can even ask, since compiling the quoting
+    /// project those names are not in scope.
+    /// </summary>
+    /// <param name="project">Restrict to strings produced by code in this project.</param>
+    /// <param name="includeSafe">Include nameof, which a rename carries along.</param>
+    /// <param name="sameProject">Include strings naming a symbol in their own project.</param>
+    public IEnumerable<QuotedSymbol> FindQuotedSymbols(
+        string? project = null, bool includeSafe = false, bool sameProject = false)
+    {
+        foreach (var edge in _graph.Edges.Where(e => e.Type == EdgeType.Quotes))
+        {
+            var provenance = edge.GetProperty<string>("provenance") ?? "literal";
+            if (!includeSafe && provenance == "nameof") continue;
+
+            if (_graph.GetNode(edge.FromId) is not { } from) continue;
+            if (_graph.GetNode(edge.ToId) is not { } to) continue;
+
+            var fromProject = from.GetProperty<string>("project");
+            if (project != null && !string.Equals(fromProject, project, StringComparison.OrdinalIgnoreCase)) continue;
+
+            if (!sameProject &&
+                string.Equals(fromProject, to.GetProperty<string>("project"), StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            yield return new QuotedSymbol(
+                from, to, edge.GetProperty<string>("value") ?? to.Name, provenance, edge.GetProperty<int>("line"));
+        }
+    }
+
+    /// <summary>
     /// One node whose declared visibility exceeds its observed reach, with the
     /// projects that do consume it — always its own assembly, or nothing.
     /// </summary>
