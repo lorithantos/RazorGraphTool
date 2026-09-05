@@ -11,6 +11,12 @@ public interface IGreeter
     string Greet(string name);
 }
 
+/// <summary>
+/// Attributed on purpose: attributes are part of the declaration node, so a
+/// node's line used to be the attribute's. DebuggerDisplay is inert -- it warns
+/// about nothing and changes no extraction.
+/// </summary>
+[System.Diagnostics.DebuggerDisplay("greeter")]
 public class Greeter : IGreeter
 {
     public string Greet(string name) => Shape(name);

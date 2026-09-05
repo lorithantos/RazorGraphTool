@@ -264,6 +264,28 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         graph.Nodes.Single(n => n.GetProperty<string>("fullName") == fullName);
 
     [Fact]
+    public void AttributedDeclarations_ReportTheirOwnLine_NotTheAttributes()
+    {
+        // Attributes are part of the declaration node, not leading trivia, so a
+        // syntax reference's span starts at the '[' and every attributed node
+        // reported the attribute's line. Asserted against the source itself
+        // rather than a hardcoded number, so editing the fixture cannot make
+        // this pass by accident.
+        var attributedType = Type(_solutionGraph!, "SampleLib.Greeter");
+        Assert.Contains("class Greeter", SourceLine(attributedType), StringComparison.Ordinal);
+
+        var attributedMethod = Method(_solutionGraph!, "SampleWeb.Tests.GreeterTests", "Greet_ThroughTheInterface");
+        Assert.Contains("void Greet_ThroughTheInterface", SourceLine(attributedMethod), StringComparison.Ordinal);
+
+        // An unattributed declaration was always right and must stay right.
+        Assert.Contains("string Greet(", SourceLine(Method(_solutionGraph!, "SampleLib.Greeter", "Greet")));
+    }
+
+    /// <summary>The one line of source a node points at, read from disk.</summary>
+    private static string SourceLine(GraphNode node) =>
+        File.ReadAllLines(node.FilePath!)[node.LineStart!.Value - 1];
+
+    [Fact]
     public void Methods_SayWhenTheirAccessibilityIsNotTheirOwn()
     {
         // An override takes the base declaration's accessibility; a positional

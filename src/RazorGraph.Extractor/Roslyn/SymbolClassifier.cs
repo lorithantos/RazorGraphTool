@@ -190,8 +190,33 @@ internal static class SymbolClassifier
     {
         var syntaxRef = symbol.DeclaringSyntaxReferences.FirstOrDefault();
         if (syntaxRef == null) return (symbol.Locations.FirstOrDefault()?.SourceTree?.FilePath, null, null);
-        var span = syntaxRef.SyntaxTree.GetMappedLineSpan(syntaxRef.Span);
+        var span = DeclarationSpan(syntaxRef);
         return (span.Path, span.StartLinePosition.Line + 1, span.EndLinePosition.Line + 1);
+    }
+
+    /// <summary>
+    /// Where the declaration itself begins, mapped through any #line directive.
+    ///
+    /// Attributes are part of the declaration node rather than leading trivia,
+    /// so a syntax reference's own span starts at the '[' — and every attributed
+    /// declaration reported the attribute's line as its own. A caller who opens
+    /// the node lands a line or more above what they asked for, and on this repo
+    /// that was every [McpServerToolType] class and every [Fact] test method.
+    /// The end is left alone: it is the closing brace either way.
+    /// </summary>
+    private static FileLinePositionSpan DeclarationSpan(SyntaxReference syntaxRef)
+    {
+        var span = syntaxRef.Span;
+        if (syntaxRef.GetSyntax() is MemberDeclarationSyntax { AttributeLists.Count: > 0 } member)
+        {
+            // The first child that is not an attribute list: a modifier, or the
+            // return type / keyword when the declaration carries no modifier.
+            var declaration = member.ChildNodesAndTokens()
+                .FirstOrDefault(child => child.AsNode() is not AttributeListSyntax);
+            if (declaration != default)
+                span = Microsoft.CodeAnalysis.Text.TextSpan.FromBounds(declaration.SpanStart, span.End);
+        }
+        return syntaxRef.SyntaxTree.GetMappedLineSpan(span);
     }
 
     private static List<PropertyInfo> ExtractProperties(INamedTypeSymbol symbol, AttributePolicy policy) =>
@@ -269,7 +294,7 @@ internal static class SymbolClassifier
             var syntaxRef = member.DeclaringSyntaxReferences.FirstOrDefault();
             if (syntaxRef != null)
             {
-                var span = syntaxRef.SyntaxTree.GetMappedLineSpan(syntaxRef.Span);
+                var span = DeclarationSpan(syntaxRef);
                 detail = detail with
                 {
                     FilePath = span.Path,
@@ -382,7 +407,7 @@ internal static class SymbolClassifier
                 // .cshtml; generated scaffolding keeps its .g.cs path.
                 FileLinePositionSpan? mapped = syntaxRef == null
                     ? null
-                    : syntaxRef.SyntaxTree.GetMappedLineSpan(syntaxRef.Span);
+                    : DeclarationSpan(syntaxRef);
                 // The scope holding this method's body: an ordinary declaration,
                 // or the compilation unit when the method is the synthesized
                 // entry point of a top-level program. Deliberately not "whatever
