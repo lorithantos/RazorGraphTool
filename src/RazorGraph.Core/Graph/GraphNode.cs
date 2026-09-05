@@ -34,6 +34,27 @@ public sealed class GraphNode
     public int? LineEnd { get; init; }
 
     /// <summary>
+    /// First line of this declaration's XML documentation comment, when it has
+    /// one. Absent means undocumented — which is a fact worth having, not a
+    /// missing value.
+    /// </summary>
+    /// <remarks>
+    /// The point of it is reading exactly the chunk you meant: <c>lineDocs ??
+    /// lineStart</c> through <c>lineEnd</c> is the member with its
+    /// documentation and nothing else, so a caller never has to open a file at
+    /// a line and guess how far down to go.
+    /// <para>
+    /// It sits above the attribute list as well as the declaration, because
+    /// attributes are part of the declaration node while the doc comment is
+    /// leading trivia. <see cref="LineStart"/> deliberately points at the
+    /// declaration rather than at the '[', so an attributed but UNDOCUMENTED
+    /// member has its attributes just above LineStart and no line here to catch
+    /// them.
+    /// </para>
+    /// </remarks>
+    public int? LineDocs { get; init; }
+
+    /// <summary>
     /// Type-agnostic properties. Keys are well-known per NodeType.
     /// </summary>
     public Dictionary<string, object> Properties { get; } = new();

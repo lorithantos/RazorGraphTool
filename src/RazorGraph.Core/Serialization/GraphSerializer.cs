@@ -56,6 +56,7 @@ public static class GraphSerializer
         FilePath = n.FilePath,
         LineStart = n.LineStart,
         LineEnd = n.LineEnd,
+        LineDocs = n.LineDocs,
         Properties = n.Properties,
         Labels = n.Labels
     };
@@ -147,7 +148,8 @@ public static class GraphSerializer
                 Name = n.Name,
                 FilePath = n.FilePath,
                 LineStart = n.LineStart,
-                LineEnd = n.LineEnd
+                LineEnd = n.LineEnd,
+                LineDocs = n.LineDocs
             };
             foreach (var p in n.Properties) node.Properties[p.Key] = NormalizeValue(p.Value);
             foreach (var l in n.Labels) node.Labels.Add(l);
@@ -326,6 +328,15 @@ public static class GraphSerializer
         public string? FilePath { get; set; }
         public int? LineStart { get; set; }
         public int? LineEnd { get; set; }
+
+        /// <summary>
+        /// Null on any graph saved before 2026-09-05, and on any declaration
+        /// with no documentation comment. The two are indistinguishable here on
+        /// purpose: a saved graph carries no build date of its own, so read an
+        /// absent value as "not known", never as "undocumented", unless you know
+        /// when the graph was built.
+        /// </summary>
+        public int? LineDocs { get; set; }
         public double? Relevance { get; set; }
         public Dictionary<string, object> Properties { get; set; } = new();
         public List<string> Labels { get; set; } = new();

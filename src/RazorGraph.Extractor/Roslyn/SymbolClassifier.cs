@@ -1,6 +1,7 @@
 namespace RazorGraph.Extractor.Roslyn;
 
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using RazorGraph.Core.Graph;
 using RazorGraph.Extractor.Attributes;
@@ -29,7 +30,7 @@ internal static class SymbolClassifier
 
         var baseType = symbol.BaseType?.ToDisplayString() ?? "";
         var interfaces = symbol.AllInterfaces.Select(i => i.ToDisplayString()).ToList();
-        var (filePath, lineStart, lineEnd) = GetLines(symbol);
+        var (filePath, lineStart, lineEnd, lineDocs) = GetLines(symbol);
 
         // PageModel detection
         if (baseType.Contains("PageModel") || baseType.Contains("Microsoft.AspNetCore.Mvc.RazorPages.PageModel"))
@@ -47,6 +48,7 @@ internal static class SymbolClassifier
                 FilePath = filePath,
                 LineStart = lineStart,
                 LineEnd = lineEnd,
+                LineDocs = lineDocs,
                 BaseType = baseType,
                 Properties = ExtractProperties(symbol, policy),
                 Methods = ExtractMethods(symbol),
@@ -73,6 +75,7 @@ internal static class SymbolClassifier
                 FilePath = filePath,
                 LineStart = lineStart,
                 LineEnd = lineEnd,
+                LineDocs = lineDocs,
                 BaseType = baseType,
                 Methods = ExtractControllerActions(symbol),
                 MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
@@ -97,6 +100,7 @@ internal static class SymbolClassifier
                 FilePath = filePath,
                 LineStart = lineStart,
                 LineEnd = lineEnd,
+                LineDocs = lineDocs,
                 ImplementedInterfaces = interfaces.Where(i => i.EndsWith("Service")).ToList(),
                 Methods = ExtractMethods(symbol),
                 MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
@@ -120,6 +124,7 @@ internal static class SymbolClassifier
                 FilePath = filePath,
                 LineStart = lineStart,
                 LineEnd = lineEnd,
+                LineDocs = lineDocs,
                 Properties = ExtractProperties(symbol, policy),
                 MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
                 MemberNodes = ExtractMemberNodes(symbol, inScope, policy)
@@ -145,6 +150,7 @@ internal static class SymbolClassifier
             FilePath = filePath,
             LineStart = lineStart,
             LineEnd = lineEnd,
+            LineDocs = lineDocs,
             BaseType = baseType,
             ImplementedInterfaces = interfaces,
             Properties = ExtractProperties(symbol, policy),
@@ -196,12 +202,45 @@ internal static class SymbolClassifier
     /// .g.cs path honestly — the generated marker downstream tells a reader
     /// which kind they are looking at.
     /// </summary>
-    private static (string? FilePath, int? Start, int? End) GetLines(INamedTypeSymbol symbol)
+    private static (string? FilePath, int? Start, int? End, int? Docs) GetLines(INamedTypeSymbol symbol)
     {
         var syntaxRef = symbol.DeclaringSyntaxReferences.FirstOrDefault();
-        if (syntaxRef == null) return (symbol.Locations.FirstOrDefault()?.SourceTree?.FilePath, null, null);
+        if (syntaxRef == null) return (symbol.Locations.FirstOrDefault()?.SourceTree?.FilePath, null, null, null);
         var span = DeclarationSpan(syntaxRef);
-        return (span.Path, span.StartLinePosition.Line + 1, span.EndLinePosition.Line + 1);
+        return (span.Path, span.StartLinePosition.Line + 1, span.EndLinePosition.Line + 1, DocumentationLine(syntaxRef));
+    }
+
+    /// <summary>
+    /// First line of the declaration's XML documentation comment, or null when
+    /// it has none.
+    /// </summary>
+    /// <remarks>
+    /// This is what lets a reader take exactly the chunk it meant. A node used
+    /// to say "line 91" and nothing else, so opening it meant guessing how far
+    /// down the member ran and how far up its documentation started; with this
+    /// and LineEnd, <c>lineDocs ?? lineStart</c> through <c>lineEnd</c> is the
+    /// member and its documentation, exactly.
+    /// <para>
+    /// Read from the whole declaration's leading trivia, which sits above the
+    /// attribute list — attributes are part of the declaration node, the doc
+    /// comment is trivia in front of it. Ordinary <c>//</c> comments are
+    /// deliberately not counted: a remark that happens to sit above a method is
+    /// not that method's documentation, and treating it as such would drag in
+    /// whatever unrelated text preceded it.
+    /// </para>
+    /// </remarks>
+    private static int? DocumentationLine(SyntaxReference syntaxRef)
+    {
+        var trivia = syntaxRef.GetSyntax().GetLeadingTrivia();
+        foreach (var t in trivia)
+        {
+            if (t.RawKind is (int)SyntaxKind.SingleLineDocumentationCommentTrivia
+                          or (int)SyntaxKind.MultiLineDocumentationCommentTrivia)
+            {
+                return syntaxRef.SyntaxTree.GetMappedLineSpan(t.FullSpan).StartLinePosition.Line + 1;
+            }
+        }
+        return null;
     }
 
     /// <summary>
@@ -310,7 +349,9 @@ internal static class SymbolClassifier
                 detail = detail with
                 {
                     FilePath = span.Path,
-                    LineStart = span.StartLinePosition.Line + 1
+                    LineStart = span.StartLinePosition.Line + 1,
+                    LineEnd = span.EndLinePosition.Line + 1,
+                    LineDocs = DocumentationLine(syntaxRef)
                 };
             }
             members.Add(detail);
@@ -524,6 +565,8 @@ internal static class SymbolClassifier
                     BoundaryCatchesFiltered = boundaryFiltered,
                     FilePath = mapped?.Path ?? m.Locations.FirstOrDefault()?.SourceTree?.FilePath,
                     LineStart = mapped?.StartLinePosition.Line + 1,
+                    LineEnd = mapped?.EndLinePosition.Line + 1,
+                    LineDocs = syntaxRef == null ? null : DocumentationLine(syntaxRef),
                     Attributes = ExtractMethodAttributes(m, inScope),
                     Parameters = ExtractParameterNodes(m, inScope)
                 };

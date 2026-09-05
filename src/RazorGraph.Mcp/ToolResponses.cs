@@ -39,12 +39,21 @@ internal static class ToolResponses
         fileWrittenSince = Stale(n, freshness)
     };
 
+    /// <summary>
+    /// <c>lineDocs</c> is the first line of the declaration's XML documentation
+    /// comment, absent when it has none. With <c>lineEnd</c> it makes the node
+    /// say what to read rather than only where to look: <c>lineDocs ??
+    /// lineStart</c> through <c>lineEnd</c> is the declaration and its
+    /// documentation, so a caller opens the exact chunk instead of a line
+    /// number and a guess.
+    /// </summary>
     internal static object NodeDetail(GraphNode n, GraphFreshness? freshness = null) => new
     {
         id = n.Id,
         type = n.DisplayType,
         name = n.Name,
         filePath = n.FilePath,
+        lineDocs = n.LineDocs,
         lineStart = n.LineStart,
         lineEnd = n.LineEnd,
         fileWrittenSince = Stale(n, freshness),

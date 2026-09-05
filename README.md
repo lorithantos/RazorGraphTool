@@ -92,6 +92,21 @@ and a filtered expansion reports `filteredTo` and `matching` beside the unfilter
 total — a narrowing argument must never change what the unasked-for half of an answer
 claims about itself.
 
+**A node says what to read, not just where to look.** Every node carries `lineStart`,
+`lineEnd`, and `lineDocs` — the first line of its XML documentation comment, absent when
+it has none. So `lineDocs ?? lineStart` through `lineEnd` is the declaration and its
+documentation and nothing else, and a caller opens the exact chunk instead of a line
+number and a guess about how far down to go. Absent `lineDocs` is a fact rather than a
+gap: that declaration is undocumented.
+
+One edge to know: attributes are part of the declaration node while the doc comment is
+leading trivia in front of it, and `lineStart` deliberately points at the declaration
+rather than at the `[`. So `lineDocs` clears the attribute list on a documented member,
+while an attributed *undocumented* member has its attributes sitting just above
+`lineStart`. Methods, properties and fields carried only `lineStart` before 2026-09-05;
+a graph saved earlier has no `lineEnd` on them and no `lineDocs` anywhere, and an absent
+value there means "not known", not "undocumented".
+
 > The server runs from the published `.mcp-bin` copy, not live build output, so
 > ordinary `dotnet build` keeps working while a session is attached. Code changes reach
 > the tools after a re-publish and a restart of the HTTP server; sessions reconnect on

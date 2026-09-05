@@ -932,6 +932,86 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         Assert.All(advertised, name => Assert.Contains(name, contained));
     }
 
+    // ---- The span a reader needs ----------------------------------------------
+
+    // A node used to say "line 91" and nothing else, so opening it meant
+    // guessing how far down the member ran and how far up its documentation
+    // started. lineDocs ?? lineStart through lineEnd is now the exact chunk.
+    // Asserted against the file rather than against constants, so the test
+    // proves the numbers point at the right text instead of matching whatever
+    // the fixture happened to say the day it was written.
+
+    private static string[] LinesOf(GraphNode node) => File.ReadAllLines(node.FilePath!);
+
+    [Fact]
+    public void DocumentedMethod_PointsAtItsDocCommentAndItsClosingBrace()
+    {
+        var node = Method(_solutionGraph!, "SampleLib.Throwing", "UnguardedThrow");
+        var lines = LinesOf(node);
+
+        Assert.NotNull(node.LineDocs);
+        Assert.NotNull(node.LineEnd);
+        Assert.True(node.LineDocs < node.LineStart, "documentation precedes the declaration");
+        Assert.True(node.LineEnd >= node.LineStart, "the end is at or after the start");
+
+        // The lines are 1-based; the array is not.
+        Assert.StartsWith("///", lines[node.LineDocs!.Value - 1].TrimStart(), StringComparison.Ordinal);
+        Assert.Contains("UnguardedThrow", lines[node.LineStart!.Value - 1], StringComparison.Ordinal);
+        Assert.Equal("}", lines[node.LineEnd!.Value - 1].Trim());
+
+        // And the whole point: that range is the member with its documentation.
+        var chunk = lines[(node.LineDocs.Value - 1)..node.LineEnd.Value];
+        Assert.Contains(chunk, l => l.Contains("<summary>", StringComparison.Ordinal));
+        Assert.Contains(chunk, l => l.Contains("throw new CustomException", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UndocumentedDeclaration_HasNoDocsLine_ButStillHasAnEnd()
+    {
+        // Absent lineDocs is a fact worth having, not a missing value: this
+        // member is undocumented, and the node says so.
+        var node = Method(_solutionGraph!, "SampleLib.PriceCallers", "AskIsFree");
+
+        Assert.Null(node.LineDocs);
+        Assert.NotNull(node.LineEnd);
+        Assert.Contains("AskIsFree", LinesOf(node)[node.LineStart!.Value - 1], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DocumentedTypeAndMember_CarryTheirDocLineToo()
+    {
+        // Not methods only: the same span is on type, property and field nodes.
+        var type = _solutionGraph!.GetNode("type:SampleLib.PriceExtensions")!;
+        Assert.NotNull(type.LineDocs);
+        Assert.StartsWith("///", LinesOf(type)[type.LineDocs!.Value - 1].TrimStart(), StringComparison.Ordinal);
+
+        var member = _solutionGraph.GetNode("prop:SampleLib.PriceExtensions.IsFree(SampleLib.Price)")!;
+        Assert.NotNull(member.LineDocs);
+        Assert.NotNull(member.LineEnd);
+        Assert.StartsWith("///", LinesOf(member)[member.LineDocs!.Value - 1].TrimStart(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AttributedMethod_StartsAtTheDeclaration_AndAnAttributeIsNotDocumentation()
+    {
+        // The two interact, so pin them together. lineStart deliberately points
+        // at the declaration rather than at the '[' (attributes are part of the
+        // declaration node, not leading trivia), and an attribute list does not
+        // make a member documented — lineDocs stays absent, which is why an
+        // attributed but undocumented member needs lineStart - 1 read by hand if
+        // you want to see its attributes.
+        var test = Method(_solutionGraph!, "SampleWeb.Tests.GreeterTests", "Greet_ThroughTheInterface");
+        var lines = LinesOf(test);
+
+        Assert.Contains("Greet_ThroughTheInterface", lines[test.LineStart!.Value - 1], StringComparison.Ordinal);
+        Assert.StartsWith("[", lines[test.LineStart.Value - 2].TrimStart(), StringComparison.Ordinal);
+        Assert.Null(test.LineDocs);
+
+        // The class above it IS documented, so the two are genuinely distinguished
+        // rather than lineDocs simply never being set in this fixture.
+        Assert.NotNull(_solutionGraph!.GetNode("type:SampleWeb.Tests.GreeterTests")!.LineDocs);
+    }
+
     // ---- Id scoping ----------------------------------------------------------
 
     [Fact]
