@@ -50,7 +50,15 @@ internal sealed class GraphNavigationTools(GraphStore store)
         var freshness = new GraphFreshness(graph);
 
         var page = all.Take(Math.Max(1, limit)).Select(n => ToolResponses.NodeSummary(n, freshness)).ToList();
-        return ToolResponses.ToJson(new { returned = page.Count, totalMatches = all.Count, truncated = all.Count > page.Count, nodes = page });
+        return ToolResponses.ToJson(new
+        {
+            returned = page.Count,
+            totalMatches = all.Count,
+            truncated = all.Count > page.Count,
+            builtAt = graph.BuiltAt,
+            freshnessCaveat = ToolResponses.FreshnessCaveat(graph),
+            nodes = page
+        });
     }
 
     [McpServerTool(Name = "get_node")]
@@ -90,6 +98,11 @@ internal sealed class GraphNavigationTools(GraphStore store)
         // one worth flagging, so get_node carries it even though it is one node.
         return ToolResponses.ToJson(new
         {
+            // Stated once per response: the line span is only true of the source
+            // as it stood at build time, so a reader needs to know when that was
+            // before opening a file at lineStart.
+            builtAt = graph.BuiltAt,
+            freshnessCaveat = ToolResponses.FreshnessCaveat(graph),
             node = ToolResponses.NodeDetail(node, new GraphFreshness(graph)),
             outgoing = Side(outEdges, expandOut, edgeType, limit, e => new
             {

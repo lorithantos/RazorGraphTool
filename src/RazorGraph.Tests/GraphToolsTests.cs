@@ -223,6 +223,57 @@ public class GraphToolsTests
         Assert.Contains("none, outgoing, incoming, all", message, StringComparison.Ordinal);
     }
 
+    // ---- Freshness: absence has to mean one thing ------------------------------
+
+    [Fact]
+    public void GetNode_OnAStampedGraph_ReportsWhenItWasBuilt_AndNoCaveat()
+    {
+        // The line span is only true of the source as it stood at build time,
+        // so the response says when that was rather than making the caller ask
+        // list_graphs separately.
+        var graph = WellCoveredGraph();
+        graph.BuiltAt = new DateTimeOffset(2026, 9, 5, 12, 0, 0, TimeSpan.Zero);
+        var tools = new GraphNavigationTools(StoreOver(graph));
+
+        using var doc = JsonDocument.Parse(tools.GetNode(CoveredMethodId));
+
+        Assert.Equal(
+            new DateTimeOffset(2026, 9, 5, 12, 0, 0, TimeSpan.Zero),
+            doc.RootElement.GetProperty("builtAt").GetDateTimeOffset());
+        Assert.False(doc.RootElement.TryGetProperty("freshnessCaveat", out _));
+    }
+
+    [Fact]
+    public void GetNode_OnAnUnstampedGraph_SaysAbsenceProvesNothing()
+    {
+        // Without this, a graph with no build stamp reports no fileWrittenSince
+        // on any node — which reads exactly like "every file is unchanged", the
+        // reassuring silence the freshness check exists to prevent.
+        var graph = WellCoveredGraph();
+        graph.BuiltAt = null;
+        var tools = new GraphNavigationTools(StoreOver(graph));
+
+        using var doc = JsonDocument.Parse(tools.GetNode(CoveredMethodId));
+
+        Assert.False(doc.RootElement.TryGetProperty("builtAt", out _));
+        var caveat = doc.RootElement.GetProperty("freshnessCaveat").GetString()!;
+        Assert.Contains("means NOTHING", caveat, StringComparison.Ordinal);
+        Assert.Contains("Rebuild", caveat, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FindNodes_CarriesTheSameStamp()
+    {
+        // Same warrant, same answer: find_nodes hands back a line per node.
+        var graph = MixedKindGraph();
+        graph.BuiltAt = null;
+        var tools = new GraphNavigationTools(StoreOver(graph));
+
+        using var doc = JsonDocument.Parse(tools.FindNodes(nameContains: "Widget"));
+
+        Assert.True(doc.RootElement.TryGetProperty("freshnessCaveat", out _));
+    }
+
     private const string CoveredMethodId = "m:Web.Doctrine.Advance()";
 
     /// <summary>

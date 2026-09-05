@@ -178,13 +178,17 @@ internal sealed class GraphStoreTools(GraphStore store)
     }
 
     [McpServerTool(Name = "list_graphs")]
-    [Description("Every graph currently held by the server: id, source, when it was loaded, and its size. Cheap. The 'current' one is what tools use when graphId is omitted.")]
+    [Description("Every graph currently held by the server: id, source, when it was BUILT and when it was loaded, and its size. Cheap. The 'current' one is what tools use when graphId is omitted. builtAt is the one that matters for trusting an answer — loadedAt only says when it entered this server, so a graph loaded from a saved file a minute ago can have been built days before. builtAt is null on a graph saved before the stamp existed, which means \"cannot tell\", never \"fresh\".")]
     public string ListGraphs()
     {
         var entries = store.List().Select(e => new
         {
             graphId = e.Id,
             source = e.Source,
+            // Both, because they answer different questions and the obvious one
+            // answers the wrong question: load_graph of a week-old saved graph
+            // reports loadedAt as seconds ago, which reads as fresh.
+            builtAt = e.Graph.BuiltAt,
             loadedAt = e.LoadedAt,
             nodes = e.Graph.Nodes.Count,
             edges = e.Graph.Edges.Count,

@@ -66,4 +66,31 @@ internal static class ToolResponses
     // that trains the reader to skip the one that matters.
     private static bool? Stale(GraphNode n, GraphFreshness? freshness) =>
         freshness?.WrittenSinceBuild(n) == true ? true : null;
+
+    /// <summary>
+    /// Why an absent <c>fileWrittenSince</c> proves nothing on this graph, or
+    /// null when it proves what a reader expects.
+    /// </summary>
+    /// <remarks>
+    /// Emitting the flag only when true is right — a marker on every clean node
+    /// in a 500-node result trains the reader to skip the one that matters —
+    /// but it makes absence carry two meanings: "its file is unchanged" and
+    /// "there is no build stamp, so nothing was computed". The first is
+    /// evidence and the second is silence, and a reader cannot tell them apart
+    /// from the node alone. So the graph says once, per response, which kind of
+    /// absence this is.
+    /// <para>
+    /// This matters most for the line span. <c>lineStart</c>, <c>lineEnd</c> and
+    /// <c>lineDocs</c> are only true of the source as it stood at build time, so
+    /// "the file behind this node has not been written since" is exactly the
+    /// warrant for reading them — and on a graph with no stamp there is no
+    /// warrant, only a quiet field.
+    /// </para>
+    /// </remarks>
+    internal static string? FreshnessCaveat(CodeGraph graph) =>
+        graph.BuiltAt is null
+            ? "This graph carries no build stamp, so fileWrittenSince was not computed: "
+              + "its absence on a node here means NOTHING, not 'file unchanged'. Line spans "
+              + "are unwarranted against the current file. Rebuild to restore the check."
+            : null;
 }

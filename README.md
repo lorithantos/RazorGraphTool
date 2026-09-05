@@ -107,6 +107,18 @@ while an attributed *undocumented* member has its attributes sitting just above
 a graph saved earlier has no `lineEnd` on them and no `lineDocs` anywhere, and an absent
 value there means "not known", not "undocumented".
 
+**A span is only true of the source as it stood at build time**, so every node result
+says when that was. `builtAt` is on the response, `fileWrittenSince` is on the node when
+its file has been written since, and `list_graphs` reports `builtAt` beside `loadedAt` —
+the second only says when a graph entered this server, so one loaded from a saved file
+a minute ago can have been built days before.
+
+When a graph carries no build stamp at all the response says so in `freshnessCaveat`,
+because `fileWrittenSince` is emitted only when true and its absence would otherwise
+carry two meanings: "this file is unchanged", which is evidence, and "nothing was
+computed", which is silence. A reader cannot tell those apart from a node, so the graph
+states which kind of absence it is, once, per response.
+
 > The server runs from the published `.mcp-bin` copy, not live build output, so
 > ordinary `dotnet build` keeps working while a session is attached. Code changes reach
 > the tools after a re-publish and a restart of the HTTP server; sessions reconnect on
