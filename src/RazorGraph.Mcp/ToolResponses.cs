@@ -101,6 +101,37 @@ internal static class ToolResponses
         };
     }
 
+    /// <summary>
+    /// One page of an ordered result, and how to ask for the next.
+    /// </summary>
+    /// <remarks>
+    /// <c>nextOffset</c> is present only when there is more, so its presence is
+    /// the "keep going" signal and its absence is "that was the end" — a caller
+    /// never has to compare two numbers to find out whether it finished.
+    /// <para>
+    /// Offset rather than an opaque cursor, because a built graph does not
+    /// change under the reader: the rows are the same on every call, so the
+    /// only thing a cursor would buy is protection against reordering that
+    /// cannot happen. It does require the underlying order to be TOTAL, which
+    /// is why the coverage queries order by depth AND id — an offset into a
+    /// partially ordered result silently repeats and skips rows.
+    /// </para>
+    /// </remarks>
+    internal readonly record struct PageWindow(
+        int Returned, int TotalMatches, int Offset, bool Truncated, int? NextOffset);
+
+    internal static (PageWindow Window, List<TItem> Items) Paginate<TSource, TItem>(
+        IReadOnlyList<TSource> all, int offset, int limit, Func<TSource, TItem> project)
+    {
+        var from = Math.Clamp(offset, 0, all.Count);
+        var take = Math.Clamp(limit, 1, 1000);
+        var page = all.Skip(from).Take(take).Select(project).ToList();
+        var end = from + page.Count;
+        var more = end < all.Count;
+
+        return (new PageWindow(page.Count, all.Count, from, more, more ? end : null), page);
+    }
+
     /// <summary>The list-valued property names on a node — what <c>fields</c> can expand.</summary>
     internal static List<string> ListPropertyNames(GraphNode n) =>
         n.Properties.Where(p => IsList(p.Value))

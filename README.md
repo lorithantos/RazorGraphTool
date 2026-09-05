@@ -189,6 +189,21 @@ answer names these in its `caveat` rather than reading as proof.
 > Rebuild any graph saved before that date before trusting a coverage answer about an
 > override.
 
+**Coverage answers are paged, and the histogram is usually the answer.** A well-covered
+method has hundreds of tests, so `covering_tests`, `covered_methods` and
+`uncovered_methods` return a page with `totalMatches`, and `nextOffset` when there is
+more — absent when there is not, so a caller never compares two numbers to learn it
+finished. The first two also return `depthCounts`, the whole set's distribution by depth,
+which is what tells you whether to page at all: on gamehub one method's 130 tests are 3
+at depth 3 and 27 at depth 4, with 78 of them out at depths 9 and 10 — real exercise
+versus blast radius, in one line. `depth` narrows to one band, and an unknown depth is
+refused naming the ones present.
+
+Offset rather than an opaque cursor, because a built graph does not change under the
+reader. That needs a **total** order, so the coverage queries sort by depth *and* id;
+sorting by depth alone left ties to edge enumeration order, and an offset into a
+partially ordered result silently repeats and skips rows.
+
 A "covered" method
 is one some test *can* reach — not one a test asserted on. Edges are only emitted across
 a project boundary, so `build_solution` is required; `uncovered_methods` excludes

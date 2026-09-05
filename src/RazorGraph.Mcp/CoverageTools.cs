@@ -14,23 +14,54 @@ using RazorGraph.Core.Query;
 internal sealed class CoverageTools(GraphStore store)
 {
     [McpServerTool(Name = "covering_tests")]
-    [Description("Test methods that exercise a given production method, nearest first. Reachability through Calls edges, widened through interface dispatch: a test that calls I.M reaches every in-solution implementation of I.M one hop further on. Requires a graph built with build_solution — coverage edges cross a project boundary and cannot exist in a single-project graph. An empty list carries a 'caveat' naming what the walk cannot follow, so zero is never mistaken for proof of absence.")]
+    [Description("Test methods that exercise a given production method, nearest first — depth 1 means a test calls it directly. Reachability through Calls edges, widened through BOTH dispatch mechanisms: a test that calls I.M reaches every in-solution implementation, and a test that calls an abstract or virtual declaration reaches every in-solution override. Paged: a well-covered method has hundreds of tests and the count plus the nearest few is usually the whole answer, so read totalMatches and depthCounts before paging. Pass offset=nextOffset to continue; nextOffset is absent when there is no more. Requires a graph built with build_solution — coverage edges cross a project boundary and cannot exist in a single-project graph. An empty list carries a 'caveat' naming what the walk cannot follow, so zero is never mistaken for proof of absence.")]
     public string CoveringTests(
         [Description("Id of a Method node in production code")] string methodId,
+        [Description("Max tests to return (default 25). The count and the depth histogram describe the whole set whatever this is.")] int limit = 25,
+        [Description("Where to start, for continuation. Pass the nextOffset from the previous page; its absence there means you have seen everything.")] int offset = 0,
+        [Description("Return only tests reached at this depth. 1 is direct exercise, which is usually the question; the deep rows are blast radius. depthCounts names the depths this method actually has.")] int? depth = null,
         [Description(ToolArguments.GraphIdDescription)] string? graphId = null)
     {
         var graph = store.Require(graphId).Graph;
         ToolArguments.RequireNode(graph, methodId);
 
-        var items = RequireCoverage(() => new GraphQuery(graph).GetCoveringTests(methodId)
-            .Select(t => new { depth = t.Depth, node = ToolResponses.NodeSummary(t.Test) })
-            .ToList());
+        var all = RequireCoverage(() => new GraphQuery(graph).GetCoveringTests(methodId).ToList());
+
+        // The histogram describes the WHOLE set, never the filtered or paged
+        // view: it is what a caller reads to decide whether to page at all, so
+        // narrowing it with the narrowing argument would answer the question
+        // "how much is there" with "how much did you ask for".
+        var depthCounts = all.GroupBy(t => t.Depth)
+            .OrderBy(g => g.Key)
+            .Select(g => new { depth = g.Key, count = g.Count() })
+            .ToList();
+
+        if (depth is { } wanted)
+        {
+            if (!all.Any(t => t.Depth == wanted))
+            {
+                throw new McpException(
+                    $"No test reaches this method at depth {wanted}. Depths present: "
+                    + (depthCounts.Count == 0 ? "none" : string.Join(", ", depthCounts.Select(d => d.depth))) + ".");
+            }
+            all = all.Where(t => t.Depth == wanted).ToList();
+        }
+
+        var (window, tests) = ToolResponses.Paginate(all, offset, limit,
+            t => new { depth = t.Depth, node = ToolResponses.NodeSummary(t.Test) });
+
         return ToolResponses.ToJson(new
         {
             methodId,
-            returned = items.Count,
-            tests = items,
-            caveat = items.Count == 0 ? UnreachedCaveat : null
+            returned = window.Returned,
+            totalMatches = window.TotalMatches,
+            offset = window.Offset,
+            truncated = window.Truncated,
+            nextOffset = window.NextOffset,
+            depthCounts,
+            filteredToDepth = depth,
+            tests,
+            caveat = all.Count == 0 ? UnreachedCaveat : null
         });
     }
 
@@ -46,31 +77,74 @@ internal sealed class CoverageTools(GraphStore store)
         "No test's call chain reaches this method through Calls edges, interface dispatch, or a base-class override. That is not proof it is untested: property accessor bodies (including source-generated setters), stored-and-forwarded delegates, and reflection are not followed. Read the method body for those before treating this as a target for new tests.";
 
     [McpServerTool(Name = "covered_methods")]
-    [Description("Production methods a given test method exercises, nearest first. depth=1 means the test calls it directly.")]
+    [Description("Production methods a given test method exercises, nearest first. depth=1 means the test calls it directly. Paged: one test can reach hundreds of methods through the full call closure, so read totalMatches and depthCounts first, and pass offset=nextOffset to continue. nextOffset is absent when there is no more.")]
     public string CoveredMethods(
         [Description("Id of a test Method node")] string testId,
+        [Description("Max methods to return (default 25). The count and the depth histogram describe the whole set whatever this is.")] int limit = 25,
+        [Description("Where to start, for continuation. Pass the nextOffset from the previous page.")] int offset = 0,
+        [Description("Return only methods reached at this depth. 1 is what the test calls directly. depthCounts names the depths this test actually reaches.")] int? depth = null,
         [Description(ToolArguments.GraphIdDescription)] string? graphId = null)
     {
         var graph = store.Require(graphId).Graph;
         ToolArguments.RequireNode(graph, testId);
 
-        var items = RequireCoverage(() => new GraphQuery(graph).GetCoveredMethods(testId)
-            .Select(t => new { depth = t.Depth, node = ToolResponses.NodeSummary(t.Method) })
-            .ToList());
-        return ToolResponses.ToJson(new { testId, returned = items.Count, methods = items });
+        var all = RequireCoverage(() => new GraphQuery(graph).GetCoveredMethods(testId).ToList());
+
+        var depthCounts = all.GroupBy(t => t.Depth)
+            .OrderBy(g => g.Key)
+            .Select(g => new { depth = g.Key, count = g.Count() })
+            .ToList();
+
+        if (depth is { } wanted)
+        {
+            if (!all.Any(t => t.Depth == wanted))
+            {
+                throw new McpException(
+                    $"This test reaches nothing at depth {wanted}. Depths present: "
+                    + (depthCounts.Count == 0 ? "none" : string.Join(", ", depthCounts.Select(d => d.depth))) + ".");
+            }
+            all = all.Where(t => t.Depth == wanted).ToList();
+        }
+
+        var (window, methods) = ToolResponses.Paginate(all, offset, limit,
+            t => new { depth = t.Depth, node = ToolResponses.NodeSummary(t.Method) });
+
+        return ToolResponses.ToJson(new
+        {
+            testId,
+            returned = window.Returned,
+            totalMatches = window.TotalMatches,
+            offset = window.Offset,
+            truncated = window.Truncated,
+            nextOffset = window.NextOffset,
+            depthCounts,
+            filteredToDepth = depth,
+            methods
+        });
     }
 
     [McpServerTool(Name = "uncovered_methods")]
-    [Description("Methods that no test reaches. Pass a project to scope the question to one assembly, which is almost always what you want. This is reachability through the call graph, not runtime coverage — a method listed here is unreached by any test's call chain, including setup done in test-class lifecycle hooks and interface dispatch. Steps the walk cannot follow (property accessor bodies, base-class virtual dispatch, stored delegates, reflection) can list a method here that tests do exercise; the list is a set of candidates to read, not a verdict.")]
+    [Description("Methods that no test reaches, ordered by id. Pass a project to scope the question to one assembly, which is almost always what you want. Paged: pass offset=nextOffset to continue, and nextOffset is absent when there is no more. This is reachability through the call graph, not runtime coverage — a method listed here is unreached by any test's call chain, including setup done in test-class lifecycle hooks, interface dispatch and base-class overrides. Steps the walk cannot follow (property accessor bodies, stored delegates, reflection) can list a method here that tests do exercise; the list is a set of candidates to read, not a verdict.")]
     public string UncoveredMethods(
         [Description("Project name to restrict to (e.g. the production assembly)")] string? project = null,
         [Description("Max nodes to return (default 50)")] int limit = 50,
+        [Description("Where to start, for continuation. Pass the nextOffset from the previous page.")] int offset = 0,
         [Description(ToolArguments.GraphIdDescription)] string? graphId = null)
     {
         var graph = store.Require(graphId).Graph;
         var all = RequireCoverage(() => new GraphQuery(graph).FindUncoveredMethods(project).ToList());
-        var page = all.Take(Math.Max(1, limit)).Select(n => ToolResponses.NodeSummary(n)).ToList();
-        return ToolResponses.ToJson(new { returned = page.Count, totalMatches = all.Count, truncated = all.Count > page.Count, methods = page });
+
+        var (window, methods) = ToolResponses.Paginate(all, offset, limit, n => ToolResponses.NodeSummary(n));
+
+        return ToolResponses.ToJson(new
+        {
+            returned = window.Returned,
+            totalMatches = window.TotalMatches,
+            offset = window.Offset,
+            truncated = window.Truncated,
+            nextOffset = window.NextOffset,
+            methods
+        });
     }
 
     /// <summary>

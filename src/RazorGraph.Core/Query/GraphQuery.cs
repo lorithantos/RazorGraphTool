@@ -119,6 +119,14 @@ public sealed class GraphQuery
     /// Test methods that exercise the given production method, nearest first.
     /// Covers edges point test -> code, so this is an incoming lookup.
     /// </summary>
+    /// <remarks>
+    /// Depth then id, and the id is what makes it a TOTAL order rather than a
+    /// tidier one. Ordering by depth alone leaves ties to edge enumeration
+    /// order, which is deterministic for one loaded graph and guaranteed by
+    /// nothing — and a caller paging with an offset over a partial order
+    /// silently repeats and skips rows. Same rule the subtree walk follows: a
+    /// replayed answer has to equal a recomputed one exactly.
+    /// </remarks>
     public IEnumerable<(GraphNode Test, int Depth)> GetCoveringTests(string methodId)
     {
         RequireTestMethods("covering-tests");
@@ -127,11 +135,13 @@ public sealed class GraphQuery
             .Select(e => (Test: _graph.GetNode(e.FromId), Depth: e.GetProperty<int>("depth")))
             .Where(t => t.Test != null)
             .Select(t => (t.Test!, t.Depth))
-            .OrderBy(t => t.Depth);
+            .OrderBy(t => t.Depth)
+            .ThenBy(t => t.Item1.Id, StringComparer.Ordinal);
     }
 
     /// <summary>
-    /// Production methods a given test exercises, nearest first.
+    /// Production methods a given test exercises, nearest first. Depth then id,
+    /// a total order, for the reason on <see cref="GetCoveringTests"/>.
     /// </summary>
     public IEnumerable<(GraphNode Method, int Depth)> GetCoveredMethods(string testId)
     {
@@ -141,7 +151,8 @@ public sealed class GraphQuery
             .Select(e => (Method: _graph.GetNode(e.ToId), Depth: e.GetProperty<int>("depth")))
             .Where(t => t.Method != null)
             .Select(t => (t.Method!, t.Depth))
-            .OrderBy(t => t.Depth);
+            .OrderBy(t => t.Depth)
+            .ThenBy(t => t.Item1.Id, StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -154,6 +165,11 @@ public sealed class GraphQuery
     /// declaration — so including them would report every interface in the
     /// solution as untested and make the whole report untrustworthy.
     /// </summary>
+    /// <remarks>
+    /// Ordered by id, which it was not before: the walk yielded whatever node
+    /// order the graph happened to hold, and an unordered result cannot be
+    /// paged through — an offset into it means a different row on every call.
+    /// </remarks>
     public IEnumerable<GraphNode> FindUncoveredMethods(string? project = null)
     {
         RequireTestMethods("uncovered-methods");
@@ -162,7 +178,8 @@ public sealed class GraphQuery
             .Where(m => !m.GetProperty<bool>("isAbstract"))
             .Where(m => project == null ||
                         string.Equals(m.GetProperty<string>("project"), project, StringComparison.OrdinalIgnoreCase))
-            .Where(m => !_graph.Incoming(m.Id).Any(e => e.Type == EdgeType.Covers));
+            .Where(m => !_graph.Incoming(m.Id).Any(e => e.Type == EdgeType.Covers))
+            .OrderBy(m => m.Id, StringComparer.Ordinal);
     }
 
     /// <summary>

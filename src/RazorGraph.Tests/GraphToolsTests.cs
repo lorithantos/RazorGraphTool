@@ -223,6 +223,135 @@ public class GraphToolsTests
         Assert.Contains("none, outgoing, incoming, all", message, StringComparison.Ordinal);
     }
 
+    // ---- Coverage paging --------------------------------------------------------
+
+    // A well-covered method has hundreds of tests. Reading 130 of them to answer
+    // a yes/no question is what provoked this; the count and the depth histogram
+    // are usually the whole answer.
+
+    [Fact]
+    public void CoveringTests_PagesAndReportsHowToContinue()
+    {
+        var tools = new CoverageTools(StoreOver(WideCoverageGraph()));
+
+        using var first = JsonDocument.Parse(tools.CoveringTests(CoveredMethodId, limit: 10));
+        Assert.Equal(10, first.RootElement.GetProperty("returned").GetInt32());
+        Assert.Equal(60, first.RootElement.GetProperty("totalMatches").GetInt32());
+        Assert.True(first.RootElement.GetProperty("truncated").GetBoolean());
+        Assert.Equal(10, first.RootElement.GetProperty("nextOffset").GetInt32());
+    }
+
+    [Fact]
+    public void CoveringTests_PagingVisitsEveryRowExactlyOnce()
+    {
+        // The property that makes offset paging correct, and the reason the
+        // query had to be given a TOTAL order: depth alone left ties to edge
+        // enumeration, and an offset into a partial order repeats and skips.
+        var tools = new CoverageTools(StoreOver(WideCoverageGraph()));
+
+        var seen = new List<string>();
+        int? offset = 0;
+        while (offset is { } at)
+        {
+            using var page = JsonDocument.Parse(tools.CoveringTests(CoveredMethodId, limit: 7, offset: at));
+            seen.AddRange(page.RootElement.GetProperty("tests").EnumerateArray()
+                .Select(t => t.GetProperty("node").GetProperty("id").GetString()!));
+            offset = page.RootElement.TryGetProperty("nextOffset", out var next) ? next.GetInt32() : null;
+        }
+
+        Assert.Equal(60, seen.Count);
+        Assert.Equal(60, seen.Distinct().Count());
+    }
+
+    [Fact]
+    public void CoveringTests_LastPage_HasNoNextOffset()
+    {
+        // Absence is the "you are done" signal, so a caller never compares two
+        // numbers to find out whether it finished.
+        var tools = new CoverageTools(StoreOver(WideCoverageGraph()));
+
+        using var doc = JsonDocument.Parse(tools.CoveringTests(CoveredMethodId, limit: 10, offset: 50));
+        Assert.Equal(10, doc.RootElement.GetProperty("returned").GetInt32());
+        Assert.False(doc.RootElement.GetProperty("truncated").GetBoolean());
+        Assert.False(doc.RootElement.TryGetProperty("nextOffset", out _));
+    }
+
+    [Fact]
+    public void CoveringTests_DepthHistogram_DescribesTheWholeSet_NotThePage()
+    {
+        // The histogram is what a caller reads to decide whether to page at
+        // all, so a page or a filter must not shrink it.
+        var tools = new CoverageTools(StoreOver(WideCoverageGraph()));
+
+        using var doc = JsonDocument.Parse(tools.CoveringTests(CoveredMethodId, limit: 3, depth: 1));
+        var counts = doc.RootElement.GetProperty("depthCounts").EnumerateArray()
+            .ToDictionary(d => d.GetProperty("depth").GetInt32(), d => d.GetProperty("count").GetInt32());
+
+        Assert.Equal(20, counts[1]);
+        Assert.Equal(20, counts[2]);
+        Assert.Equal(20, counts[3]);
+
+        // …while the filtered total is the filtered one.
+        Assert.Equal(20, doc.RootElement.GetProperty("totalMatches").GetInt32());
+        Assert.Equal(1, doc.RootElement.GetProperty("filteredToDepth").GetInt32());
+    }
+
+    [Fact]
+    public void CoveringTests_UnknownDepth_IsRefusedNamingTheDepthsPresent()
+    {
+        var tools = new CoverageTools(StoreOver(WideCoverageGraph()));
+
+        var message = Assert.Throws<McpException>(
+            () => tools.CoveringTests(CoveredMethodId, depth: 9)).Message;
+
+        Assert.Contains("depth 9", message, StringComparison.Ordinal);
+        Assert.Contains("1, 2, 3", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UncoveredMethods_PagesOverAStableOrder()
+    {
+        var tools = new CoverageTools(StoreOver(WideCoverageGraph()));
+
+        using var a = JsonDocument.Parse(tools.UncoveredMethods(limit: 5));
+        using var b = JsonDocument.Parse(tools.UncoveredMethods(limit: 5));
+
+        var first = a.RootElement.GetProperty("methods").EnumerateArray().Select(m => m.GetProperty("id").GetString()).ToList();
+        var again = b.RootElement.GetProperty("methods").EnumerateArray().Select(m => m.GetProperty("id").GetString()).ToList();
+
+        Assert.Equal(first, again);
+        Assert.Equal(first.OrderBy(i => i, StringComparer.Ordinal), first);
+    }
+
+    /// <summary>
+    /// One method reached by 60 tests spread over three depths, plus a handful
+    /// of production methods nothing reaches.
+    /// </summary>
+    private static CodeGraph WideCoverageGraph()
+    {
+        var graph = new CodeGraph { BuiltAt = DateTimeOffset.UtcNow };
+        graph.AddNode(new GraphNode { Id = CoveredMethodId, Type = NodeType.Method, Name = "Advance" });
+
+        for (var i = 0; i < 60; i++)
+        {
+            var testId = $"m:Web.Tests.DoctrineTests.Case{i:D2}()";
+            var test = new GraphNode { Id = testId, Type = NodeType.Method, Name = $"Case{i:D2}" };
+            test.SetProperty("isTest", true);
+            graph.AddNode(test);
+
+            var edge = new GraphEdge { FromId = testId, ToId = CoveredMethodId, Type = EdgeType.Covers };
+            edge.Properties["depth"] = (i % 3) + 1;
+            graph.AddEdge(edge);
+        }
+
+        // Unreached production methods, deliberately added out of id order so
+        // the ordering assertion means something.
+        foreach (var name in new[] { "Zeta", "Alpha", "Mu" })
+            graph.AddNode(new GraphNode { Id = $"m:Web.Idle.{name}()", Type = NodeType.Method, Name = name });
+
+        return graph;
+    }
+
     // ---- The node's own payload is narrow too -----------------------------------
 
     // Measured on a 2,098-node graph: scalars are 245KB total, about 117 bytes a
