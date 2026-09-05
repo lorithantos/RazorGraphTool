@@ -17,6 +17,16 @@ internal static class SymbolClassifier
         INamedTypeSymbol symbol, string projectName, Compilation compilation, IReadOnlySet<string> inScope,
         AttributePolicy policy)
     {
+        // A C# 14 extension block is a TypeDeclarationSyntax, so the type walk
+        // reaches it — but it is syntax, not a type a reader navigates to. It
+        // has no name, and its members belong to the static class holding it,
+        // which is where ExtractMethodNodes and ExtractMemberNodes collect them
+        // from. Skipping it here is deliberate rather than incidental:
+        // IsCompilerGenerated below would also drop it, on the empty name, and
+        // filing user-written syntax under "compiler generated" is exactly how
+        // every member inside one stayed invisible.
+        if (symbol.IsExtension) return null;
+
         var baseType = symbol.BaseType?.ToDisplayString() ?? "";
         var interfaces = symbol.AllInterfaces.Select(i => i.ToDisplayString()).ToList();
         var (filePath, lineStart, lineEnd) = GetLines(symbol);
@@ -247,7 +257,9 @@ internal static class SymbolClassifier
         INamedTypeSymbol symbol, IReadOnlySet<string> inScope, AttributePolicy policy)
     {
         var members = new List<MemberDetail>();
-        foreach (var member in symbol.GetMembers())
+        // Extension-block properties are members of the type holding the block:
+        // the block itself is never a node, so nothing else would carry them.
+        foreach (var member in symbol.GetMembers().Concat(ExtensionBlockMembers<ISymbol>(symbol)))
         {
             if (member.IsImplicitlyDeclared) continue;
 
@@ -339,8 +351,51 @@ internal static class SymbolClassifier
         }
     }
 
+    /// <summary>
+    /// Every member an extension block inside this type declares, as the
+    /// members they are rather than as the static methods they lower to.
+    /// </summary>
+    /// <remarks>
+    /// The containing static class holds both: the block, as a nameless nested
+    /// type, and one implicitly-declared static implementation per member. The
+    /// implementations are what the compiler emits and what a caller never
+    /// names, so every list here reads the block instead — real source
+    /// locations, real accessibility, real accessors — and the existing
+    /// <c>!IsImplicitlyDeclared</c> filters keep the implementations out, which
+    /// is what stops each member arriving twice.
+    /// </remarks>
+    private static IEnumerable<T> ExtensionBlockMembers<T>(INamedTypeSymbol symbol) where T : ISymbol =>
+        symbol.GetTypeMembers()
+            .Where(t => t.IsExtension)
+            .SelectMany(t => t.GetMembers())
+            .Where(m => !m.IsImplicitlyDeclared)
+            .OfType<T>();
+
+    /// <summary>
+    /// The receiver an extension member extends, whichever syntax declared it:
+    /// the first parameter of a classic <c>this</c> method, or the enclosing
+    /// block's receiver. A static extension block still extends its type, so it
+    /// answers here too.
+    /// </summary>
+    private static string? ExtendedTypeOf(IMethodSymbol method)
+    {
+        if (method.IsExtensionMethod)
+            return method.Parameters[0].Type.OriginalDefinition.ToDisplayString();
+
+        if (method.ContainingType is { IsExtension: true, ExtensionParameter: { } receiver })
+            return receiver.Type.OriginalDefinition.ToDisplayString();
+
+        return null;
+    }
+
     private static List<MethodInfo> ExtractMethods(INamedTypeSymbol symbol) =>
         symbol.GetMembers().OfType<IMethodSymbol>()
+            // Implicitly declared: the lowered implementations of extension
+            // members, which would otherwise advertise accessor names like
+            // get_IsFree on the containing type. The block's own members are
+            // appended below, under the names a caller actually writes.
+            .Where(m => !m.IsImplicitlyDeclared)
+            .Concat(ExtensionBlockMembers<IMethodSymbol>(symbol))
             .Where(m => m.MethodKind == MethodKind.Ordinary && m.DeclaredAccessibility == Accessibility.Public)
             .Select(m => new MethodInfo
             {
@@ -393,6 +448,11 @@ internal static class SymbolClassifier
                 MethodKind.Constructor => !m.IsImplicitlyDeclared || hasInitializers,
                 _ => false
             })
+            // Extension-block methods are nodes of the type that holds the
+            // block. Accessors stay out here as everywhere else — an extension
+            // property's body attributes to its Property node.
+            .Concat(ExtensionBlockMembers<IMethodSymbol>(symbol)
+                .Where(m => m.MethodKind == MethodKind.Ordinary))
             .ToList();
 
         // Lifecycle hooks only count as such on a type that actually has tests;
@@ -458,9 +518,7 @@ internal static class SymbolClassifier
                     Throws = throws,
                     EntryPointKind = MethodRoles.ClassifyEntryPoint(m, inScope, policy),
                     SignatureTypeFullNames = SignatureTypes(m, inScope),
-                    ExtendsTypeFullName = m.IsExtensionMethod
-                        ? m.Parameters[0].Type.OriginalDefinition.ToDisplayString()
-                        : null,
+                    ExtendsTypeFullName = ExtendedTypeOf(m),
                     ImplementsIds = InSolutionImplementedMembers(m, inScope),
                     BoundaryCatches = boundaryCatches,
                     BoundaryCatchesFiltered = boundaryFiltered,
@@ -482,7 +540,11 @@ internal static class SymbolClassifier
     /// </summary>
     private static List<ParameterDetail> ExtractParameterNodes(IMethodSymbol method, IReadOnlySet<string> inScope)
     {
-        var def = (method.ReducedFrom ?? method).OriginalDefinition;
+        // Canonical is the same resolution ParameterId uses, so the parameters
+        // enumerated here and the ids minted for them can never disagree —
+        // including for an extension-block member, whose implementation carries
+        // a receiver the declaration itself does not.
+        var def = SymbolIds.Canonical(method);
 
         var result = new List<ParameterDetail>();
         foreach (var p in def.Parameters)

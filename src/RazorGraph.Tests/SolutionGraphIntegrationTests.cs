@@ -811,6 +811,127 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
             e.FromId == webOnlyOnGet && e.Type == EdgeType.Reads && e.ToId.StartsWith("field:SampleLib."));
     }
 
+    // ---- C# 14 extension members ---------------------------------------------
+
+    // An extension block is a TypeDeclarationSyntax with an empty name, so the
+    // type walk visits it and the compiler-generated filter used to drop it —
+    // taking every member with it. The containing static class still advertised
+    // the lowered implementation names in its methods list, so the type looked
+    // present and nothing signalled that the answer was partial.
+
+    [Fact]
+    public void ExtensionBlockMethods_AreNodesUnderTheContainingType()
+    {
+        // Keyed off the lowered implementation, so the id is the same shape a
+        // classic extension method gets: containing static class, receiver
+        // first in the parameter list.
+        var doubled = _solutionGraph!.GetNode("m:SampleLib.PriceExtensions.Doubled(SampleLib.Price)");
+        Assert.NotNull(doubled);
+        Assert.Equal(NodeType.Method, doubled!.Type);
+        Assert.Equal("SampleLib.PriceExtensions", doubled.GetProperty<string>("declaringType"));
+        Assert.True(HasEdge(_solutionGraph, "type:SampleLib.PriceExtensions", EdgeType.Contains, doubled.Id));
+
+        // A static extension member carries no receiver parameter, exactly as
+        // its implementation does not.
+        var fromCents = _solutionGraph.GetNode("m:SampleLib.PriceExtensions.FromCents(int)");
+        Assert.NotNull(fromCents);
+        Assert.True(HasEdge(_solutionGraph, "type:SampleLib.PriceExtensions", EdgeType.Contains, fromCents!.Id));
+
+        // The control: the classic syntax in the same class, same id shape.
+        Assert.NotNull(_solutionGraph.GetNode("m:SampleLib.PriceExtensions.Tripled(SampleLib.Price)"));
+    }
+
+    [Fact]
+    public void ExtensionBlockProperties_AreNodesUnderTheContainingType()
+    {
+        var isFree = _solutionGraph!.GetNode("prop:SampleLib.PriceExtensions.IsFree(SampleLib.Price)");
+        Assert.NotNull(isFree);
+        Assert.Equal(NodeType.Property, isFree!.Type);
+        Assert.True(HasEdge(_solutionGraph, "type:SampleLib.PriceExtensions", EdgeType.Contains, isFree.Id));
+
+        var free = _solutionGraph.GetNode("prop:SampleLib.PriceExtensions.Free()");
+        Assert.NotNull(free);
+        Assert.True(free!.GetProperty<bool>("isStatic"));
+    }
+
+    [Fact]
+    public void ExtensionBlockCalls_BindToTheDeclarationNode()
+    {
+        Assert.True(HasEdge(_solutionGraph!,
+            "m:SampleLib.PriceCallers.AskDoubled(SampleLib.Price)",
+            EdgeType.Calls,
+            "m:SampleLib.PriceExtensions.Doubled(SampleLib.Price)"));
+
+        Assert.True(HasEdge(_solutionGraph!,
+            "m:SampleLib.PriceCallers.AskFromCents(int)",
+            EdgeType.Calls,
+            "m:SampleLib.PriceExtensions.FromCents(int)"));
+    }
+
+    [Fact]
+    public void ExtensionBlockCalls_CrossTheProjectBoundary()
+    {
+        // The gamehub shape: every call site in another project, which is why
+        // the visibility audit called the containing type unused.
+        Assert.True(HasEdge(_solutionGraph!,
+            "m:SampleWeb.PriceUse.DoubledAcrossTheBoundary(SampleLib.Price)",
+            EdgeType.Calls,
+            "m:SampleLib.PriceExtensions.Doubled(SampleLib.Price)"));
+
+        Assert.True(HasEdge(_solutionGraph!,
+            "m:SampleWeb.PriceUse.MadeAcrossTheBoundary(int)",
+            EdgeType.Calls,
+            "m:SampleLib.PriceExtensions.FromCents(int)"));
+
+        // The consequence the defect actually cost: the type has consumers.
+        Assert.Contains(_solutionGraph!.Incoming("m:SampleLib.PriceExtensions.Doubled(SampleLib.Price)"),
+            e => e.Type == EdgeType.Calls);
+    }
+
+    [Fact]
+    public void ExtensionBlockMembers_CarryExtendsToTheirReceiver()
+    {
+        var doubled = _solutionGraph!.GetNode("m:SampleLib.PriceExtensions.Doubled(SampleLib.Price)");
+        Assert.Equal("SampleLib.Price", doubled!.GetProperty<string>("extendsType"));
+        Assert.True(HasEdge(_solutionGraph, doubled.Id, EdgeType.Extends, "type:SampleLib.Price"));
+
+        // A static extension member extends its type just as much.
+        var fromCents = _solutionGraph.GetNode("m:SampleLib.PriceExtensions.FromCents(int)");
+        Assert.Equal("SampleLib.Price", fromCents!.GetProperty<string>("extendsType"));
+    }
+
+    [Fact]
+    public void ExtensionBlockItself_IsNotANode()
+    {
+        // The block is syntax, not something a reader navigates to: its members
+        // belong to the static class that holds it.
+        Assert.DoesNotContain(_solutionGraph!.Nodes, n => n.Id.Contains(".extension("));
+        Assert.DoesNotContain(_solutionGraph.Nodes, n => n.Name.Length == 0);
+    }
+
+    [Fact]
+    public void ContainingType_AdvertisesDeclaredMembers_NotLoweredAccessors()
+    {
+        // The dangerous half of the original defect: the type advertised
+        // get_Files and SourceFor in its own properties while none of them was
+        // a node, so the type looked present and complete.
+        var host = _solutionGraph!.GetNode("type:SampleLib.PriceExtensions");
+        var advertised = host!.GetProperty<List<string>>("methods") ?? [];
+
+        Assert.DoesNotContain("get_IsFree", advertised);
+        Assert.DoesNotContain("get_Free", advertised);
+        Assert.Contains("Doubled", advertised);
+        Assert.Contains("FromCents", advertised);
+
+        // And the invariant that would have caught this: every name the type
+        // advertises has a node under it.
+        var contained = _solutionGraph.Outgoing(host.Id)
+            .Where(e => e.Type == EdgeType.Contains)
+            .Select(e => _solutionGraph.GetNode(e.ToId)!.Name)
+            .ToHashSet();
+        Assert.All(advertised, name => Assert.Contains(name, contained));
+    }
+
     // ---- Id scoping ----------------------------------------------------------
 
     [Fact]

@@ -33,13 +33,39 @@ internal static class SymbolIds
         $"param:{MethodBody(method)}#{parameter.Name}";
 
     /// <summary>
+    /// The form of a method symbol its id is built from: unreduced, and for a
+    /// C# 14 extension member, the lowered static implementation.
+    /// </summary>
+    /// <remarks>
+    /// The two extension syntaxes have to land on the same id shape, because
+    /// they are the same concept. A classic <c>this</c>-parameter method
+    /// unreduces through <c>ReducedFrom</c>. A member declared inside an
+    /// <c>extension</c> block has no ReducedFrom at all; its identity comes
+    /// from <c>AssociatedExtensionImplementation</c>, which the compiler
+    /// already shapes exactly right — declared by the containing static class,
+    /// receiver first in the parameter list for an instance member and absent
+    /// for a static one. So <c>Doubled()</c> in a block and
+    /// <c>Doubled(this Price)</c> beside it mint the same id, and a codebase
+    /// moving between the syntaxes keeps its node ids.
+    /// <para>
+    /// It is also what lets a call site meet its declaration: a call binds to
+    /// the block's member symbol, never to the implementation, so both ends
+    /// have to resolve through here or every edge into an extension member is
+    /// silently dropped on the mismatch — the same failure ReducedFrom was
+    /// added to fix.
+    /// </para>
+    /// </remarks>
+    internal static IMethodSymbol Canonical(IMethodSymbol method) =>
+        (method.AssociatedExtensionImplementation ?? method.ReducedFrom ?? method).OriginalDefinition;
+
+    /// <summary>
     /// The shared body of MethodId and ParameterId — one place computes it, so
     /// the two can never drift, and a parameter's parent method id is always
     /// recoverable as "m:" + the text before the '#'.
     /// </summary>
     private static string MethodBody(IMethodSymbol method)
     {
-        var def = (method.ReducedFrom ?? method).OriginalDefinition;
+        var def = Canonical(method);
         var parameters = string.Join(",", def.Parameters.Select(p => p.Type.ToDisplayString()));
         var container = def.ContainingType?.ToDisplayString() ?? "global";
         return $"{container}.{def.Name}({parameters})";
@@ -50,10 +76,34 @@ internal static class SymbolIds
     /// cannot overload — and a distinct prefix per kind, so the id tells a
     /// reader what it names the same way m:/type:/page: already do.
     /// </summary>
+    /// <remarks>
+    /// An extension member is the exception, and carries a parenthesised
+    /// receiver: <c>prop:Money.Extensions.IsZero(Money)</c>. Two extension
+    /// blocks in one static class may declare the same member name on
+    /// different receiver types, which is legal C# and would otherwise mint one
+    /// id for two properties and silently merge them. The receiver is written
+    /// exactly as the lowered implementation's parameter list has it, so an
+    /// instance member reads <c>(Money)</c> and a static one <c>()</c> — the
+    /// same convention MethodId follows, and the empty parentheses are what
+    /// distinguish a static extension property from a plain one of the same
+    /// name on the containing class.
+    /// </remarks>
     public static string MemberId(ISymbol member)
     {
         var def = member.OriginalDefinition;
         var prefix = def is IPropertySymbol ? "prop" : "field";
+
+        if (def.ContainingType is { IsExtension: true } block)
+        {
+            var host = block.ContainingType?.ToDisplayString() ?? "global";
+            // A static extension block declares a receiver TYPE and no
+            // parameter, so its ExtensionParameter is nameless.
+            var receiver = block.ExtensionParameter is { Name.Length: > 0 } p
+                ? p.Type.ToDisplayString()
+                : "";
+            return $"{prefix}:{host}.{def.Name}({receiver})";
+        }
+
         var container = def.ContainingType?.ToDisplayString() ?? "global";
         return $"{prefix}:{container}.{def.Name}";
     }

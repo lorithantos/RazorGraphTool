@@ -137,14 +137,36 @@ before compiling them, which on a well-tested solution drops most of the edge vo
 the skipped projects are always reported, on stderr and in the build summary's
 `skippedTestProjects`.
 
-**Extension methods are part of the type they extend.** A reduced extension call
-(`money.Add(b)`) binds to the same node as the static declaration — the `this`
-parameter unreduces before the id forms, so call edges, coverage, and escape
-chains all flow through extensions. Extension-method nodes carry an
-`extendsType` property and an `Extends` edge to the extended type when it is
-in-solution, so "the working surface of `Money`" is the type's incoming
-`Extends` edges plus its own members. (C# 14 `extension` container members are
-not yet modeled.)
+**Extension methods are part of the type they extend, in both syntaxes.** A
+reduced extension call (`money.Add(b)`) binds to the same node as the static
+declaration — the `this` parameter unreduces before the id forms, so call edges,
+coverage, and escape chains all flow through extensions. Extension-method nodes
+carry an `extendsType` property and an `Extends` edge to the extended type when
+it is in-solution, so "the working surface of `Money`" is the type's incoming
+`Extends` edges plus its own members.
+
+C# 14 `extension` blocks are modeled the same way and mint the same ids. A
+member declared in a block is a node of the **static class holding the block**,
+identified through the lowered static implementation the compiler emits — so
+`Doubled()` inside `extension(Price price)` and `Doubled(this Price)` beside it
+both become `m:PriceExtensions.Doubled(SampleLib.Price)`, and moving a codebase
+between the syntaxes does not churn a single node id. The receiver leads the
+parameter list for an instance member and is absent for a static one, and
+extension *properties* carry it parenthesised
+(`prop:PriceExtensions.IsFree(SampleLib.Price)`) because two blocks in one class
+may declare the same member name on different receiver types. The block itself
+is never a node: it has no name, and it is syntax rather than something a reader
+navigates to.
+
+> Until 2026-09-05 an extension block was dropped whole. The block is an
+> `ExtensionBlockDeclarationSyntax`, which derives from `TypeDeclarationSyntax`,
+> so the type walk reached it and the compiler-generated filter discarded it on
+> its empty name — taking every member with it. The containing class still
+> advertised the lowered implementation names in its `methods` property, so the
+> type looked present while none of its members was a node or an edge endpoint,
+> and `excess_visibility` reported a heavily-used loader as consumed by nobody.
+> A graph built before that date is wrong in that specific way rather than
+> merely incomplete; rebuild it.
 
 **Properties and fields are nodes, statics included.** Every declared property and
 field — any accessibility, instance or static — is its own node (`prop:` / `field:`
