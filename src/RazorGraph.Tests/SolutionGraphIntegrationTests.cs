@@ -320,6 +320,22 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void QuotesEdges_IgnoreNamesSeveralDeclarationsShare()
+    {
+        // "Dispose" is declared by CatalogStore and by the fixture's own
+        // disposable, so a string naming it cannot say which is meant -- and
+        // usually neither is, the author meaning IDisposable.Dispose, which has
+        // no node. The first build of this reported an edge per match and 174
+        // rows came back with almost nothing in them.
+        var shared = _solutionGraph!.Nodes
+            .Where(n => n.Type == NodeType.Method && n.Name == "Dispose")
+            .ToList();
+        Assert.True(shared.Count > 1, "fixture no longer has an ambiguous name to test");
+
+        Assert.Empty(QuotesFrom("AmbiguousName"));
+    }
+
+    [Fact]
     public void FindQuotedSymbols_DefaultsToTheBreakableCrossProjectSet()
     {
         var query = new GraphQuery(_solutionGraph!);

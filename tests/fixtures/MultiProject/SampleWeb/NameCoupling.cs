@@ -24,7 +24,24 @@ public class NameCoupling
     /// <summary>Names no declaration anywhere in the solution, so it is not an edge.</summary>
     public string Prose() => "nothing in this sentence is declared";
 
+    /// <summary>
+    /// Names something several declarations share, so the graph cannot say which
+    /// is meant and says nothing. Usually the author meant a framework member
+    /// with no node at all, as here.
+    /// </summary>
+    public string AmbiguousName() => "Dispose";
+
     /// <summary>An attribute argument: read by a framework, not by this assembly.</summary>
     [Description("PriceBook")]
     public string Attributed() => "ok";
+}
+
+/// <summary>
+/// Exists to give the solution a SECOND Dispose. One declaration of a name is a
+/// claim the graph can support; two make the name say nothing, which is what
+/// AmbiguousName above is testing.
+/// </summary>
+public sealed class Scratch : System.IDisposable
+{
+    public void Dispose() { }
 }

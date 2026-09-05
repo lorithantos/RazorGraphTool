@@ -170,6 +170,19 @@ Calls edge to the resource's `Dispose`/`DisposeAsync`. Methods whose bodies nest
 a `bodyDepth` property stamped at build time, which feeds the deep-nesting report
 (`deep_methods` / `query --deep`).
 
+**A string that names a declaration is an edge to it.** `Quotes` edges run from the
+code that produces a string to the node whose name it matches, carrying the value,
+the line, and a `provenance`: `nameof` survives a rename, `literal` and
+`interpolated` do not, and `attributeArgument` breaks a framework binding instead of
+the build. That distinction is the reason this is done over syntax — `nameof(X)` and
+`"X"` compile to identical instructions, so an IL reader cannot separate them.
+`quoted_symbols` reports the breakable ones crossing a project boundary, which is the
+coupling no per-compilation analyzer can even ask about: compiling the quoting
+project, the quoted names are not in scope. Matching is by name and only when that
+name is **unique** in the solution, so the report both under-reports (a string naming
+something called `Dispose` is dropped) and over-reports (a string that merely equals
+a name matches it). Rows are candidates to read.
+
 **A node says what a person can change about it.** Type nodes carry `isInterface` —
 interfaces are `Class` nodes unless DI registration promotes them to
 `ServiceInterface`, so without the flag most of a codebase's interfaces are

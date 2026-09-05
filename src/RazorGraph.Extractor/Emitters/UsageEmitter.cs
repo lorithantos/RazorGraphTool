@@ -51,12 +51,18 @@ internal sealed class UsageEmitter(CodeGraph graph)
     /// Emits Quotes edges: from the code that produces a string to the declared
     /// node whose name that string matches.
     ///
-    /// MATCHING IS BY NAME, which is the whole idea and also the whole risk. A
-    /// string that matches nothing declared is dropped -- that is what keeps a
-    /// report about coupling from becoming an index of every message in the
-    /// codebase. A string that matches several declarations gets an edge to each,
-    /// because the graph cannot know which one the author meant and guessing
-    /// would turn a reported fact into a reported opinion.
+    /// MATCHING IS BY NAME, AND ONLY WHEN THE NAME IS UNIQUE in the solution.
+    /// Both halves of that are load-bearing. A string matching nothing declared
+    /// is dropped, which is what keeps a report about coupling from becoming an
+    /// index of every message in the codebase. A string matching SEVERAL
+    /// declarations is dropped too, and that rule was learned by running the
+    /// first build of this: "Dispose" in the extractor matched the Dispose of
+    /// every test class, "Main" matched a generated entry point, and 174 rows
+    /// came back of which almost none were about anything. An edge to each match
+    /// is not a conservative answer, it is an invented one -- the author meant a
+    /// single thing, usually a framework member with no node at all. A name
+    /// declared once is a claim the graph can actually support: rename that
+    /// declaration and this string is wrong.
     ///
     /// Runs after every declaration is a node, and on a solution build that means
     /// the index spans projects -- which is the point. The question worth asking
@@ -67,10 +73,11 @@ internal sealed class UsageEmitter(CodeGraph graph)
     /// </summary>
     internal void AddQuotesEdges(IEnumerable<QuotedName> quoted)
     {
-        var byName = graph.Nodes
+        var uniqueByName = graph.Nodes
             .Where(Nameable)
             .GroupBy(n => n.Name, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.Select(n => n.Id).ToList(), StringComparer.Ordinal);
+            .Where(g => g.Count() == 1)
+            .ToDictionary(g => g.Key, g => g.Single().Id, StringComparer.Ordinal);
 
         // One edge per (source, target, provenance). The same name typed twice in
         // one method is one coupling; a name that is both a nameof and a literal
@@ -81,21 +88,18 @@ internal sealed class UsageEmitter(CodeGraph graph)
         foreach (var quote in quoted)
         {
             if (!graph.HasNode(quote.FromId)) continue;
-            if (!byName.TryGetValue(quote.Value, out var targets)) continue;
+            if (!uniqueByName.TryGetValue(quote.Value, out var toId)) continue;
 
-            foreach (var toId in targets)
-            {
-                // A declaration naming itself -- a property whose attribute
-                // repeats its own name -- is not coupling between two places.
-                if (toId == quote.FromId) continue;
-                if (!seen.Add((quote.FromId, toId, quote.Provenance))) continue;
+            // A declaration naming itself -- a property whose attribute repeats
+            // its own name -- is not coupling between two places.
+            if (toId == quote.FromId) continue;
+            if (!seen.Add((quote.FromId, toId, quote.Provenance))) continue;
 
-                var edge = new GraphEdge { FromId = quote.FromId, ToId = toId, Type = EdgeType.Quotes };
-                edge.Properties["value"] = quote.Value;
-                edge.Properties["provenance"] = quote.Provenance;
-                edge.Properties["line"] = quote.Line;
-                graph.AddEdge(edge);
-            }
+            var edge = new GraphEdge { FromId = quote.FromId, ToId = toId, Type = EdgeType.Quotes };
+            edge.Properties["value"] = quote.Value;
+            edge.Properties["provenance"] = quote.Provenance;
+            edge.Properties["line"] = quote.Line;
+            graph.AddEdge(edge);
         }
     }
 
