@@ -23,6 +23,7 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     private static CodeGraph? _webOnlyGraph;
     private static CodeGraph? _noTestsGraph;
     private static IReadOnlyList<string>? _noTestsSkipped;
+    private static CodeGraph? _noLiteralsGraph;
 
     private static string RepoRoot()
     {
@@ -66,6 +67,14 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
             {
                 _noTestsGraph = await builder.BuildFromSolutionAllAsync(solutionPath);
                 _noTestsSkipped = builder.SkippedTestProjects;
+            }
+
+            // And without the literal index. A separate build rather than a filter
+            // over the first: the claim is about what the builder emits, and a test
+            // that deletes the nodes itself would pass with the option ignored.
+            await using (var builder = new GraphBuilder { ExcludeLiterals = true })
+            {
+                _noLiteralsGraph = await builder.BuildFromSolutionAllAsync(solutionPath);
             }
         }
         finally
@@ -357,6 +366,214 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
             q => Assert.Equal("SampleWeb", q.From.GetProperty<string>("project")));
         Assert.DoesNotContain(query.FindQuotedSymbols(project: "SampleLib"),
             q => q.From.GetProperty<string>("declaringType") == "SampleWeb.NameCoupling");
+    }
+
+    // ---- Literal index -------------------------------------------------------
+
+    /// <summary>Mentions edges out of one method of the NameCoupling fixture.</summary>
+    private static List<GraphEdge> MentionsFrom(string method) =>
+        _solutionGraph!.Outgoing(Method(_solutionGraph, "SampleWeb.NameCoupling", method).Id)
+            .Where(e => e.Type == EdgeType.Mentions)
+            .ToList();
+
+    private static GraphNode Literal(CodeGraph graph, string value) =>
+        graph.Nodes.Single(n => n.Type == NodeType.Literal && n.Name == value);
+
+    [Fact]
+    public void LiteralIndex_KeepsTheStringsQuotesThrowsAway()
+    {
+        // The gap this exists to close. "nothing in this sentence is declared"
+        // names no declaration, so it is not a Quotes edge and never was -- and it
+        // used to be unfindable in the graph at all, which sent the question to
+        // grep. QuotesEdges_IgnoreStringsThatNameNothing is the mirror of this
+        // test and must keep passing: the same string, two different answers,
+        // because they are two different questions.
+        Assert.Empty(QuotesFrom("Prose"));
+
+        var edge = Assert.Single(MentionsFrom("Prose"));
+        var literal = _solutionGraph!.GetNode(edge.ToId)!;
+
+        Assert.Equal(NodeType.Literal, literal.Type);
+        Assert.Equal("nothing in this sentence is declared", literal.Name);
+        Assert.Equal("nothing in this sentence is declared", literal.GetProperty<string>("value"));
+    }
+
+    [Fact]
+    public void LiteralNodes_AreOnePerValue_HoweverManyPlacesProduceIt()
+    {
+        // Dedup by value is what makes the node worth having: it is the string,
+        // and its incoming set is every site. Minting a node per occurrence would
+        // give the same answer only by walking a list nobody can name.
+        var literal = Literal(_solutionGraph!, "waves.ini");
+
+        var sites = _solutionGraph!.Incoming(literal.Id).Where(e => e.Type == EdgeType.Mentions).ToList();
+        Assert.Equal(2, sites.Count);
+
+        var producers = sites.Select(e => _solutionGraph.GetNode(e.FromId)!.Name).OrderBy(n => n).ToList();
+        Assert.Equal(new[] { "AlsoTheConfigFile", "ConfigFile" }, producers);
+    }
+
+    [Fact]
+    public void LiteralNodes_CarryNoSiteOfTheirOwn_AndAHashedId()
+    {
+        var literal = Literal(_solutionGraph!, "waves.ini");
+
+        // No file, line or project, for ExternalType's reason: a value used in two
+        // places has no single site, and putting one of them on the node would
+        // make the other one invisible.
+        Assert.Null(literal.FilePath);
+        Assert.Null(literal.LineStart);
+        Assert.Null(literal.GetProperty<string>("project"));
+
+        // The id cannot be the text -- values hold quotes, colons and newlines.
+        Assert.StartsWith("lit:", literal.Id, StringComparison.Ordinal);
+        Assert.Equal(4 + 16, literal.Id.Length);
+        Assert.DoesNotContain("waves.ini", literal.Id, StringComparison.Ordinal);
+
+        // Stable across builds rather than per-process: the same value in a graph
+        // built separately has the same id.
+        Assert.Equal(literal.Id, Literal(_webOnlyGraph!, "waves.ini").Id);
+    }
+
+    [Fact]
+    public void MentionsEdges_CarryTheLineAndTheProvenance()
+    {
+        // The same two facts a Quotes edge carries, and for the same reason: a
+        // nameof and a typed literal of one value are one string and two different
+        // situations, and the line is what lets a reader go and look.
+        var typed = Assert.Single(MentionsFrom("TypedName"));
+        Assert.Equal("CatalogStore", _solutionGraph!.GetNode(typed.ToId)!.Name);
+        Assert.Equal("literal", typed.GetProperty<string>("provenance"));
+        Assert.True(typed.GetProperty<int>("line") > 0);
+
+        var interpolated = Assert.Single(MentionsFrom("Interpolated"));
+        Assert.Equal("Normalize", _solutionGraph.GetNode(interpolated.ToId)!.Name);
+        Assert.Equal("interpolated", interpolated.GetProperty<string>("provenance"));
+
+        // An attribute argument is read by the framework, not by this assembly, so
+        // it lands with its own provenance rather than as a plain literal.
+        var attributed = Assert.Single(MentionsFrom("Attributed"));
+        Assert.Equal("PriceBook", _solutionGraph.GetNode(attributed.ToId)!.Name);
+        Assert.Equal("attributeArgument", attributed.GetProperty<string>("provenance"));
+
+        var safe = Assert.Single(MentionsFrom("SafeName"));
+        Assert.Equal("nameof", safe.GetProperty<string>("provenance"));
+    }
+
+    [Fact]
+    public void LiteralIndex_SkipsStringsBelowTheThreeCharacterFloor()
+    {
+        // Attributed returns "ok". The floor is the scanner's, reused rather than
+        // re-decided: "Id" and "To" are in every codebase and would bury the rest.
+        // The method's ONE Mentions edge is the attribute argument, not the body.
+        Assert.DoesNotContain(_solutionGraph!.Nodes, n => n.Type == NodeType.Literal && n.Name == "ok");
+        Assert.Equal("PriceBook",
+            _solutionGraph.GetNode(Assert.Single(MentionsFrom("Attributed")).ToId)!.Name);
+    }
+
+    [Fact]
+    public void ExcludeLiterals_DropsTheIndexEntirely_AndLeavesQuotesAlone()
+    {
+        Assert.Empty(_noLiteralsGraph!.NodesOfType(NodeType.Literal));
+        Assert.DoesNotContain(_noLiteralsGraph.Edges, e => e.Type == EdgeType.Mentions);
+
+        // The option narrows one thing. Quotes runs off the same scan and must be
+        // untouched by it, or "build it lean" would quietly change an answer that
+        // has nothing to do with literals.
+        Assert.Equal(
+            _solutionGraph!.Edges.Count(e => e.Type == EdgeType.Quotes),
+            _noLiteralsGraph.Edges.Count(e => e.Type == EdgeType.Quotes));
+        Assert.Contains(_noLiteralsGraph.Edges, e => e.Type == EdgeType.Quotes);
+    }
+
+    [Fact]
+    public void QuotesEdgeCount_IsUnchangedByTheLiteralIndex()
+    {
+        // The non-regression pin, and a hardcoded number on purpose. Every other
+        // assertion here is about one method; this one is about the whole report,
+        // and the hazard it guards is invisible from any single method: a Literal
+        // node's Name IS its value, so if those nodes reached the uniqueness index
+        // AddQuotesEdges builds, every matched name would collide with itself and
+        // the Quotes edges would silently disappear. Nothing about "CatalogStore"
+        // read alone would show it.
+        Assert.Equal(5, _solutionGraph!.Edges.Count(e => e.Type == EdgeType.Quotes));
+    }
+
+    [Fact]
+    public void FindLiterals_JoinsEachOccurrenceToItsProducingMembersFile()
+    {
+        var page = new GraphQuery(_solutionGraph!).FindLiterals("waves.ini");
+
+        Assert.Equal(2, page.TotalMatches);
+        Assert.Null(page.NextOffset);
+        Assert.All(page.Rows, r =>
+        {
+            Assert.Equal("waves.ini", r.Value);
+            // The file is the MEMBER's, since the Literal node has none.
+            Assert.EndsWith("NameCoupling.cs", r.File, StringComparison.Ordinal);
+            Assert.True(r.Line > 0);
+            Assert.Equal("literal", r.Provenance);
+        });
+
+        // Substring, case-insensitively, and scoped to the quoting side's project.
+        Assert.Equal(2, new GraphQuery(_solutionGraph!).FindLiterals("WAVES", project: "SampleWeb").TotalMatches);
+        Assert.Equal(0, new GraphQuery(_solutionGraph!).FindLiterals("waves.ini", project: "SampleLib").TotalMatches);
+    }
+
+    /// <summary>
+    /// The result's declared order, compared exactly as the query claims to sort:
+    /// value, producing member, line, provenance, all ordinal.
+    /// </summary>
+    private static int CompareLiteralKeys(GraphQuery.LiteralMention a, GraphQuery.LiteralMention b)
+    {
+        var c = StringComparer.Ordinal.Compare(a.Value, b.Value);
+        if (c != 0) return c;
+        c = StringComparer.Ordinal.Compare(a.FromId, b.FromId);
+        if (c != 0) return c;
+        c = a.Line.CompareTo(b.Line);
+        return c != 0 ? c : StringComparer.Ordinal.Compare(a.Provenance, b.Provenance);
+    }
+
+    [Fact]
+    public void FindLiterals_OrdersTotally_SoPagingVisitsEveryRowExactlyOnce()
+    {
+        var query = new GraphQuery(_solutionGraph!);
+
+        var whole = query.FindLiterals(limit: 1000);
+        Assert.True(whole.TotalMatches > 20, $"fixture is too small to page: {whole.TotalMatches} rows");
+        Assert.Null(whole.NextOffset);
+
+        // STRICTLY increasing, which is the claim. Merely sorted would be satisfied
+        // by ties, and a tie is exactly where an offset stops meaning one row --
+        // the failure the coverage paging work found the hard way.
+        for (var i = 1; i < whole.Rows.Count; i++)
+            Assert.True(CompareLiteralKeys(whole.Rows[i - 1], whole.Rows[i]) < 0,
+                $"rows {i - 1} and {i} do not increase: {whole.Rows[i - 1]} then {whole.Rows[i]}");
+
+        var walked = new List<GraphQuery.LiteralMention>();
+        int? offset = 0;
+        var pages = 0;
+        while (offset is { } from)
+        {
+            var page = query.FindLiterals(limit: 3, offset: from);
+            Assert.Equal(whole.TotalMatches, page.TotalMatches);
+            Assert.Equal(from, walked.Count);
+            walked.AddRange(page.Rows);
+            offset = page.NextOffset;
+            Assert.True(++pages <= whole.TotalMatches, "paging did not terminate");
+        }
+
+        // Every row, once, in the order one whole page gives.
+        Assert.Equal(whole.Rows, walked);
+    }
+
+    [Fact]
+    public void HasLiteralIndex_SeparatesNoMatchFromNoIndex()
+    {
+        // Zero rows has two causes and only one of them is a fact about the code.
+        Assert.True(new GraphQuery(_solutionGraph!).HasLiteralIndex());
+        Assert.False(new GraphQuery(_noLiteralsGraph!).HasLiteralIndex());
+        Assert.Equal(0, new GraphQuery(_noLiteralsGraph!).FindLiterals("waves.ini").TotalMatches);
     }
 
     [Fact]

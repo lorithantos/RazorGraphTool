@@ -230,6 +230,94 @@ public sealed class GraphQuery
     }
 
     /// <summary>
+    /// One occurrence of a literal value: the text, the member that produces it,
+    /// where that member lives, the line, and the form the string took.
+    /// </summary>
+    /// <remarks>
+    /// The file comes from the PRODUCING member, never from the Literal node — a
+    /// Literal is one node per distinct value across the whole graph and has no file
+    /// of its own. Joining here rather than returning node ids is the whole ergonomic
+    /// point: the question is "where is this string", and an answer a caller has to
+    /// resolve with N further lookups has not been given yet.
+    /// </remarks>
+    public sealed record LiteralMention(
+        string Value, string FromId, string FromName, string? File, int Line, string Provenance);
+
+    /// <summary>One page of literal occurrences, and how to ask for the next.</summary>
+    /// <param name="NextOffset">
+    /// Present only when there is more, so its absence is "that was the end" — the
+    /// same convention the coverage queries page by.
+    /// </param>
+    public sealed record LiteralPage(
+        IReadOnlyList<LiteralMention> Rows, int TotalMatches, int? NextOffset);
+
+    /// <summary>
+    /// Every place a literal value appears, by VALUE rather than by what it happens
+    /// to name. This is the question <see cref="FindQuotedSymbols"/> deliberately
+    /// cannot answer: that one keeps only strings equal to a uniquely-declared symbol
+    /// name, which is what makes it a rename-safety report, and drops the config keys,
+    /// file names and route fragments that are most of the strings in any codebase.
+    /// Those are here, and grep was the only way to reach them before.
+    /// </summary>
+    /// <param name="valueContains">Case-insensitive substring of the value; null matches every literal.</param>
+    /// <param name="project">Restrict to occurrences produced by code in this project.</param>
+    /// <param name="limit">Page size, clamped to 1..1000.</param>
+    /// <param name="offset">Where to start; pass a previous page's NextOffset.</param>
+    public LiteralPage FindLiterals(
+        string? valueContains = null, string? project = null, int limit = 50, int offset = 0)
+    {
+        var matches = new List<LiteralMention>();
+
+        foreach (var edge in _graph.Edges.Where(e => e.Type == EdgeType.Mentions))
+        {
+            if (_graph.GetNode(edge.ToId) is not { } literal) continue;
+            if (_graph.GetNode(edge.FromId) is not { } from) continue;
+
+            var value = literal.GetProperty<string>("value") ?? literal.Name;
+            if (valueContains != null
+                && !value.Contains(valueContains, StringComparison.OrdinalIgnoreCase)) continue;
+
+            if (project != null && !string.Equals(
+                    from.GetProperty<string>("project"), project, StringComparison.OrdinalIgnoreCase)) continue;
+
+            matches.Add(new LiteralMention(
+                value, from.Id, from.Name, from.FilePath,
+                edge.GetProperty<int>("line"),
+                edge.GetProperty<string>("provenance") ?? "literal"));
+        }
+
+        // A TOTAL order, because the result is paged by offset and an offset into a
+        // partially ordered result silently repeats and skips rows — the same lesson
+        // the coverage queries carry. Value first because that is what the caller
+        // asked about and it groups every site of one string together; then the
+        // producing member, then the line, then the provenance, which is what closes
+        // it: without that last key two rows can tie on all three earlier keys, one
+        // literal and one interpolated segment of the same text on the same line of
+        // the same member, and their relative order would be whatever edge
+        // enumeration happened to yield.
+        var ordered = matches
+            .OrderBy(m => m.Value, StringComparer.Ordinal)
+            .ThenBy(m => m.FromId, StringComparer.Ordinal)
+            .ThenBy(m => m.Line)
+            .ThenBy(m => m.Provenance, StringComparer.Ordinal)
+            .ToList();
+
+        var from0 = Math.Clamp(offset, 0, ordered.Count);
+        var take = Math.Clamp(limit, 1, 1000);
+        var page = ordered.Skip(from0).Take(take).ToList();
+        var end = from0 + page.Count;
+
+        return new LiteralPage(page, ordered.Count, end < ordered.Count ? end : null);
+    }
+
+    /// <summary>
+    /// Whether this graph was built with the literal index at all. The distinction a
+    /// caller needs when <see cref="FindLiterals"/> returns nothing: no match, or no
+    /// index — and only the first of those is a fact about the code.
+    /// </summary>
+    public bool HasLiteralIndex() => _graph.NodesOfType(NodeType.Literal).Any();
+
+    /// <summary>
     /// One node whose declared visibility exceeds its observed reach, with the
     /// projects that do consume it — always its own assembly, or nothing.
     /// </summary>

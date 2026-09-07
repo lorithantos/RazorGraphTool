@@ -48,7 +48,8 @@ internal static class QueryCommand
             Description = "Traversal direction for --trace: outgoing (default), incoming, or both",
             DefaultValueFactory = _ => "outgoing"
         };
-        var projectOpt = new Option<string?>("--project") { Description = "Restrict --type or --uncovered to one project" };
+        var projectOpt = new Option<string?>("--project") { Description = "Restrict --type, --uncovered or --literals to one project" };
+        var literalsOpt = new Option<string?>("--literals") { Description = "List every place a string value appears, by case-insensitive substring of the value. Pass an empty string to list all of them." };
         var coveringOpt = new Option<bool>("--covering-tests") { Description = "With --id of a method: which tests exercise it" };
         var coveredOpt = new Option<bool>("--covered-methods") { Description = "With --id of a test: which methods it exercises" };
         var uncoveredOpt = new Option<bool>("--uncovered") { Description = "List methods no test reaches (use with --project)" };
@@ -75,6 +76,7 @@ internal static class QueryCommand
         cmd.Add(coveredOpt);
         cmd.Add(uncoveredOpt);
         cmd.Add(deepOpt);
+        cmd.Add(literalsOpt);
         cmd.Add(mismatchesOpt);
         cmd.Add(escapesOpt);
         cmd.Add(entryKindOpt);
@@ -99,6 +101,7 @@ internal static class QueryCommand
                 CoveredMethods = parseResult.GetValue(coveredOpt),
                 Uncovered = parseResult.GetValue(uncoveredOpt),
                 Deep = parseResult.GetValue(deepOpt),
+                Literals = parseResult.GetValue(literalsOpt),
                 Mismatches = parseResult.GetValue(mismatchesOpt),
                 Escapes = parseResult.GetValue(escapesOpt),
                 EntryKind = parseResult.GetValue(entryKindOpt),
@@ -127,6 +130,7 @@ internal static class QueryCommand
         public bool CoveredMethods { get; init; }
         public bool Uncovered { get; init; }
         public int Deep { get; init; }
+        public string? Literals { get; init; }
         public bool Mismatches { get; init; }
         public bool Escapes { get; init; }
         public string? EntryKind { get; init; }
@@ -149,6 +153,14 @@ internal static class QueryCommand
             if (options.Escapes) return RunEscapes(query, options);
             if (options.Uncovered) return RunUncovered(query, options);
             if (options.Deep > 0) return RunDeepListing(query, options);
+            // Above --id and below the other whole-graph reports, which is where it
+            // belongs on both counts: it is a report over the graph rather than a
+            // question about one node, and it is less specific than --uncovered or
+            // --deep, which name a population. Being above --name matters — --name
+            // searches node NAMES, a Literal node's name IS its value, and if
+            // --literals fell through to it the two would answer nearly the same
+            // question with different rows and no way to tell which ran.
+            if (options.Literals != null) return RunLiteralListing(query, options);
             if (options.Id != null) return RunNodeReport(query, graph, options.Id, options);
             // Any kind the graph actually holds, foreign ones included. An
             // unparseable --type used to fall through to the generic "Graph
@@ -379,6 +391,64 @@ internal static class QueryCommand
         foreach (var m in deep)
             Console.WriteLine($"  depth {m.GetProperty<int>("bodyDepth")}: [{m.GetProperty<string>("project")}] "
                 + $"{m.GetProperty<string>("declaringType")}.{m.Name}  ({m.FilePath}:{m.LineStart})");
+        return 0;
+    }
+
+    /// <summary>
+    /// Every occurrence of a literal value, by substring. Pages through the query
+    /// rather than asking for one window: the query caps a page at 1000 so that a
+    /// tool response stays a response, while a CLI caller asked for the data. The
+    /// loop is also the only consumer that depends on the total order being total —
+    /// a partial one would repeat and skip rows here first.
+    /// </summary>
+    private static int RunLiteralListing(GraphQuery query, QueryOptions options)
+    {
+        var contains = string.IsNullOrEmpty(options.Literals) ? null : options.Literals;
+
+        var rows = new List<GraphQuery.LiteralMention>();
+        int? next = 0;
+        while (next is { } offset)
+        {
+            var page = query.FindLiterals(contains, options.Project, limit: 1000, offset);
+            rows.AddRange(page.Rows);
+            next = page.NextOffset;
+        }
+
+        if (options.Json)
+        {
+            Emit(new
+            {
+                contract = JsonContract,
+                mode = "literals",
+                valueContains = contains,
+                project = options.Project,
+                returned = rows.Count,
+                // Emitted only when there is no index, so its presence is the whole
+                // signal: zero results otherwise means zero occurrences.
+                literalIndexAbsent = rows.Count == 0 && !query.HasLiteralIndex() ? true : (bool?)null,
+                results = rows.Select(r => new
+                {
+                    value = r.Value,
+                    fromId = r.FromId,
+                    fromName = r.FromName,
+                    file = r.File,
+                    line = r.Line,
+                    provenance = r.Provenance
+                })
+            });
+            return 0;
+        }
+
+        Console.WriteLine($"{rows.Count} literal occurrence(s)"
+            + (contains == null ? " (every indexed literal)" : $" matching '{contains}'")
+            + (options.Project == null ? "" : $" in {options.Project}") + ":");
+        foreach (var r in rows.Take(200))
+            Console.WriteLine($"  \"{r.Value}\" [{r.Provenance}] in {r.FromName}  ({r.File}:{r.Line})");
+        if (rows.Count > 200) Console.WriteLine($"  ... {rows.Count - 200} more not shown");
+
+        // Zero rows has two causes and they are not the same finding.
+        if (rows.Count == 0 && !query.HasLiteralIndex())
+            Console.WriteLine("  (this graph carries no literal index at all — it was built with --no-literals)");
         return 0;
     }
 

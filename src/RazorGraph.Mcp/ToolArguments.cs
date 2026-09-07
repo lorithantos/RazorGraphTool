@@ -26,7 +26,7 @@ internal static class ToolArguments
     internal const string NodeTypeList =
         "Project, RazorPage, PageModel, ApiController, ControllerAction, PartialView, ViewComponent, Layout, " +
         "Service, ServiceInterface, ServiceImplementation, ViewModel, Class, Method, Property, Field, " +
-        "ViewDataKey, NamedBinding, ConfigurationFile, ExternalType, Parameter, Middleware, Route, " +
+        "ViewDataKey, NamedBinding, ConfigurationFile, ExternalType, Parameter, Literal, Middleware, Route, " +
         "HtmlElement, TagHelperInvocation, JavaScriptFile, CssFile";
 
     internal const string GraphIdDescription =

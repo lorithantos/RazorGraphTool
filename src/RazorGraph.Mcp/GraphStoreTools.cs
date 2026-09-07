@@ -22,6 +22,7 @@ internal sealed class GraphStoreTools(GraphStore store)
         [Description("Project name inside the solution; required when path is a solution")] string? projectName = null,
         [Description("Id to file the result under. Defaults to the file name; reusing an id replaces that graph.")] string? graphId = null,
         [Description("Also graph vendor/minified client assets (dropped by default). Their nodes carry vendor=true and a vendorReason; useful when the bug lives inside a shipped bundle.")] bool includeVendor = false,
+        [Description(ExcludeLiteralsDescription)] bool excludeLiterals = false,
         [Description("Absolute path to an attribute-policy JSON overriding the embedded default (classification name sets, argument-payload suppression, registration vocabulary). Sections the file omits are inherited.")] string? attributePolicy = null,
         CancellationToken ct = default)
     {
@@ -37,6 +38,7 @@ internal sealed class GraphStoreTools(GraphStore store)
         await using var builder = new GraphBuilder
         {
             IncludeVendorAssets = includeVendor,
+            ExcludeLiterals = excludeLiterals,
             AttributePolicy = LoadPolicy(attributePolicy)
         };
         var graph = isSolution
@@ -45,8 +47,18 @@ internal sealed class GraphStoreTools(GraphStore store)
 
         return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries,
             unboundShapes: builder.UnboundShapes, unresolvedAttributes: builder.UnresolvedAttributes,
-            analyzerHostWarnings: builder.AnalyzerHostWarnings);
+            analyzerHostWarnings: builder.AnalyzerHostWarnings, literalsExcluded: excludeLiterals);
     }
+
+    /// <summary>
+    /// Shared between build_graph and build_solution so the two cannot describe the
+    /// same switch differently.
+    /// </summary>
+    private const string ExcludeLiteralsDescription =
+        "Skip the literal index: no Literal nodes, no Mentions edges, so find_literals returns nothing " +
+        "and \"where does this string appear\" is unanswerable against the result. Default false, so the " +
+        "default graph answers every question. Quotes edges and quoted_symbols are unaffected either way — " +
+        "they are a different question over the same scan. A build that used this says so in its summary.";
 
     [McpServerTool(Name = "build_solution")]
     [Description("Build ONE graph spanning every project in a solution (.sln/.slnx). Unlike build_graph, calls and injections that cross project boundaries become real edges — this is what makes \"which tests cover this method\" and \"what breaks if I change this\" answerable. Adds Project nodes, per-node project attribution, and Covers edges from test methods to the code they exercise. Slower than build_graph: it compiles every project.")]
@@ -55,6 +67,7 @@ internal sealed class GraphStoreTools(GraphStore store)
         [Description("Id to file the result under. Defaults to the solution file name.")] string? graphId = null,
         [Description("Also graph vendor/minified client assets (dropped by default). Their nodes carry vendor=true and a vendorReason; useful when the bug lives inside a shipped bundle.")] bool includeVendor = false,
         [Description("Skip test projects: no test Method nodes, no Covers edges — a leaner navigation graph. Coverage tools refuse to answer against it rather than reporting everything uncovered. Default false, so the default graph answers every question.")] bool excludeTests = false,
+        [Description(ExcludeLiteralsDescription)] bool excludeLiterals = false,
         [Description("Absolute path to an attribute-policy JSON overriding the embedded default (classification name sets, argument-payload suppression, registration vocabulary). Sections the file omits are inherited.")] string? attributePolicy = null,
         CancellationToken ct = default)
     {
@@ -67,13 +80,14 @@ internal sealed class GraphStoreTools(GraphStore store)
         {
             IncludeVendorAssets = includeVendor,
             ExcludeTestProjects = excludeTests,
+            ExcludeLiterals = excludeLiterals,
             AttributePolicy = LoadPolicy(attributePolicy)
         };
         var graph = await builder.BuildFromSolutionAllAsync(full, ct);
 
         return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries, builder.SkippedTestProjects,
             builder.UnboundShapes, unresolvedAttributes: builder.UnresolvedAttributes,
-            analyzerHostWarnings: builder.AnalyzerHostWarnings);
+            analyzerHostWarnings: builder.AnalyzerHostWarnings, literalsExcluded: excludeLiterals);
     }
 
     /// <summary>
@@ -215,7 +229,8 @@ internal sealed class GraphStoreTools(GraphStore store)
         IReadOnlyList<string>? unboundShapes = null,
         GraphFormatAssessment? format = null,
         IReadOnlyList<string>? unresolvedAttributes = null,
-        IReadOnlyList<string>? analyzerHostWarnings = null)
+        IReadOnlyList<string>? analyzerHostWarnings = null,
+        bool literalsExcluded = false)
     {
         var graph = entry.Graph;
         // Grouped by display kind, so a foreign vocabulary is censused under its
@@ -250,6 +265,11 @@ internal sealed class GraphStoreTools(GraphStore store)
             // Same contract for excluded test projects: this graph cannot
             // answer coverage questions, and its summary must say why.
             skippedTestProjects = testProjectSkips is { Count: > 0 } ? testProjectSkips : null,
+            // And for the literal index. Absent when literals were indexed, so an
+            // empty find_literals against a graph that carries this flag is the
+            // build's choice rather than a codebase with no strings in it -- which
+            // is exactly the absence-as-finding trap the other two skips avoid.
+            literalsExcluded = literalsExcluded ? true : (bool?)null,
             // Shape names nothing binds. OrchardCore throws when a shape resolves
             // to no binding, so each is a runtime failure on whatever path
             // produces it -- a finding, and findings ride the build response

@@ -104,11 +104,87 @@ internal sealed class UsageEmitter(CodeGraph graph)
     }
 
     /// <summary>
+    /// Emits the literal index: one Literal node per DISTINCT value, and one
+    /// Mentions edge per occurrence, from the member that produces the string to
+    /// that node.
+    ///
+    /// This is the OTHER consumer of the same scanner stream AddQuotesEdges reads,
+    /// and the split is the point. Quotes keeps only strings whose value equals a
+    /// uniquely-declared name, which is what makes it a rename-safety report; every
+    /// other string was thrown away, and those are most of them -- a config key, a
+    /// file name, a route fragment, an ini section. "Where is arrivalTicks read" had
+    /// no answer in the graph and fell back to grep, although the scanner had
+    /// already found every occurrence.
+    ///
+    /// DEDUPLICATED BY VALUE, so the node is the value rather than a site: five
+    /// methods naming "waves.ini" make one node with five incoming edges, and
+    /// asking the node who mentions it is the whole query. That is why the node
+    /// carries no filePath, line or project -- there is no single site to put
+    /// there, exactly as with ExternalType. The per-site facts ride the edges.
+    ///
+    /// The id cannot be the text: values contain quotes, colons and newlines, and
+    /// an id is compared and stored as an opaque key. A SHA-256 prefix is stable
+    /// across builds and machines, which a hash-code is not.
+    ///
+    /// No length ceiling. The scanner's own three-character floor is reused and
+    /// nothing else is filtered here: a long value makes an ugly node name and
+    /// nothing worse, whereas a cap would be a rule about which strings deserve to
+    /// be findable, and there is no honest place to draw it.
+    /// </summary>
+    internal void AddMentionsEdges(IEnumerable<QuotedName> quoted)
+    {
+        foreach (var quote in quoted)
+        {
+            // Strings from code the classifier skipped have no member to hang off.
+            if (!graph.HasNode(quote.FromId)) continue;
+
+            var literalId = LiteralId(quote.Value);
+            if (!graph.HasNode(literalId))
+            {
+                var node = new GraphNode
+                {
+                    Id = literalId,
+                    Type = NodeType.Literal,
+                    Name = quote.Value
+                };
+                // Repeated in a property as well as in the name: Name is what a name
+                // search matches, and a consumer reading the value should not have to
+                // know that the display name happens to be load-bearing.
+                node.SetProperty("value", quote.Value);
+                graph.AddNode(node);
+            }
+
+            var edge = new GraphEdge { FromId = quote.FromId, ToId = literalId, Type = EdgeType.Mentions };
+            edge.Properties["line"] = quote.Line;
+            edge.Properties["provenance"] = quote.Provenance;
+            graph.AddEdge(edge);
+        }
+    }
+
+    /// <summary>
+    /// The node id for a value: "lit:" and the first 16 hex characters of its
+    /// SHA-256. Not a security boundary -- 64 bits of a cryptographic digest is
+    /// simply the cheapest collision-free-in-practice key for arbitrary text.
+    /// </summary>
+    private static string LiteralId(string value) =>
+        "lit:" + Convert.ToHexStringLower(
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value)))[..16];
+
+    /// <summary>
     /// Nodes whose name a string could plausibly be naming. Constructors are
     /// excluded: ".ctor" is an id spelling, never something anyone types.
     /// </summary>
+    /// <remarks>
+    /// Literal is excluded and the exclusion is load-bearing, not tidiness. A Literal
+    /// node's Name IS the string, so without this every value that matched a
+    /// declaration would also match itself, the name would stop being unique, and the
+    /// Quotes edge would silently disappear -- the literal index quietly deleting the
+    /// report it was added beside. Emission order already keeps these nodes out of the
+    /// index, and depending on order for that would be one reordering away from a
+    /// wrong answer with no test near the change.
+    /// </remarks>
     private static bool Nameable(GraphNode node) =>
-        node.Type is not (NodeType.Project or NodeType.Parameter)
+        node.Type is not (NodeType.Project or NodeType.Parameter or NodeType.Literal)
         && !node.Name.StartsWith('.');
 
     internal void AddMemberAccessEdges(IEnumerable<MemberAccessInfo> accesses)

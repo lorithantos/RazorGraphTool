@@ -28,6 +28,7 @@ internal static class BuildCommands
         {
             Description = "Also graph vendor/minified client assets (dropped by default); their nodes carry vendor=true"
         };
+        var noLiteralsOpt = NoLiteralsOption();
         var policyOpt = AttributePolicyOption();
 
         var cmd = new Command("build", "Build graph from a project or solution and output JSON");
@@ -35,6 +36,7 @@ internal static class BuildCommands
         cmd.Add(outputOpt);
         cmd.Add(projectOpt);
         cmd.Add(includeVendorOpt);
+        cmd.Add(noLiteralsOpt);
         cmd.Add(policyOpt);
 
         cmd.SetAction((parseResult, ct) => RunBuildAsync(
@@ -42,11 +44,23 @@ internal static class BuildCommands
             parseResult.GetValue(outputOpt)!,
             parseResult.GetValue(projectOpt),
             parseResult.GetValue(includeVendorOpt),
+            parseResult.GetValue(noLiteralsOpt),
             parseResult.GetValue(policyOpt),
             ct));
 
         return cmd;
     }
+
+    /// <summary>
+    /// The CLI spelling of excludeLiterals, shared by both build commands. Named
+    /// --no-literals to match --no-tests: the two are the same kind of switch, a
+    /// deliberate narrowing of what the graph can answer.
+    /// </summary>
+    private static Option<bool> NoLiteralsOption() => new("--no-literals")
+    {
+        Description = "Skip the literal index: no Literal nodes, no Mentions edges, so 'query --literals' "
+            + "returns nothing against the resulting graph. Quotes edges are unaffected."
+    };
 
     private static Option<FileInfo?> AttributePolicyOption() => new("--attribute-policy")
     {
@@ -71,8 +85,8 @@ internal static class BuildCommands
     }
 
     private static async Task<int> RunBuildAsync(
-        FileInfo path, string outputPath, string? projectName, bool includeVendor, FileInfo? policyFile,
-        CancellationToken ct)
+        FileInfo path, string outputPath, string? projectName, bool includeVendor, bool noLiterals,
+        FileInfo? policyFile, CancellationToken ct)
     {
         if (!path.Exists)
         {
@@ -93,12 +107,19 @@ internal static class BuildCommands
 
         Console.WriteLine($"Building graph from {path.FullName}...");
 
-        await using var builder = new GraphBuilder { IncludeVendorAssets = includeVendor, AttributePolicy = policy };
+        await using var builder = new GraphBuilder
+        {
+            IncludeVendorAssets = includeVendor,
+            ExcludeLiterals = noLiterals,
+            AttributePolicy = policy
+        };
         var graph = isSolution
             ? await builder.BuildFromSolutionAsync(path.FullName, projectName!, ct)
             : await builder.BuildFromProjectAsync(path.FullName, ct);
 
         await GraphFiles.WriteGraphAsync(graph, outputPath, ct);
+
+        ReportLiteralsExcluded(noLiterals);
 
         // Findings ride the build output; a finding that must be queried for is
         // a secret. Stderr, because it is a diagnosis rather than a result.
@@ -110,6 +131,17 @@ internal static class BuildCommands
 
         GraphReports.PrintSummary(graph);
         return 0;
+    }
+
+    /// <summary>
+    /// Said out loud, for the reason skipped test projects are: a graph built this
+    /// way answers "where does this string appear" with nothing, and nothing is
+    /// indistinguishable from "nowhere" unless the build says which it meant.
+    /// </summary>
+    private static void ReportLiteralsExcluded(bool noLiterals)
+    {
+        if (noLiterals)
+            Console.WriteLine("Literal index skipped (--no-literals): no Literal nodes, no Mentions edges.");
     }
 
     /// <summary>
@@ -158,6 +190,7 @@ internal static class BuildCommands
         {
             Description = "Skip test projects: no test Method nodes, no Covers edges. Coverage queries against the resulting graph refuse to answer rather than reporting everything uncovered."
         };
+        var noLiteralsOpt = NoLiteralsOption();
         var policyOpt = AttributePolicyOption();
 
         var cmd = new Command("build-solution",
@@ -166,6 +199,7 @@ internal static class BuildCommands
         cmd.Add(outputOpt);
         cmd.Add(includeVendorOpt);
         cmd.Add(noTestsOpt);
+        cmd.Add(noLiteralsOpt);
         cmd.Add(policyOpt);
 
         cmd.SetAction((parseResult, ct) => RunBuildSolutionAsync(
@@ -173,6 +207,7 @@ internal static class BuildCommands
             parseResult.GetValue(outputOpt)!,
             parseResult.GetValue(includeVendorOpt),
             parseResult.GetValue(noTestsOpt),
+            parseResult.GetValue(noLiteralsOpt),
             parseResult.GetValue(policyOpt),
             ct));
 
@@ -180,8 +215,8 @@ internal static class BuildCommands
     }
 
     private static async Task<int> RunBuildSolutionAsync(
-        FileInfo path, string outputPath, bool includeVendor, bool noTests, FileInfo? policyFile,
-        CancellationToken ct)
+        FileInfo path, string outputPath, bool includeVendor, bool noTests, bool noLiterals,
+        FileInfo? policyFile, CancellationToken ct)
     {
         if (!path.Exists)
         {
@@ -204,6 +239,7 @@ internal static class BuildCommands
         {
             IncludeVendorAssets = includeVendor,
             ExcludeTestProjects = noTests,
+            ExcludeLiterals = noLiterals,
             AttributePolicy = policy
         };
         var graph = await builder.BuildFromSolutionAllAsync(path.FullName, ct);
@@ -215,6 +251,7 @@ internal static class BuildCommands
             Console.WriteLine($"Projects: {string.Join(", ", projects)}");
         if (builder.SkippedTestProjects.Count > 0)
             Console.WriteLine($"Test projects skipped: {string.Join(", ", builder.SkippedTestProjects)}");
+        ReportLiteralsExcluded(noLiterals);
         foreach (var shape in builder.UnboundShapes)
             Console.Error.WriteLine($"warning: unbound shape: {shape} — no template, Liquid file or code binding serves this name; OrchardCore throws at render time.");
 

@@ -52,12 +52,22 @@ internal static class GraphFormat
     /// The version this build writes. 1.1 added the attribute vocabulary —
     /// ExternalType and Parameter nodes, DecoratedBy and Registers edges, and
     /// the argument payloads riding them. 1.2 added the document-level
-    /// <c>builtAt</c> stamp behind per-node freshness. Both additive, so an
-    /// older reader loads a newer graph with a caveat rather than a refusal, and
-    /// a graph written without the stamp reads back as "cannot tell" rather than
-    /// as fresh.
+    /// <c>builtAt</c> stamp behind per-node freshness. 1.3 added the literal
+    /// index — Literal nodes and Mentions edges — and covers the Overrides edge,
+    /// which was added between 1.2 and here without a bump of its own. All
+    /// additive, so an older reader loads a newer graph with a caveat rather than
+    /// a refusal, and a graph written without the stamp reads back as "cannot
+    /// tell" rather than as fresh.
     /// </summary>
-    public static readonly GraphFormatVersion Current = new(1, 2);
+    /// <remarks>
+    /// New node and edge kinds are precisely what the MINOR rule below is for, and
+    /// a reader that does not know them still loads them: ParseType falls back to
+    /// Unknown plus a ForeignType for both, and the document records what it could
+    /// not model. So the bump costs an older reader a caveat and buys it the truth,
+    /// which is the trade the stamp exists to make. Overrides shipping unstamped is
+    /// the case against leaving it: nothing broke, and nothing said anything either.
+    /// </remarks>
+    public static readonly GraphFormatVersion Current = new(1, 3);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

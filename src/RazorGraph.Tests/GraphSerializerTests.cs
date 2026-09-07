@@ -162,6 +162,54 @@ public class GraphSerializerTests
         Assert.Single(restored.Incoming("pm:App.IndexModel"));
     }
 
+    /// <summary>
+    /// Literal nodes and Mentions edges survive a save and a load. They are the
+    /// newest vocabulary in the format, and a kind that round-trips as Unknown
+    /// would be preserved and unqueryable at once -- the graph still loading is
+    /// exactly what would make the loss quiet.
+    /// </summary>
+    [Fact]
+    public void RoundTrip_PreservesLiteralNodesAndMentionsEdges()
+    {
+        var graph = BuildGraph();
+
+        // A value with the characters that made a hashed id necessary in the first
+        // place: quotes, a colon, and a newline all survive JSON as data.
+        const string value = "waves.ini: \"roster\"\nline two";
+        var literal = new GraphNode { Id = "lit:0123456789abcdef", Type = NodeType.Literal, Name = value };
+        literal.SetProperty("value", value);
+        graph.AddNode(literal);
+
+        foreach (var line in new[] { 12, 40 })
+        {
+            var edge = new GraphEdge
+            {
+                FromId = "pm:App.IndexModel",
+                ToId = literal.Id,
+                Type = EdgeType.Mentions
+            };
+            edge.Properties["line"] = line;
+            edge.Properties["provenance"] = "literal";
+            graph.AddEdge(edge);
+        }
+
+        var restored = GraphSerializer.FromJson(GraphSerializer.ToJson(graph));
+
+        Assert.Equal(graph.Nodes.Count, restored.Nodes.Count);
+        Assert.Equal(graph.Edges.Count, restored.Edges.Count);
+
+        var back = restored.GetNode("lit:0123456789abcdef")!;
+        Assert.Equal(NodeType.Literal, back.Type);
+        Assert.Null(back.ForeignType);
+        Assert.Equal(value, back.Name);
+        Assert.Equal(value, back.GetProperty<string>("value"));
+
+        var mentions = restored.Incoming(back.Id).Where(e => e.Type == EdgeType.Mentions).ToList();
+        Assert.Equal(2, mentions.Count);
+        Assert.Equal(new[] { 12, 40 }, mentions.Select(e => e.GetProperty<int>("line")).OrderBy(l => l));
+        Assert.All(mentions, e => Assert.Equal("literal", e.GetProperty<string>("provenance")));
+    }
+
     // ---- Format version ----------------------------------------------------
     // The stamp exists for readers that did not write the file. Every assertion
     // below is about a mismatch being SAID, not merely survived.

@@ -391,6 +391,96 @@ public class GraphQueryTests
         Assert.Equal(0.5, relevance["m:C()"]);
     }
 
+    /// <summary>
+    /// A literal index whose edges are added in an order that CONTRADICTS the
+    /// declared one at every key, so that a missing sort step cannot be hidden by
+    /// the order the extractor happens to emit in.
+    ///
+    /// That mattered: the same claim asserted against the real fixture passes with
+    /// the line and provenance tiebreaks deleted, because a scanner walking a
+    /// syntax tree yields ascending lines anyway and LINQ's stable sort preserves
+    /// them. The order would then be true by accident of one producer, which is
+    /// precisely what a caller paging by offset is not allowed to rely on.
+    /// </summary>
+    private static CodeGraph BuildLiteralGraph()
+    {
+        var graph = new CodeGraph();
+
+        foreach (var (id, name) in new[] { ("m:Web.Beta()", "Beta"), ("m:Web.Alpha()", "Alpha") })
+        {
+            var method = new GraphNode { Id = id, Type = NodeType.Method, Name = name, FilePath = @"C:\app\Web.cs" };
+            method.SetProperty("project", "Web");
+            graph.AddNode(method);
+        }
+
+        foreach (var (id, value) in new[] { ("lit:bbbb", "waves.ini"), ("lit:aaaa", "roster") })
+        {
+            var literal = new GraphNode { Id = id, Type = NodeType.Literal, Name = value };
+            literal.SetProperty("value", value);
+            graph.AddNode(literal);
+        }
+
+        void Mention(string fromId, string toId, int line, string provenance)
+        {
+            var edge = new GraphEdge { FromId = fromId, ToId = toId, Type = EdgeType.Mentions };
+            edge.Properties["line"] = line;
+            edge.Properties["provenance"] = provenance;
+            graph.AddEdge(edge);
+        }
+
+        // Descending line, descending member, descending value, and provenance in
+        // reverse order on the one pair that ties on everything before it.
+        Mention("m:Web.Beta()", "lit:bbbb", 90, "literal");
+        Mention("m:Web.Beta()", "lit:bbbb", 20, "literal");
+        Mention("m:Web.Alpha()", "lit:bbbb", 70, "nameof");
+        Mention("m:Web.Alpha()", "lit:bbbb", 70, "interpolated");
+        Mention("m:Web.Alpha()", "lit:aaaa", 55, "literal");
+
+        return graph;
+    }
+
+    [Fact]
+    public void FindLiterals_SortsByValueThenMemberThenLineThenProvenance()
+    {
+        var page = new GraphQuery(BuildLiteralGraph()).FindLiterals();
+
+        Assert.Equal(5, page.TotalMatches);
+        Assert.Equal(
+            new[]
+            {
+                ("roster", "m:Web.Alpha()", 55, "literal"),
+                ("waves.ini", "m:Web.Alpha()", 70, "interpolated"),
+                ("waves.ini", "m:Web.Alpha()", 70, "nameof"),
+                ("waves.ini", "m:Web.Beta()", 20, "literal"),
+                ("waves.ini", "m:Web.Beta()", 90, "literal")
+            },
+            page.Rows.Select(r => (r.Value, r.FromId, r.Line, r.Provenance)));
+    }
+
+    [Fact]
+    public void FindLiterals_PagesOverThatOrderWithoutRepeatingOrSkipping()
+    {
+        var query = new GraphQuery(BuildLiteralGraph());
+        var whole = query.FindLiterals();
+
+        var walked = new List<GraphQuery.LiteralMention>();
+        int? offset = 0;
+        while (offset is { } from)
+        {
+            var page = query.FindLiterals(limit: 2, offset: from);
+            Assert.Equal(whole.TotalMatches, page.TotalMatches);
+            walked.AddRange(page.Rows);
+            offset = page.NextOffset;
+        }
+
+        Assert.Equal(whole.Rows, walked);
+
+        // A page that ends exactly on the last row carries no nextOffset, so a
+        // caller never has to compare two numbers to learn it has finished.
+        Assert.Null(query.FindLiterals(limit: 2, offset: 3).NextOffset);
+        Assert.Equal(3, query.FindLiterals(limit: 2, offset: 1).NextOffset);
+    }
+
     [Fact]
     public void CoverageQueries_RefuseAGraphWithNoTestMethods()
     {

@@ -32,8 +32,24 @@ public class NameCoupling
     public string AmbiguousName() => "Dispose";
 
     /// <summary>An attribute argument: read by a framework, not by this assembly.</summary>
+    /// <remarks>
+    /// The returned "ok" is two characters, below the scanner's floor, so it is
+    /// neither a Quotes edge nor a Literal node -- the negative case for the floor.
+    /// </remarks>
     [Description("PriceBook")]
     public string Attributed() => "ok";
+
+    /// <summary>
+    /// A config file name, naming no declaration anywhere. Quotes drops it and the
+    /// literal index keeps it, which is the whole difference between the two.
+    /// </summary>
+    public string ConfigFile() => "waves.ini";
+
+    /// <summary>
+    /// The SAME value from a second method. One Literal node, two Mentions edges:
+    /// the node is the value, and its incoming set is every site that produces it.
+    /// </summary>
+    public string AlsoTheConfigFile() => "waves.ini";
 }
 
 /// <summary>

@@ -68,6 +68,24 @@ public enum NodeType
     /// </remarks>
     Parameter,
 
+    /// <summary>
+    /// One DISTINCT string value some member produces, deduplicated across the whole
+    /// graph. Its Name is the value itself, so a name search over the graph is a
+    /// search over literal text with no separate index.
+    /// </summary>
+    /// <remarks>
+    /// It carries no filePath, line or project, for the same reason ExternalType does:
+    /// a value used in five places has no single site. The sites are the incoming
+    /// Mentions edges, each carrying its own line and provenance.
+    ///
+    /// Deliberately NOT the target of a Quotes edge. Quotes answers "which strings name
+    /// a declaration", the rename-safety question, and it is only answerable because
+    /// unmatched strings are dropped. These nodes are the strings themselves — every
+    /// one of them, prose included — which is a different question and has to stay a
+    /// different edge.
+    /// </remarks>
+    Literal,
+
     Middleware,
     Route,
     HtmlElement,

@@ -86,6 +86,16 @@ public sealed class GraphBuilder : IAsyncDisposable
     public IReadOnlyList<string> SkippedTestProjects => _roslyn.SkippedTestProjects;
 
     /// <summary>
+    /// Skip the literal index -- no Literal nodes, no Mentions edges. Off by
+    /// default for the same reason ExcludeTestProjects is: the default graph must
+    /// be able to answer every question, and a graph built without literals
+    /// answers "where is this string" with nothing, which reads as "nowhere".
+    /// Quotes edges are unaffected either way; they are a different question over
+    /// the same scan.
+    /// </summary>
+    public bool ExcludeLiterals { get; set; }
+
+    /// <summary>
     /// Reasons the SDK's source generators may not have run for this build. A
     /// generator that fails to load takes its generated types with it in
     /// silence, so this list is the difference between a graph that is missing
@@ -227,10 +237,25 @@ public sealed class GraphBuilder : IAsyncDisposable
 
         _usage.AddCallEdges(_roslyn.ExtractCallSites());
         _usage.AddMemberAccessEdges(_roslyn.ExtractMemberAccesses());
+        // One scan, two consumers. ExtractQuotedNames is a lazy walk over every
+        // syntax tree in the solution, so enumerating it twice would compile the
+        // question twice; materialised once and handed to both.
+        //
+        // The two do genuinely different things with it. AddQuotesEdges keeps only
+        // strings equal to a uniquely-declared name -- rename safety.
+        // AddMentionsEdges keeps all of them, deduplicated by value -- findability.
+        // Folding either into the other would make one of the two answers wrong.
+        //
         // After every declaration is a node: the name index a quoted string is
         // matched against is built from the graph, so anything emitted later
         // would be invisible to it.
-        _usage.AddQuotesEdges(_roslyn.ExtractQuotedNames());
+        var quotedNames = _roslyn.ExtractQuotedNames().ToList();
+        _usage.AddQuotesEdges(quotedNames);
+        // Second, and never first: AddQuotesEdges reads the graph's own names to
+        // build its uniqueness index, and Literal nodes are named after their
+        // values. Nameable() excludes them so the order is not what makes this
+        // safe, but there is no reason to make the order argue with the guard.
+        if (!ExcludeLiterals) _usage.AddMentionsEdges(quotedNames);
         _usage.AddCallbackEntryPoints(_roslyn.ExtractCallbackTargets());
         _escapes.AddExceptionEscapeEdges(_declarations.MethodThrows);
     }

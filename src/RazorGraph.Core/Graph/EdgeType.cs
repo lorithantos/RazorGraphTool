@@ -86,6 +86,19 @@ public enum EdgeType
     // each: state crossing a seam by name, where a rename breaks one side silently.
     Quotes,
 
+    // Naming by value. Emitted from the code that produces a string to the Literal node
+    // holding that string, carrying the line and the provenance. One edge per OCCURRENCE,
+    // not per pair: a value typed in five places is five edges, and the incoming set of
+    // the Literal node is therefore the list of every site that produces it.
+    //
+    // Deliberately NOT folded into Quotes, which is the same reasoning that kept
+    // Overrides out of Implements. Quotes answers "which strings name a declared symbol",
+    // and its worth is that a string matching nothing is not an edge — mixing every
+    // literal in would make that answer fuller and wrong. Mentions asks the other
+    // question, "where does this exact text appear", which needs no declaration to exist
+    // and is the one grep was still being used for.
+    Mentions,
+
     // Annotation. Emitted from a decorated node -- type, method, property, field, parameter or
     // project -- to the attribute's type, carrying the arguments as written, the line, and which
     // target the attribute actually hit. One edge per USAGE, not per attribute type: [Theory]
