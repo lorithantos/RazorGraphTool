@@ -62,7 +62,9 @@ internal static class GraphFormat
     /// member to blame. 1.6 added the XAML view layer — XamlView nodes and DataBinds
     /// edges — so a desktop app's view layer is in the graph at all. 1.7 scoped those
     /// edges by the DataType a template declares, which changes which members they
-    /// resolve to, and added missingOnDataType. All additive, so an older reader loads a newer graph with a
+    /// resolve to, and added missingOnDataType. 1.8 put baseType on the service and
+    /// view-model node kinds, which had never carried it, and which changes which
+    /// members a binding resolves to through the inheritance walk. All additive, so an older reader loads a newer graph with a
     /// caveat rather than a refusal, and a graph written without the stamp reads
     /// back as "cannot tell" rather than as fresh.
     /// </summary>
@@ -103,7 +105,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(1, 7);
+    public static readonly GraphFormatVersion Current = new(1, 8);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";
