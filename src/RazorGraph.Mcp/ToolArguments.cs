@@ -39,10 +39,100 @@ internal static class ToolArguments
         path.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase);
 
-    internal static void RequireNode(CodeGraph graph, string id)
+    /// <summary>
+    /// Every escape sequence a node id can arrive wearing, paired with the
+    /// character it stands for. Named, decimal and hex spellings, because an id
+    /// is escaped by whatever layer it passed through and they do not agree.
+    ///
+    /// The ampersand is LAST and the order is load-bearing: decoding it first
+    /// turns <c>&amp;amp;lt;</c> into <c>&amp;lt;</c> and then into <c>&lt;</c>,
+    /// inventing a bracket the caller never wrote. Decoded last, the same input
+    /// lands on <c>&amp;lt;</c> — one pass, left to right, which is what an
+    /// escaper's output means.
+    /// </summary>
+    private static readonly (char Character, string[] Spellings)[] EscapeSpellings =
     {
-        if (!graph.HasNode(id))
-            throw new McpException($"Node not found: {id}. Use find_nodes to discover ids.");
+        ('<', ["&lt;", "&#60;", "&#x3C;"]),
+        ('>', ["&gt;", "&#62;", "&#x3E;"]),
+        ('"', ["&quot;", "&#34;", "&#x22;"]),
+        ('\'', ["&apos;", "&#39;", "&#x27;"]),
+        ('&', ["&amp;", "&#38;", "&#x26;"]),
+    };
+
+    /// <summary>
+    /// Undo HTML escaping of a node id, and nothing else.
+    ///
+    /// Deliberately not <c>WebUtility.HtmlDecode</c>: that table turns
+    /// <c>&amp;nbsp;</c> into U+00A0 and tolerates entities missing their
+    /// semicolon, so it can rewrite an id in ways no escaper could have produced
+    /// from a legal signature. Only the five characters an escaper actually
+    /// touches are decoded here.
+    ///
+    /// Whitespace is never touched — not trimmed, not collapsed. An id's spacing
+    /// is significant: <c>Func&lt;TSource, TItem&gt;</c> carries a space after
+    /// its comma while the enclosing parameter list carries none, so a tidy-up
+    /// pass would turn a resolvable id into one that matches nothing.
+    /// </summary>
+    private static string DecodeEscapes(string id)
+    {
+        var decoded = id;
+        foreach (var (character, spellings) in EscapeSpellings)
+            foreach (var spelling in spellings)
+                decoded = decoded.Replace(spelling, character.ToString(), StringComparison.OrdinalIgnoreCase);
+        return decoded;
+    }
+
+    /// <summary>
+    /// Resolve a node id against the graph, accepting the HTML-escaped spelling
+    /// an id comes back wearing once it has crossed a markdown or HTML layer.
+    ///
+    /// A generic signature is the whole problem. The id
+    /// <c>m:…Paginate(IReadOnlyList&lt;TSource&gt;,int,int,Func&lt;TSource, TItem&gt;)</c>
+    /// reaches a caller with <c>&amp;lt;</c> and <c>&amp;gt;</c> where its angle
+    /// brackets were; an exact lookup missed it and reported a bare "Node not
+    /// found", which reads as "no such thing" rather than "you are one decode
+    /// away". That near miss dressed as an absence cost four wasted calls before
+    /// anyone suspected the brackets.
+    /// </summary>
+    /// <remarks>
+    /// The id is tried AS GIVEN first and the decoded form is only a fallback,
+    /// never the reverse: an id that genuinely contains the characters
+    /// <c>&amp;amp;</c> exists, and it must keep beating an escaped id that
+    /// merely decodes onto something else.
+    /// </remarks>
+    internal static bool TryResolveNode(CodeGraph graph, string id, out string resolved)
+    {
+        if (graph.HasNode(id)) { resolved = id; return true; }
+
+        var decoded = DecodeEscapes(id);
+        if (decoded != id && graph.HasNode(decoded)) { resolved = decoded; return true; }
+
+        resolved = id;
+        return false;
+    }
+
+    /// <summary>
+    /// The id that actually resolved, or a refusal that says whether escaping
+    /// was in play.
+    /// </summary>
+    /// <remarks>
+    /// RETURNS the id rather than validating in place. It returned void until
+    /// 2026-09-11, and every caller then went on to query the graph with its own
+    /// raw argument — so the moment validation started accepting a second
+    /// spelling, a caller would have validated one string and looked up another,
+    /// turning the fix into an empty result. Use the value.
+    /// </remarks>
+    internal static string RequireNode(CodeGraph graph, string id)
+    {
+        if (TryResolveNode(graph, id, out var resolved)) return resolved;
+
+        var decoded = DecodeEscapes(id);
+        var escaping = decoded == id
+            ? string.Empty
+            : " The id you passed carries HTML escape sequences (&lt; and &gt; for the angle brackets of a generic);"
+              + $" unescaped it reads '{decoded}', and that is not in this graph either.";
+
+        throw new McpException($"Node not found: {id}.{escaping} Use find_nodes to discover ids.");
     }
 
     internal static NodeType ParseNodeType(string value) =>

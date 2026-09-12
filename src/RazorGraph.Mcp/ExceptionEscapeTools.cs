@@ -47,7 +47,7 @@ internal sealed class ExceptionEscapeTools(GraphStore store)
                 $"Unknown entryPointKind '{entryPointKind}'. Valid kinds: {string.Join(", ", EntryPointKinds)}.");
 
         var graph = store.Require(graphId).Graph;
-        if (entryPointId != null) ToolArguments.RequireNode(graph, entryPointId);
+        if (entryPointId != null) entryPointId = ToolArguments.RequireNode(graph, entryPointId);
 
         // A graph saved before this analysis existed has neither stamps nor
         // edges; silence would read as "nothing escapes", which is a claim the

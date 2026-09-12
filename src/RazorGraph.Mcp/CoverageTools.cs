@@ -23,7 +23,7 @@ internal sealed class CoverageTools(GraphStore store)
         [Description(ToolArguments.GraphIdDescription)] string? graphId = null)
     {
         var graph = store.Require(graphId).Graph;
-        ToolArguments.RequireNode(graph, methodId);
+        methodId = ToolArguments.RequireNode(graph, methodId);
 
         var all = RequireCoverage(() => new GraphQuery(graph).GetCoveringTests(methodId).ToList());
 
@@ -86,7 +86,7 @@ internal sealed class CoverageTools(GraphStore store)
         [Description(ToolArguments.GraphIdDescription)] string? graphId = null)
     {
         var graph = store.Require(graphId).Graph;
-        ToolArguments.RequireNode(graph, testId);
+        testId = ToolArguments.RequireNode(graph, testId);
 
         var all = RequireCoverage(() => new GraphQuery(graph).GetCoveredMethods(testId).ToList());
 
