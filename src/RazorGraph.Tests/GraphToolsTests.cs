@@ -630,4 +630,209 @@ public class GraphToolsTests
         Assert.Equal(0, doc.RootElement.GetProperty("returned").GetInt32());
         Assert.False(doc.RootElement.GetProperty("truncated").GetBoolean());
     }
+
+    // ---- An escaped id is a near miss, not an absence ---------------------------
+
+    // A generic signature is the id that breaks. Copied out of a response that
+    // crossed a markdown or HTML layer, its angle brackets come back as &lt; and
+    // &gt;, the exact lookup misses, and "Node not found" reads as "no such
+    // thing" — four wasted calls before anyone suspected the brackets.
+
+    [Fact]
+    public void GetNode_AcceptsAnEscapedGenericId_AndAnswersAsIfItWereRaw()
+    {
+        var tools = new GraphNavigationTools(StoreOver(EscapedIdGraph()));
+
+        var raw = tools.GetNode(PaginateId);
+        var escaped = tools.GetNode(HtmlEscape(PaginateId));
+
+        // Byte-identical: the escaped spelling is not a lesser answer, it is the
+        // same answer. get_node kept its own copy of the refusal and so was the
+        // last tool still rejecting this.
+        Assert.Equal(raw, escaped);
+
+        using var doc = JsonDocument.Parse(escaped);
+        Assert.Equal(PaginateId, doc.RootElement.GetProperty("node").GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public void CoveringTests_AcceptsAnEscapedGenericId()
+    {
+        // The fix has to live at the boundary, not in get_node: a caller pastes
+        // an id into whichever tool answers the question they have.
+        var tools = new CoverageTools(StoreOver(EscapedIdGraph()));
+
+        using var doc = JsonDocument.Parse(tools.CoveringTests(HtmlEscape(PaginateId)));
+
+        // Not merely "did not throw": validating the decoded id and then querying
+        // the raw one would come back here as an empty, cheerful zero.
+        Assert.Equal(1, doc.RootElement.GetProperty("totalMatches").GetInt32());
+        Assert.Equal(PagingTestId, doc.RootElement.GetProperty("tests").EnumerateArray()
+            .Single().GetProperty("node").GetProperty("id").GetString());
+
+        // And the echoed id is the one that resolved, so the caller learns the
+        // spelling that works.
+        Assert.Equal(PaginateId, doc.RootElement.GetProperty("methodId").GetString());
+    }
+
+    [Fact]
+    public void FindPath_AcceptsAnEscapedGenericIdOnBothEnds()
+    {
+        var tools = new GraphNavigationTools(StoreOver(EscapedIdGraph()));
+
+        using var doc = JsonDocument.Parse(
+            tools.FindPath(HtmlEscape(PaginateId), HtmlEscape(WindowId)));
+
+        // found=false is this tool's shape for "no path", so a validated-but-
+        // unused decode would report an honest-looking lie rather than throw.
+        Assert.True(doc.RootElement.GetProperty("found").GetBoolean());
+        var hop = doc.RootElement.GetProperty("edges").EnumerateArray().Single();
+        Assert.Equal(PaginateId, hop.GetProperty("from").GetString());
+        Assert.Equal(WindowId, hop.GetProperty("to").GetString());
+    }
+
+    [Fact]
+    public void AnIdWhoseAmpersandSequenceIsLiteral_StillWinsOverTheDecodedOne()
+    {
+        // Both spellings exist as separate nodes. Decoding before trying the id
+        // as given would hand back the wrong one of the two — silently, with a
+        // node in hand and nothing to suggest it was the other node's.
+        var tools = new GraphNavigationTools(StoreOver(EscapedIdGraph()));
+
+        using var literal = JsonDocument.Parse(tools.GetNode(LiteralEntityId));
+        using var decoded = JsonDocument.Parse(tools.GetNode(DecodedEntityId));
+
+        Assert.Equal(LiteralEntityId, literal.RootElement.GetProperty("node").GetProperty("id").GetString());
+        Assert.Equal(DecodedEntityId, decoded.RootElement.GetProperty("node").GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public void DecodingIsOnePassLeftToRight_NotTwo()
+    {
+        // A string literal that itself contains HTML: its id holds the four
+        // characters &lt; verbatim. Escaped for transport that becomes &amp;lt;,
+        // and one honest pass puts the id back.
+        //
+        // Decoding the ampersand FIRST runs the pass twice — &amp;lt; to &lt; to
+        // a bare '<' — inventing a bracket the source never had and landing on
+        // an id that exists nowhere. Hence: ampersand last.
+        var tools = new GraphNavigationTools(StoreOver(EscapedIdGraph()));
+
+        using var doc = JsonDocument.Parse(tools.GetNode(HtmlEscape(MarkupLiteralId)));
+
+        Assert.Equal(MarkupLiteralId, doc.RootElement.GetProperty("node").GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public void ABareAmpersandIsNotAnEscapeSequence_AndIsLeftAlone()
+    {
+        var tools = new GraphNavigationTools(StoreOver(EscapedIdGraph()));
+
+        using var doc = JsonDocument.Parse(tools.GetNode(BareAmpersandId));
+
+        Assert.Equal(BareAmpersandId, doc.RootElement.GetProperty("node").GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public void WhitespaceInsideAGenericArgumentList_SurvivesNormalisation()
+    {
+        // Func<TSource, TItem> carries a space after its comma while the enclosing
+        // parameter list carries none. Two nodes differ by exactly that space, so
+        // a normaliser that trimmed or collapsed whitespace would resolve onto the
+        // wrong one instead of failing loudly.
+        var tools = new GraphNavigationTools(StoreOver(EscapedIdGraph()));
+
+        using var spaced = JsonDocument.Parse(tools.GetNode(HtmlEscape(PaginateId)));
+        using var tight = JsonDocument.Parse(tools.GetNode(HtmlEscape(PaginateIdWithoutTheSpace)));
+
+        Assert.Equal(PaginateId, spaced.RootElement.GetProperty("node").GetProperty("id").GetString());
+        Assert.Equal(PaginateIdWithoutTheSpace, tight.RootElement.GetProperty("node").GetProperty("id").GetString());
+        Assert.Equal("Paginate", spaced.RootElement.GetProperty("node").GetProperty("name").GetString());
+        Assert.Equal("PaginateTwin", tight.RootElement.GetProperty("node").GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public void AnUnknownEscapedId_IsRefusedInTermsOfTheEscaping()
+    {
+        // It still fails — decoding is not a licence to invent nodes — but the
+        // refusal has to name the escaping, because "Node not found" on a
+        // near-miss id is precisely what sent a caller looking in the wrong place.
+        var tools = new GraphNavigationTools(StoreOver(EscapedIdGraph()));
+        var missing = "m:Web.Nowhere.Vanish(System.Func<T, T>)";
+
+        var message = Assert.Throws<McpException>(() => tools.GetNode(HtmlEscape(missing))).Message;
+
+        Assert.Contains("escape", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(missing, message, StringComparison.Ordinal);
+        Assert.Contains("find_nodes", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnUnknownPlainId_IsRefusedWithoutBlamingEscaping()
+    {
+        // The mirror: escaping is named only when escaping was in play, so the
+        // hint stays a hint rather than boilerplate on every miss.
+        var tools = new GraphNavigationTools(StoreOver(EscapedIdGraph()));
+
+        var message = Assert.Throws<McpException>(() => tools.GetNode("m:Web.Nowhere.Vanish()")).Message;
+
+        Assert.DoesNotContain("escape", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("find_nodes", message, StringComparison.Ordinal);
+    }
+
+    /// <summary>What a markdown or HTML layer does to an id on the way out.</summary>
+    private static string HtmlEscape(string id) => id
+        .Replace("&", "&amp;", StringComparison.Ordinal)
+        .Replace("<", "&lt;", StringComparison.Ordinal)
+        .Replace(">", "&gt;", StringComparison.Ordinal);
+
+    private const string PaginateId =
+        "m:RazorGraph.Mcp.ToolResponses.Paginate(System.Collections.Generic.IReadOnlyList<TSource>,int,int,System.Func<TSource, TItem>)";
+
+    /// <summary>The same signature but for the space after the comma.</summary>
+    private const string PaginateIdWithoutTheSpace =
+        "m:RazorGraph.Mcp.ToolResponses.Paginate(System.Collections.Generic.IReadOnlyList<TSource>,int,int,System.Func<TSource,TItem>)";
+
+    private const string WindowId = "m:RazorGraph.Mcp.ToolResponses.Window(int,int,int)";
+    private const string PagingTestId = "m:RazorGraph.Tests.PagingTests.PagesEverything()";
+
+    /// <summary>An id whose ampersand sequence is literal text, not an escape…</summary>
+    private const string LiteralEntityId = "lit:a &amp;lt; b";
+
+    /// <summary>…and the node it would be mistaken for if decoding came first.</summary>
+    private const string DecodedEntityId = "lit:a &lt; b";
+
+    private const string BareAmpersandId = "lit:Tom & Jerry";
+
+    /// <summary>A string literal that is itself HTML: escaped once, it must decode once.</summary>
+    private const string MarkupLiteralId = "lit:use &lt;br&gt; for a line break";
+
+    /// <summary>
+    /// Generic signatures, a covering test, and the three ampersand-bearing ids
+    /// that separate "decode as a fallback" from "decode first".
+    /// </summary>
+    private static CodeGraph EscapedIdGraph()
+    {
+        var graph = new CodeGraph { BuiltAt = DateTimeOffset.UtcNow };
+
+        graph.AddNode(new GraphNode { Id = PaginateId, Type = NodeType.Method, Name = "Paginate" });
+        graph.AddNode(new GraphNode { Id = PaginateIdWithoutTheSpace, Type = NodeType.Method, Name = "PaginateTwin" });
+        graph.AddNode(new GraphNode { Id = WindowId, Type = NodeType.Method, Name = "Window" });
+        graph.AddEdge(new GraphEdge { FromId = PaginateId, ToId = WindowId, Type = EdgeType.Calls });
+
+        var test = new GraphNode { Id = PagingTestId, Type = NodeType.Method, Name = "PagesEverything" };
+        test.SetProperty("isTest", true);
+        graph.AddNode(test);
+
+        var covers = new GraphEdge { FromId = PagingTestId, ToId = PaginateId, Type = EdgeType.Covers };
+        covers.Properties["depth"] = 1;
+        graph.AddEdge(covers);
+
+        graph.AddNode(new GraphNode { Id = LiteralEntityId, Type = NodeType.Literal, Name = "a &amp;lt; b" });
+        graph.AddNode(new GraphNode { Id = DecodedEntityId, Type = NodeType.Literal, Name = "a &lt; b" });
+        graph.AddNode(new GraphNode { Id = BareAmpersandId, Type = NodeType.Literal, Name = "Tom & Jerry" });
+        graph.AddNode(new GraphNode { Id = MarkupLiteralId, Type = NodeType.Literal, Name = "use &lt;br&gt; for a line break" });
+
+        return graph;
+    }
 }

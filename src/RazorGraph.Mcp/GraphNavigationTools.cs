@@ -72,7 +72,13 @@ internal sealed class GraphNavigationTools(GraphStore store)
         [Description(ToolArguments.GraphIdDescription)] string? graphId = null)
     {
         var graph = store.Require(graphId).Graph;
-        var node = graph.GetNode(id) ?? throw new McpException($"Node not found: {id}. Use find_nodes to discover ids.");
+
+        // Routed through the shared resolver rather than keeping its own copy of
+        // the refusal: that duplicate is what left get_node — the tool an id is
+        // most often pasted into — refusing an HTML-escaped generic id after
+        // every other id-taking tool had learned to accept it.
+        id = ToolArguments.RequireNode(graph, id);
+        var node = graph.GetNode(id)!;
 
         var listProperties = ToolResponses.ListPropertyNames(node);
         if (!string.IsNullOrWhiteSpace(fields)
@@ -154,7 +160,7 @@ internal sealed class GraphNavigationTools(GraphStore store)
         [Description(ToolArguments.GraphIdDescription)] string? graphId = null)
     {
         var graph = store.Require(graphId).Graph;
-        ToolArguments.RequireNode(graph, startId);
+        startId = ToolArguments.RequireNode(graph, startId);
         var dir = ToolArguments.ParseDirection(direction);
 
         var items = new GraphQuery(graph).TraceDataFlow(startId, maxDepth, dir)
@@ -246,8 +252,8 @@ internal sealed class GraphNavigationTools(GraphStore store)
         [Description(ToolArguments.GraphIdDescription)] string? graphId = null)
     {
         var graph = store.Require(graphId).Graph;
-        ToolArguments.RequireNode(graph, fromId);
-        ToolArguments.RequireNode(graph, toId);
+        fromId = ToolArguments.RequireNode(graph, fromId);
+        toId = ToolArguments.RequireNode(graph, toId);
 
         var path = graph.FindPath(fromId, toId, edgeFilter: null, ToolArguments.ParseDirection(direction));
         if (path is null) return ToolResponses.ToJson(new { found = false, edges = Array.Empty<object>() });
@@ -280,6 +286,14 @@ internal sealed class GraphNavigationTools(GraphStore store)
         // the CLI twin. Only the missing-focus policy is this front end's:
         // hard error, because a model that typo'd an id should be told, not
         // handed a quietly smaller subgraph.
+
+        // Resolved one at a time rather than through RequireNode, which throws on
+        // the first miss: ComputeRelevance names EVERY unknown focus id at once,
+        // and a caller who typo'd two of them should learn about both.
+        focusIds = focusIds
+            .Select(f => ToolArguments.TryResolveNode(graph, f, out var hit) ? hit : f)
+            .ToArray();
+
         var (relevance, missing) = new GraphQuery(graph)
             .ComputeRelevance(focusIds, depth, ToolArguments.ParseDirection(direction));
         if (missing.Count > 0)

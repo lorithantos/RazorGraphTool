@@ -19,7 +19,7 @@ internal sealed class RazorPageTools(GraphStore store)
         [Description(ToolArguments.GraphIdDescription)] string? graphId = null)
     {
         var graph = store.Require(graphId).Graph;
-        ToolArguments.RequireNode(graph, pageId);
+        pageId = ToolArguments.RequireNode(graph, pageId);
         var query = new GraphQuery(graph);
         var items = query.GetRenderTree(pageId)
             .Select(t => new { edgeType = t.Edge.DisplayType, node = ToolResponses.NodeSummary(t.Node) })
@@ -34,7 +34,7 @@ internal sealed class RazorPageTools(GraphStore store)
         [Description(ToolArguments.GraphIdDescription)] string? graphId = null)
     {
         var graph = store.Require(graphId).Graph;
-        ToolArguments.RequireNode(graph, pageId);
+        pageId = ToolArguments.RequireNode(graph, pageId);
         var context = new GraphQuery(graph).GetPageContext(pageId)
             ?? throw new McpException($"Node '{pageId}' is not a RazorPage; page_context only applies to RazorPage nodes.");
 
