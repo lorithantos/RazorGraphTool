@@ -147,5 +147,31 @@ public enum EdgeType
     // that cannot tell them apart is the one that sent a reader to grep.
     Constructs,
 
+    // Data binding from markup. Emitted from a view file to each member a binding
+    // expression could name, carrying the path as written, the line, and how many
+    // candidates the name resolved to.
+    //
+    // CONSERVATIVE IN THE SAME DIRECTION AS INTERFACE DISPATCH, and for the same
+    // reason. A binding resolves against the DataContext of whatever element it
+    // sits on at RUNTIME — walked up the visual tree by RelativeSource, rebound
+    // mid-tree, or supplied by the item a DataTemplate is applied to — so which
+    // member it names is not statically decidable. A call to an interface member
+    // reaches every in-solution implementation because reachability cannot say
+    // which one runs; a binding reaches every candidate member for exactly that
+    // reason. Naming one would be a plausible answer that is sometimes wrong,
+    // which is worse than a fan-out a reader can see.
+    //
+    // NOT folded into BindsTo, which already means model binding in the Razor
+    // layer and is in the data-flow traversal set: absorbing markup bindings
+    // would change what an existing answer means. Not Quotes either, whose worth
+    // is that a string matching nothing is not an edge and whose rule is to DROP
+    // an ambiguous name -- right for rename safety, wrong here, because dropping
+    // is what leaves a bound member reading as unused.
+    //
+    // candidates is on the edge rather than implied: a binding that resolved to
+    // one member is an exact answer, and one that resolved to six is a question.
+    // A reader must be able to tell those apart without counting edges.
+    DataBinds,
+
     Unknown
 }

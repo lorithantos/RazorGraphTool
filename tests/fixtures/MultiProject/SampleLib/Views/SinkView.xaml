@@ -1,0 +1,41 @@
+<Window x:Class="SampleLib.SinkView"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!-- Every binding here exists because it reaches its member by a different
+       route, or fails to reach one in a different way. A walk that handles one
+       shape and not the others produces a partial answer that reads complete. -->
+  <StackPanel>
+
+    <!-- Positional path: the ordinary case, one candidate, exact. -->
+    <TextBlock Text="{Binding Channel}" />
+
+    <!-- The same member written the other legal way. -->
+    <TextBlock Text="{Binding Path=Channel}" />
+
+    <!-- A RelativeSource walk. The leading DataContext is the route taken, not
+         the member wanted, and the nested braces carry commas of their own. -->
+    <TextBlock Text="{Binding DataContext.Channel, RelativeSource={RelativeSource AncestorType=Window}}" />
+
+    <!-- Dotted: the FIRST segment lives on the DataContext. Write belongs to
+         the view model; anything after it belongs to another type entirely. -->
+    <TextBlock Text="{Binding Write.Length}" />
+
+    <!-- Reachable only through the code-behind class named by x:Class. -->
+    <TextBlock Text="{Binding Caption}" />
+
+    <!-- THE FINDING. Names nothing at all: the shape a rename leaves behind,
+         which WPF reports by writing to the debug output and drawing nothing. -->
+    <TextBlock Text="{Binding Missing}" />
+
+    <!-- Binds the context object itself and names no member. -->
+    <TextBlock Text="{Binding}" />
+
+    <!-- An indexer names no member this layer can resolve. -->
+    <TextBlock Text="{Binding Items[0]}" />
+
+    <!-- Not a binding at all. -->
+    <TextBlock Text="Channel" />
+
+  </StackPanel>
+</Window>

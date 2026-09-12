@@ -149,6 +149,20 @@ states which kind of absence it is, once, per response.
 (`MapsToRoute`, `HandlesHttpMethod`, `UrlGeneratedBy`), `Covers`, `Escapes`, and
 `Extends` — an extension method pointing at the in-solution type it extends.
 
+`DataBinds` runs from a XAML view to every member one of its bindings could name,
+carrying the path as written, the line, and how many candidates the name resolved
+to. Conservative in the same direction as interface dispatch, and for the same
+reason: a binding resolves against the `DataContext` of whatever element it sits on
+at runtime — walked up the tree by `RelativeSource`, rebound mid-tree, or supplied
+by the item a `DataTemplate` is applied to — so naming one candidate would be a
+plausible answer that is sometimes wrong. Candidates are bounded by a relation
+rather than by the name alone (view-model types, plus the view's own `x:Class`),
+because matching a bare name across a solution is conservative in the useless
+direction. **A binding that names nothing is recorded on the view** as
+`unresolvedBindings`: that is the failure XAML has no compiler for, where a
+renamed property leaves an expression that resolves to nothing and reports itself
+by drawing an empty control.
+
 `Constructs` runs from the member holding a `new X()` to the type X, carrying the
 line. It is what answers *which implementation did the composition root pick* — an
 interface's implementers are the candidates, and only construction says which one

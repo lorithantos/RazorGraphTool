@@ -1295,6 +1295,95 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         Assert.Contains("type:SampleLib.CountTally", implementers);
     }
 
+    // ---- XAML views ----------------------------------------------------------
+    //
+    // A desktop app's view layer was absent from the graph entirely: measured on
+    // one app, 8 files and 248 bindings contributing nothing, which left every
+    // member reachable only from markup reading as used by tests alone. XAML has
+    // no compiler for its bindings, so a renamed property leaves an expression
+    // that resolves to nothing and fails by drawing an empty control at runtime.
+
+    private const string SinkViewId = "xaml:SampleLib/Views/SinkView.xaml";
+
+    private GraphEdge DataBinds(string toId) =>
+        _solutionGraph!.Outgoing(SinkViewId).Single(e => e.Type == EdgeType.DataBinds && e.ToId == toId);
+
+    [Fact]
+    public void XamlViews_AreNodes_ScopedByProject()
+    {
+        var view = _solutionGraph!.GetNode(SinkViewId);
+
+        Assert.NotNull(view);
+        Assert.Equal(NodeType.XamlView, view!.Type);
+        Assert.Equal("SinkView.xaml", view.Name);
+        Assert.Equal("SampleLib", view.GetProperty<string>("project"));
+        Assert.Equal("SampleLib.SinkView", view.GetProperty<string>("codeBehind"));
+    }
+
+    [Fact]
+    public void XamlView_WithNoCodeBehind_SaysSoByAbsence()
+    {
+        // A theme declares no type. Absent rather than empty, so it is
+        // distinguishable from a file whose x:Class could not be read.
+        var theme = _solutionGraph!.GetNode("xaml:SampleLib/Themes/Palette.xaml");
+
+        Assert.NotNull(theme);
+        Assert.False(theme!.Properties.ContainsKey("codeBehind"));
+        Assert.Equal(0, theme.GetProperty<int>("bindingCount"));
+    }
+
+    [Fact]
+    public void DataBinds_ReachesTheViewModelMember_HoweverTheBindingIsWritten()
+    {
+        // Three spellings of one member: positional, Path=, and a RelativeSource
+        // walk whose leading DataContext is the route rather than the member.
+        // One relationship, so one edge, with the other two sites counted.
+        var edge = DataBinds("prop:SampleLib.SinkViewModel.Channel");
+
+        Assert.Equal(3, edge.GetProperty<int>("sites"));
+        Assert.Equal(1, edge.GetProperty<int>("candidates"));
+        Assert.True(edge.GetProperty<int>("line") > 0);
+    }
+
+    [Fact]
+    public void DataBinds_ReachesAMemberOfTheCodeBehindClass()
+    {
+        // Nothing classified as a view model declares a Caption, so this binding
+        // is reachable only through the type named by x:Class. A candidate walk
+        // over view models alone would report it unresolved — a false finding,
+        // which is worse than the missing edge it replaces.
+        Assert.Equal(1, DataBinds("prop:SampleLib.SinkView.Caption").GetProperty<int>("candidates"));
+    }
+
+    [Fact]
+    public void DataBinds_TakesTheFirstSegmentOfADottedPath()
+    {
+        // {Binding Write.Length} — Write is what the DataContext supplies; Length
+        // belongs to whatever type that is, and resolving it would mean matching a
+        // name against a type this layer has no model of.
+        Assert.Equal(1, DataBinds("m:SampleLib.SinkViewModel.Write(int)").GetProperty<int>("candidates"));
+    }
+
+    [Fact]
+    public void ABindingThatNamesNothing_IsRecordedOnTheView()
+    {
+        // The failure XAML has no compiler for. Recorded rather than raised: this
+        // layer cannot prove a typo, because a DataContext outside the candidate
+        // bound produces the same zero — so it reports the name and leaves the
+        // adjudicating to a reader who can open the file.
+        var unresolved = _solutionGraph!.GetNode(SinkViewId)!.GetProperty<List<string>>("unresolvedBindings");
+
+        Assert.NotNull(unresolved);
+        Assert.Contains("Missing", unresolved!);
+
+        // And these are not bindings at all, so they are not failures either:
+        // {Binding} names the context object, {Binding Items[0]} names an indexer,
+        // and Text="Channel" is a string. Reporting any of them as unresolved
+        // would be the noise that teaches a reader to skim the list.
+        Assert.DoesNotContain(unresolved, n => n.Contains("Items", StringComparison.Ordinal));
+        Assert.Single(unresolved!);
+    }
+
     [Fact]
     public void TypeNodes_SayWhetherTheyAreStatic()
     {

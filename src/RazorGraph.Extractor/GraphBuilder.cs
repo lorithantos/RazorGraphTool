@@ -32,6 +32,7 @@ public sealed class GraphBuilder : IAsyncDisposable
     private readonly EscapeEmitter _escapes;
     private readonly ClientAssetEmitter _clientAssets;
     private readonly RazorLayerEmitter _razorLayer;
+    private readonly XamlLayerEmitter _xamlLayer;
     private readonly ProjectEmitter _projects;
     private readonly CoverageEmitter _coverage;
 
@@ -42,6 +43,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         _escapes = new EscapeEmitter(_graph);
         _clientAssets = new ClientAssetEmitter(_graph);
         _razorLayer = new RazorLayerEmitter(_graph, _clientAssets);
+        _xamlLayer = new XamlLayerEmitter(_graph);
         _projects = new ProjectEmitter(_graph);
         _coverage = new CoverageEmitter(_graph);
     }
@@ -159,6 +161,7 @@ public sealed class GraphBuilder : IAsyncDisposable
     {
         BuildRoslynLayer();
         _razorLayer.BuildRazorLayer(projectDir, idScope: null, _roslyn.Compilation, _symbols, IncludeVendorAssets);
+        _xamlLayer.AddXamlLayer(projectDir, idScope: null);
         _razorLayer.AddGeneratedClassLinks(_symbols);
         _razorLayer.AddBindingEdges(
             _roslyn.ExtractViewCalls().ToList(),
@@ -178,6 +181,7 @@ public sealed class GraphBuilder : IAsyncDisposable
             if (projectDir == null) continue;
 
             _razorLayer.BuildRazorLayer(projectDir, loaded.Name, loaded.Compilation, _symbols, IncludeVendorAssets);
+            _xamlLayer.AddXamlLayer(projectDir, loaded.Name);
         }
 
         _razorLayer.AddGeneratedClassLinks(_symbols);

@@ -92,5 +92,19 @@ public enum NodeType
     TagHelperInvocation,
     JavaScriptFile,
     CssFile,
+
+    /// <summary>
+    /// A XAML file: a window, a page, a resource dictionary, a template set.
+    /// </summary>
+    /// <remarks>
+    /// A real member rather than a foreign kind, for the reason stated above about
+    /// Lua: this extractor owns the format, so a kind it emits itself is one it
+    /// models. The view layer of a desktop app was previously absent from the
+    /// graph entirely — measured on one app, 8 files and 248 bindings contributing
+    /// nothing — which made every member reachable only from markup read as used
+    /// by tests alone.
+    /// </remarks>
+    XamlView,
+
     Unknown
 }
