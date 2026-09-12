@@ -67,6 +67,11 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
         // Always stamped, like isPublic: on a graph built before the flag existed the
         // property is absent, which is distinguishable from false.
         node.SetProperty("isInterface", sym.IsInterface);
+        // Always stamped, like isInterface and for the same reason: on a graph
+        // built before the flag existed the property is ABSENT, which a reader can
+        // tell from false. A static class cannot be constructed, so its zero
+        // incoming edges are a fact about C# rather than about the codebase.
+        node.SetProperty("isStatic", sym.IsStatic);
         if (sym.Project != null) node.SetProperty("project", sym.Project);
         if (sym.BaseType != null) node.SetProperty("baseType", sym.BaseType);
         if (sym.GeneratedFrom != null) node.SetProperty("generatedFrom", sym.GeneratedFrom);

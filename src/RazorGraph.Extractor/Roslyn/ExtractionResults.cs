@@ -101,6 +101,19 @@ internal sealed class SymbolInfo
     /// </summary>
     public bool IsInterface { get; init; }
 
+    /// <summary>
+    /// Whether the declaration is a static type.
+    /// </summary>
+    /// <remarks>
+    /// It is what makes a zero readable. A static class cannot be constructed by
+    /// anyone, so an empty incoming set says nothing about it — measured on one
+    /// stack, sixteen of seventeen zero-degree types were static classes, and the
+    /// most-called type in the whole codebase was among them. Without the flag a
+    /// reader has to grep declarations to tell "nothing builds this" from "nothing
+    /// could", which is the text-search fallback the graph exists to remove.
+    /// </remarks>
+    public bool IsStatic { get; init; }
+
     public string? BaseType { get; init; }
 
     /// <summary>

@@ -1296,6 +1296,40 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void TypeNodes_SayWhetherTheyAreStatic()
+    {
+        // What makes a zero readable. A static class cannot be constructed by
+        // anyone, so an empty incoming set is a fact about C# rather than about
+        // the codebase — measured on one stack, sixteen of seventeen zero-degree
+        // types were static classes and the most-called type in the whole
+        // codebase was among them. Telling those apart needed a grep before this.
+        var staticRoot = Type(_solutionGraph!, "SampleLib.PartRegistry");
+        var instantiable = Type(_solutionGraph!, "SampleLib.PartFactory");
+
+        Assert.True(staticRoot.GetProperty<bool>("isStatic"));
+        Assert.False(instantiable.GetProperty<bool>("isStatic"));
+
+        // Stamped on every type, like isInterface: absent means "built before the
+        // flag existed", which a reader can tell from false.
+        Assert.True(instantiable.Properties.ContainsKey("isStatic"));
+    }
+
+    [Fact]
+    public void TypeLevelImplements_IsEmittedForEveryClassifiedKind_NotOnlyPlainClasses()
+    {
+        // The classifier routes a type by name — page model, controller, service,
+        // view model, plain class — and only two of those branches recorded the
+        // interfaces the type implements. So the edge appeared for ordinary
+        // classes and silently not for the rest: the same partial answer this
+        // change set exists to remove, occurring one level up in the classifier
+        // rather than in the interface walk itself.
+        var viewModel = Type(_solutionGraph!, "SampleLib.SinkViewModel");
+
+        Assert.Equal(NodeType.ViewModel, viewModel.Type);
+        Assert.Equal(1, Implements(viewModel.Id, Sink).GetProperty<int>("depth"));
+    }
+
+    [Fact]
     public void PropertyImplementations_CarryTheirOwnImplementsEdge()
     {
         // The quietest of the three gaps, because it degraded by degree: an

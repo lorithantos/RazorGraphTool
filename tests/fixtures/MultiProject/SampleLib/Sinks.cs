@@ -126,3 +126,19 @@ public sealed class CountTally : ITally<int>
 {
     public int Total() => 0;
 }
+
+/// <summary>
+/// Named so the classifier routes it down the ViewModel branch rather than the
+/// plain-class one. That branch recorded no implemented interfaces at all, so
+/// the type-level edge appeared for ordinary classes and silently not for this
+/// one — the same partial answer, one level up, in the classifier rather than
+/// in the interface walk.
+/// </summary>
+public sealed class SinkViewModel : ISink
+{
+    public string Channel => "viewmodel stream";
+
+    public void Write(int value)
+    {
+    }
+}

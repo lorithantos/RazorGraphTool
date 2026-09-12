@@ -56,9 +56,12 @@ internal static class GraphFormat
     /// index — Literal nodes and Mentions edges — and covers the Overrides edge,
     /// which was added between 1.2 and here without a bump of its own. 1.4 added
     /// the Constructs edge, type-level and property-level Implements edges, and
-    /// the <c>interfaces</c> property on type nodes. All additive, so an older
-    /// reader loads a newer graph with a caveat rather than a refusal, and a graph
-    /// written without the stamp reads back as "cannot tell" rather than as fresh.
+    /// the <c>interfaces</c> property on type nodes. 1.5 added <c>isStatic</c> on
+    /// type nodes, and Constructs edges sourced at a TYPE rather than a member —
+    /// which is what static initialization has to be attributed to, there being no
+    /// member to blame. All additive, so an older reader loads a newer graph with a
+    /// caveat rather than a refusal, and a graph written without the stamp reads
+    /// back as "cannot tell" rather than as fresh.
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -68,16 +71,36 @@ internal static class GraphFormat
     /// That is the riskier half of the two and the reason the bump is worth having
     /// — the caveat is the only thing that tells a reader the population changed
     /// under an existing name.
-    /// </remarks>
-    /// <remarks>
+    /// <para>
+    /// 1.5 carries that lesson a second time, and it is why the bump covers more
+    /// than the new property. Type-sourced Constructs edges are not a new KIND — a
+    /// reader already knows Constructs — but they are a new SHAPE, a near end that
+    /// is a type where every other one is a member. A consumer assuming FromId is
+    /// always a member would be wrong against a graph still calling itself 1.4, and
+    /// two builds would both claim 1.4 while holding different populations. Version
+    /// the shape, not only the vocabulary.
+    /// </para>
+    /// <para>
+    /// WHAT THE MINOR RULE ACTUALLY BUYS, demonstrated rather than argued. Because
+    /// a minor bump is additive only, a graph saved by an older build still loads
+    /// whole into a newer one — so both can be held in the same server under
+    /// different ids and DIFFED. That is how the 1.4 change was verified on a real
+    /// corpus: save the old graph before the rotation, load it beside a freshly
+    /// built one, and compare edge counts by type. Node count unchanged and every
+    /// pre-existing edge type byte-identical is "additive only" measured instead of
+    /// asserted, and it is a check no amount of fixture testing substitutes for.
+    /// A major bump forfeits this, which is a real cost to weigh against one.
+    /// </para>
+    /// <para>
     /// New node and edge kinds are precisely what the MINOR rule below is for, and
     /// a reader that does not know them still loads them: ParseType falls back to
     /// Unknown plus a ForeignType for both, and the document records what it could
     /// not model. So the bump costs an older reader a caveat and buys it the truth,
     /// which is the trade the stamp exists to make. Overrides shipping unstamped is
     /// the case against leaving it: nothing broke, and nothing said anything either.
+    /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(1, 4);
+    public static readonly GraphFormatVersion Current = new(1, 5);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

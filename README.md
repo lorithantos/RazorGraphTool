@@ -317,7 +317,11 @@ a name matches it). Rows are candidates to read.
 **A node says what a person can change about it.** Type nodes carry `isInterface` —
 interfaces are `Class` nodes unless DI registration promotes them to
 `ServiceInterface`, so without the flag most of a codebase's interfaces are
-indistinguishable from classes. They also carry `interfaces`, every interface the
+indistinguishable from classes. They carry `isStatic`, which is what makes a
+zero readable: a static class cannot be constructed by anyone, so an empty
+incoming set is a fact about C# rather than about the codebase — on one stack,
+sixteen of seventeen zero-degree types were static classes, and the most-called
+type in the whole codebase was among them. They also carry `interfaces`, every interface the
 type implements including the out-of-solution ones that get no edge, because
 `baseType` alone reported `object` for a class with a full interface list — true,
 and the least informative true thing the node could say about its own shape. Method nodes carry `isOverride` and
