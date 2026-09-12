@@ -161,6 +161,14 @@ interface — had no incoming edge of any kind and read as dead. Not emitted for
 `new T()` on a type parameter, which resolves to no constructor, so an edge would
 name a type the call site does not build.
 
+Static initialization is the one shape whose edge starts at a **type** rather than
+a member. `private static readonly IFoo Default = new Foo();` runs in the static
+constructor, which is not a graph node — an implicit one has no syntax a reader
+could open, and minting one would put every static constructor in the solution
+into `uncovered_methods` as a confident untested claim, since nothing models
+"first access runs it". So the declaring type is the near end; responses carry the
+node kind, so the two shapes are told apart by reading rather than by guessing.
+
 `Implements` runs at both granularities, the way `Contains` does. Type → interface
 answers *which classes implement this*, carrying `depth`: 1 when the interface is
 written in the type's own declaration, more when it arrives through a base class or

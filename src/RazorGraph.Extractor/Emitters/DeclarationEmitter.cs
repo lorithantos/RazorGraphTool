@@ -330,9 +330,15 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
     /// </remarks>
     internal void AddConstructsEdges(IEnumerable<ConstructionSiteInfo> sites)
     {
-        foreach (var group in sites.GroupBy(s => (s.FromId, s.ToTypeFullName)))
+        foreach (var group in sites.GroupBy(s => (s.FromId, s.FromTypeFullName, s.ToTypeFullName)))
         {
-            var (fromId, typeName) = group.Key;
+            var (memberId, fromTypeName, typeName) = group.Key;
+
+            // Static initialization has no member to attribute to, so the near end
+            // is a type name resolved through the same map as the far end.
+            var fromId = memberId ?? (fromTypeName is not null
+                && _typeIdByFullName.TryGetValue(fromTypeName, out var declaringId) ? declaringId : null);
+            if (fromId is null) continue;
 
             if (!_typeIdByFullName.TryGetValue(typeName, out var toId)) continue;
             if (!graph.HasNode(fromId) || !graph.HasNode(toId)) continue;

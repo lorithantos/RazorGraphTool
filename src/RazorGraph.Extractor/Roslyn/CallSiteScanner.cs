@@ -117,11 +117,50 @@ internal static class CallSiteScanner
         SyntaxNode decl, SemanticModel model, IReadOnlySet<string> inScope)
     {
         if (TopLevelProgram.DeclaredMethod(decl, model) is not { } caller) yield break;
-        var fromId = SymbolIds.MethodId(caller);
+
+        // An EXPLICIT static constructor is reached here — it is a
+        // BaseMethodDeclarationSyntax like any other — but it is not a graph node,
+        // so attributing to it would drop every edge for want of a near end, which
+        // is the same failure the whole Constructs edge exists to remove. It gets
+        // the same answer as the implicit one: attribute to the declaring type.
+        var isStaticCtor = caller.MethodKind == MethodKind.StaticConstructor;
+        var fromId = isStaticCtor ? null : SymbolIds.MethodId(caller);
+        var fromType = isStaticCtor ? caller.ContainingType.OriginalDefinition.ToDisplayString() : null;
 
         foreach (var (site, constructed) in TopLevelProgram.BodyNodes(decl)
                      .SelectMany(body => ConstructedTypes(body, model, inScope)))
-            yield return new ConstructionSiteInfo(fromId, constructed.ToDisplayString(), LineOf(site));
+            yield return new ConstructionSiteInfo(fromId, constructed.ToDisplayString(), LineOf(site), fromType);
+    }
+
+    /// <summary>
+    /// Construction sites in one type's STATIC field and property initializers,
+    /// attributed to the declaring type.
+    /// </summary>
+    /// <remarks>
+    /// The composition-root idiom the instance walk cannot see:
+    /// <c>private static readonly IFoo Default = new Foo();</c> builds a type that
+    /// otherwise has no incoming edge of any kind and reads as dead.
+    /// <para>
+    /// The near end is the TYPE and not a member, which makes this the one shape
+    /// of Constructs edge whose source is not a method. That is deliberate and
+    /// cheaper than the alternative: a static constructor is not a node, and
+    /// minting one would name nothing a reader can open while adding every static
+    /// ctor in the solution to uncovered_methods as a confident untested claim.
+    /// Responses carry fromType, so a reader can tell the two shapes apart.
+    /// </para>
+    /// </remarks>
+    internal static IEnumerable<ConstructionSiteInfo> StaticInitializerConstructionSites(
+        TypeDeclarationSyntax typeDecl, SemanticModel model, IReadOnlySet<string> inScope)
+    {
+        var initializers = TypeInitializers.StaticInitializers(typeDecl).ToList();
+        if (initializers.Count == 0) yield break;
+        if (model.GetDeclaredSymbol(typeDecl) is not INamedTypeSymbol type) yield break;
+
+        var fromType = type.OriginalDefinition.ToDisplayString();
+
+        foreach (var initializer in initializers)
+            foreach (var (site, constructed) in ConstructedTypes(initializer, model, inScope))
+                yield return new ConstructionSiteInfo(null, constructed.ToDisplayString(), LineOf(site), fromType);
     }
 
     /// <summary>

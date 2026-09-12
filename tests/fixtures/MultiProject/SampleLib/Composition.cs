@@ -83,3 +83,47 @@ public sealed class PartFactory
     /// </summary>
     public static T Fresh<T>() where T : new() => new T();
 }
+
+/// <summary>Built only by a static field initializer, so nothing but that walk can see it.</summary>
+public sealed class StaticPart : IPart
+{
+    public int Value => 3;
+}
+
+/// <summary>Built only inside an explicit static constructor body.</summary>
+public sealed class FallbackPart
+{
+    public int Value => 4;
+}
+
+/// <summary>
+/// A STATIC composition root, which the instance walk cannot see at all.
+///
+/// <para>
+/// Neither member below is a method, and the static constructor that actually
+/// runs them is not a graph node — an implicit one has no syntax to be a node of,
+/// and an explicit one is deliberately not minted. So both constructions are
+/// attributed to this TYPE, which is the one shape of Constructs edge whose near
+/// end is not a member, and the only honest place left to put it.
+/// </para>
+///
+/// <para>
+/// `private static readonly IFoo Default = new Foo();` is a common enough
+/// composition-root idiom that missing it left real types reading as dead — a
+/// live one was found in RazorGraph's own Lua checker the hour this shipped.
+/// </para>
+/// </summary>
+public static class PartRegistry
+{
+    /// <summary>A static field initializer: runs in the static ctor, has no member of its own.</summary>
+    public static readonly IPart Default = new StaticPart();
+
+    /// <summary>
+    /// An EXPLICIT static constructor. It IS walked — it is a method declaration
+    /// like any other — and its edges were still dropped, because the node they
+    /// would start from does not exist.
+    /// </summary>
+    static PartRegistry() => Fallback = new FallbackPart();
+
+    public static FallbackPart Fallback { get; }
+}

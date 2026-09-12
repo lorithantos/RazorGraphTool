@@ -30,7 +30,19 @@ internal sealed record CallSiteInfo(
 /// classified (type:, vm:, pm:), so only the emitter — which owns the name→id
 /// map — can turn a name into an id.
 /// </remarks>
-internal sealed record ConstructionSiteInfo(string FromId, string ToTypeFullName, int Line);
+/// <remarks>
+/// Exactly one of <paramref name="FromId"/> and <paramref name="FromTypeFullName"/>
+/// is set. A construction in ordinary code is attributed to the MEMBER holding it;
+/// one in static initialization has no member to attribute to — a static
+/// constructor is not a graph node, and an implicit one has no syntax a reader
+/// could open — so it is attributed to the declaring TYPE, whose name the emitter
+/// resolves through the same map it uses for the far end.
+/// </remarks>
+internal sealed record ConstructionSiteInfo(
+    string? FromId,
+    string ToTypeFullName,
+    int Line,
+    string? FromTypeFullName = null);
 
 /// <summary>
 /// One resource a method disposes implicitly, and whether the disposal is

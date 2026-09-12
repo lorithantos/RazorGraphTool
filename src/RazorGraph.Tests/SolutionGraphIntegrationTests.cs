@@ -1424,6 +1424,52 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         Assert.DoesNotContain(_solutionGraph!.Outgoing(fresh.Id), e => e.Type == EdgeType.Constructs);
     }
 
+    [Fact]
+    public void Constructs_ReachesATypeBuiltOnlyByAStaticFieldInitializer()
+    {
+        // The gap found by running the acceptance query on RazorGraph's own
+        // source an hour after Constructs shipped: LuaGraphBuilder holds
+        // `private static readonly IReadOnlyList<ILuaRule> LanguageRules =
+        // [new DialectRule()];` and DialectRule still reported zero incoming.
+        // The instance walk cannot see it, because a static initializer runs in
+        // the static constructor and not in any instance one.
+        var built = Constructs("type:SampleLib.StaticPart");
+
+        var edge = Assert.Single(built);
+        Assert.Equal("type:SampleLib.PartRegistry", edge.FromId);
+        Assert.True(edge.GetProperty<int>("line") > 0);
+    }
+
+    [Fact]
+    public void Constructs_ReachesATypeBuiltInAnExplicitStaticConstructor()
+    {
+        // Walked all along — a static ctor is a method declaration like any other
+        // — and dropped all along, for want of a node to start from.
+        Assert.Equal(
+            "type:SampleLib.PartRegistry",
+            Assert.Single(Constructs("type:SampleLib.FallbackPart")).FromId);
+    }
+
+    [Fact]
+    public void StaticConstruction_StartsAtTheTypeAndMintsNoStaticConstructorNode()
+    {
+        // The design decision, pinned so it cannot be undone by accident. Minting
+        // a .cctor node would name nothing a reader can open, and since nothing
+        // models "first access runs it", every static constructor in the solution
+        // would arrive in uncovered_methods as a confident untested claim.
+        Assert.DoesNotContain(
+            _solutionGraph!.Nodes,
+            n => n.Id.Contains("..cctor", StringComparison.Ordinal)
+                 || n.Id.EndsWith(".cctor", StringComparison.Ordinal));
+
+        // So this is the one Constructs edge whose near end is a type. A reader
+        // tells the shapes apart by the node kind, which responses already carry.
+        var from = _solutionGraph!.GetNode(Assert.Single(Constructs("type:SampleLib.StaticPart")).FromId);
+
+        Assert.NotNull(from);
+        Assert.Equal(NodeType.Class, from!.Type);
+    }
+
     /// <summary>
     /// The Implements edge between two types. Single rather than FirstOrDefault
     /// so a missing edge fails saying so, instead of a null that the next line
