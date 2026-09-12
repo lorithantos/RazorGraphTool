@@ -142,3 +142,20 @@ public sealed class SinkViewModel : ISink
     {
     }
 }
+
+/// <summary>
+/// A base carrying a member its derived types do not redeclare. A member node
+/// records the type that DECLARES it, so Origin is filed under this type and not
+/// under <see cref="DerivedSink"/> — which is what makes a template declaring the
+/// derived type report an ordinary binding as a member that does not exist,
+/// unless the lookup walks the base chain.
+/// </summary>
+public abstract class SinkOrigin
+{
+    public string Origin => "upstream";
+}
+
+/// <summary>Declares nothing of its own, which is the point.</summary>
+public sealed class DerivedSink : SinkOrigin
+{
+}

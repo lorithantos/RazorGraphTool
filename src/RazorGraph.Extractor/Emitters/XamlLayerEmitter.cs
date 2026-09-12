@@ -23,6 +23,9 @@ internal sealed class XamlLayerEmitter(CodeGraph graph)
     /// <summary>Declaring type full name plus member name, for code-behind members.</summary>
     private Dictionary<(string Type, string Member), List<string>>? _membersByType;
 
+    /// <summary>Type full name to its in-solution base, for walking inherited members.</summary>
+    private Dictionary<string, string>? _baseTypeByName;
+
     internal void AddXamlLayer(string projectDir, string? idScope)
     {
         var views = XamlExtractor.ExtractViews(projectDir, idScope);
@@ -174,10 +177,7 @@ internal sealed class XamlLayerEmitter(CodeGraph graph)
         // edge pointing at some unrelated type that happens to share the name —
         // and the wrong edge is the failure worth avoiding, because it reads as
         // confirmation.
-        if (contextType != null)
-            return _membersByType!.TryGetValue((contextType, member), out var onContext)
-                ? onContext.Distinct(StringComparer.Ordinal).ToList()
-                : [];
+        if (contextType != null) return OnDeclaredType(contextType, member);
 
         var found = new List<string>();
         if (_candidatesByName!.TryGetValue(member, out var byName)) found.AddRange(byName);
@@ -189,9 +189,48 @@ internal sealed class XamlLayerEmitter(CodeGraph graph)
         return found.Distinct(StringComparer.Ordinal).ToList();
     }
 
+    /// <summary>
+    /// A member of the declared type or of anything it inherits from.
+    /// </summary>
+    /// <remarks>
+    /// The base walk is not a refinement, it is the difference between a defect
+    /// list and a wrong one. A member node records the type that DECLARES it, so
+    /// an inherited member is filed under the base — and a template declaring the
+    /// derived type would report a perfectly ordinary binding as a member that
+    /// does not exist. Measured on one app, three of six such claims were exactly
+    /// this: FormError bound under AssumptionsViewModel, GuardrailsViewModel and
+    /// TaxesViewModel, all three of which derive from the FormEditorViewModel
+    /// that declares it.
+    /// </remarks>
+    private List<string> OnDeclaredType(string contextType, string member)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        for (var type = contextType; type != null && seen.Add(type);)
+        {
+            if (_membersByType!.TryGetValue((type, member), out var found))
+                return found.Distinct(StringComparer.Ordinal).ToList();
+
+            type = _baseTypeByName!.GetValueOrDefault(type);
+        }
+
+        return [];
+    }
+
     private void BuildIndexes()
     {
         if (_candidatesByName != null) return;
+
+        // Only in-solution bases are here, so the walk stops where the graph's
+        // knowledge does. A member inherited from a framework type is genuinely
+        // beyond this layer, and reporting it as missing would be a claim about
+        // code the graph never saw.
+        _baseTypeByName = graph.Nodes
+            .Where(n => n.GetProperty<string>("fullName") != null
+                        && n.GetProperty<string>("baseType") is { Length: > 0 } b
+                        && b != "object")
+            .GroupBy(n => n.GetProperty<string>("fullName")!, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First().GetProperty<string>("baseType")!, StringComparer.Ordinal);
 
         var viewModelTypes = graph.Nodes
             .Where(n => n.Type == NodeType.ViewModel)

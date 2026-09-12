@@ -1374,6 +1374,20 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void DataBinds_FindsAMemberTheDeclaredTypeInherits()
+    {
+        // A member node records the type that DECLARES it, so Origin is filed
+        // under SinkOrigin and not under DerivedSink. Without a base walk this
+        // ordinary binding is reported as a member that does not exist — a defect
+        // claim naming a real type, which is the failure mode that matters.
+        Assert.Equal(1, DataBinds("prop:SampleLib.SinkOrigin.Origin").GetProperty<int>("candidates"));
+
+        Assert.DoesNotContain(
+            _solutionGraph!.GetNode(SinkViewId)!.GetProperty<List<string>>("missingOnDataType")!,
+            n => n.EndsWith(".Origin", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ABindingMissingFromItsDeclaredDataType_IsSeparatedFromAMereUnknown()
     {
         // The two facts a reader acts on differently. With a declared DataType,

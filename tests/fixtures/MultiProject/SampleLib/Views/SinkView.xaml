@@ -86,5 +86,16 @@
       </ContentControl.ContentTemplate>
     </ContentControl>
 
+    <!-- A template declaring a type that inherits the member it binds. Origin is
+         declared on SinkOrigin, so a lookup that does not walk the base chain
+         reports an ordinary binding as a member DerivedSink does not have. -->
+    <ContentControl>
+      <ContentControl.ContentTemplate>
+        <DataTemplate DataType="{x:Type lib:DerivedSink}">
+          <TextBlock Text="{Binding Origin}" />
+        </DataTemplate>
+      </ContentControl.ContentTemplate>
+    </ContentControl>
+
   </StackPanel>
 </Window>
