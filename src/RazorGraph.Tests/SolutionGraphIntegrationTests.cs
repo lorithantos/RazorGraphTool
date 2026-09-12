@@ -1491,6 +1491,13 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
 
         Assert.Equal(NodeType.ViewModel, viewModel.Type);
         Assert.Equal(1, Implements(viewModel.Id, Sink).GetProperty<int>("depth"));
+
+        // And baseType, which those branches also omitted. It reads as cosmetic
+        // and is not: the XAML layer walks the base chain to find an inherited
+        // member, and a node with no baseType ends that walk at once — so every
+        // inherited binding under a view model was reported as a member the type
+        // does not have. Measured on one app, three of its six defect claims.
+        Assert.NotNull(viewModel.GetProperty<string>("baseType"));
     }
 
     [Fact]
