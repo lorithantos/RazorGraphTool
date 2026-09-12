@@ -1425,7 +1425,13 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         // and Text="Channel" is a string. Reporting any of them as unresolved
         // would be the noise that teaches a reader to skim the list.
         Assert.DoesNotContain(unresolved, n => n.Contains("Items", StringComparison.Ordinal));
-        Assert.Single(unresolved!);
+
+        // Seal is here because a NESTED template declares its own context. It
+        // carries no DataType, so the context is unknown — and Seal exists on the
+        // enclosing template's LedgerSink and on no view model, so walking past
+        // the inner template would resolve it confidently to the wrong member
+        // instead of admitting it does not know.
+        Assert.Equal(new[] { "Missing", "Seal" }, unresolved);
     }
 
     [Fact]

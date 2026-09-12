@@ -175,9 +175,17 @@ internal static class XamlExtractor
             // HierarchicalDataTemplate as well as DataTemplate, and both may be
             // written in any namespace prefix the document chose.
             if (!element.Name.LocalName.EndsWith("DataTemplate", StringComparison.Ordinal)) continue;
-            if (element.Attribute("DataType")?.Value is not { } declared) continue;
 
-            return ResolveTypeName(declared, element);
+            // STOP at the nearest template, declared type or not. A template
+            // establishes a NEW DataContext — the item it renders — so an inner
+            // one with no DataType means the context is UNKNOWN, not that the
+            // enclosing one's applies. Walking past it attributed every row
+            // binding to the page view model: measured on one app, that produced
+            // 35 confident "member does not exist" claims, all of them wrong, all
+            // of them row members reported against the page they sit on.
+            return element.Attribute("DataType")?.Value is { } declared
+                ? ResolveTypeName(declared, element)
+                : null;
         }
 
         return null;

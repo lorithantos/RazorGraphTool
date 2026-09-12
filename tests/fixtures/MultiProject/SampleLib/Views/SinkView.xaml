@@ -59,6 +59,19 @@
                member and look like a success. -->
           <TextBlock Text="{Binding Write, RelativeSource={RelativeSource AncestorType=Window}}" />
 
+          <!-- A NESTED template establishes its OWN context: the item it
+               renders. It declares no DataType, so the context here is UNKNOWN
+               rather than the enclosing LedgerSink. Seal exists on LedgerSink
+               and on no view model, so scoping this to the outer template would
+               resolve it confidently to the wrong member. -->
+          <ItemsControl>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <TextBlock Text="{Binding Seal}" />
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
         </DataTemplate>
       </ContentControl.ContentTemplate>
     </ContentControl>
