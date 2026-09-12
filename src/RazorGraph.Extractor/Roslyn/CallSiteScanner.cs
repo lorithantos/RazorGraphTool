@@ -64,6 +64,98 @@ internal static class CallSiteScanner
     }
 
     /// <summary>
+    /// In-solution types built by new-expressions anywhere under a syntax node.
+    /// </summary>
+    /// <remarks>
+    /// <c>BaseObjectCreationExpressionSyntax</c> is exactly two shapes —
+    /// <c>new Foo()</c> and target-typed <c>new()</c> — and an object initialiser
+    /// hangs off the creation node rather than being one, so a type built with
+    /// <c>new Foo { A = 1 }</c> is counted once and not twice.
+    /// <para>
+    /// Three shapes are deliberately absent, and each is absent for a reason
+    /// rather than by oversight. <c>new T()</c> on a type parameter resolves to
+    /// no constructor symbol at all, so there is nothing to point at and an edge
+    /// to the constraint would name a type the call site does not build.
+    /// <c>typeof(X)</c> is not a creation node — it is a different claim, and
+    /// Registers already carries it. Anonymous types resolve to a constructor but
+    /// have no declaration and therefore no node.
+    /// </para>
+    /// <para>
+    /// Reduced to OriginalDefinition because a node is minted for the DECLARATION:
+    /// <c>new Repo&lt;Order&gt;()</c> must find <c>Repo&lt;T&gt;</c>, and keeping the
+    /// constructed form would mint an id no declaration ever produces — the
+    /// generic case failing silently while every other one passed.
+    /// </para>
+    /// </remarks>
+    private static IEnumerable<(SyntaxNode Site, INamedTypeSymbol Constructed)> ConstructedTypes(
+        SyntaxNode scope, SemanticModel model, IReadOnlySet<string> inScope)
+    {
+        foreach (var node in scope.DescendantNodesAndSelf())
+        {
+            if (node is not BaseObjectCreationExpressionSyntax) continue;
+            if (model.GetSymbolInfo(node).Symbol is not IMethodSymbol ctor) continue;
+
+            var constructed = ctor.ContainingType.OriginalDefinition;
+            if (constructed.ContainingAssembly?.Name is not { } assembly || !inScope.Contains(assembly)) continue;
+
+            yield return (node, constructed);
+        }
+    }
+
+    /// <summary>
+    /// Construction sites in one method declaration, attributed to that method.
+    /// </summary>
+    /// <remarks>
+    /// Lambdas and local functions are ordinary descendants of the declaration
+    /// rather than scopes of their own, so a factory lambda's new-expression is
+    /// attributed to the method holding it — which is the method a reader would
+    /// go and open. Accessor bodies are NOT reached, because MethodScopes
+    /// enumerates BaseMethodDeclarationSyntax and an accessor is not one; that is
+    /// a pre-existing limit of the walk, shared with Calls edges.
+    /// </remarks>
+    internal static IEnumerable<ConstructionSiteInfo> ConstructionSites(
+        SyntaxNode decl, SemanticModel model, IReadOnlySet<string> inScope)
+    {
+        if (TopLevelProgram.DeclaredMethod(decl, model) is not { } caller) yield break;
+        var fromId = SymbolIds.MethodId(caller);
+
+        foreach (var (site, constructed) in TopLevelProgram.BodyNodes(decl)
+                     .SelectMany(body => ConstructedTypes(body, model, inScope)))
+            yield return new ConstructionSiteInfo(fromId, constructed.ToDisplayString(), LineOf(site));
+    }
+
+    /// <summary>
+    /// Construction sites in one type's field and property initializers,
+    /// attributed to every instance constructor — the code that actually runs
+    /// them. The twin of <see cref="InitializerCallSites"/>, and it matters more
+    /// here: `private readonly IFoo _foo = new Foo();` IS the composition root
+    /// shape this edge exists to make visible.
+    /// </summary>
+    /// <remarks>
+    /// The implicit default constructor is a node whenever a type has instance
+    /// initializers, which is exactly the condition under which this method
+    /// yields anything — so the far end of these edges is present for the same
+    /// reason the near end is.
+    /// </remarks>
+    internal static IEnumerable<ConstructionSiteInfo> InitializerConstructionSites(
+        TypeDeclarationSyntax typeDecl, SemanticModel model, IReadOnlySet<string> inScope)
+    {
+        var initializers = TypeInitializers.InstanceInitializers(typeDecl).ToList();
+        if (initializers.Count == 0) yield break;
+        if (model.GetDeclaredSymbol(typeDecl) is not INamedTypeSymbol type) yield break;
+
+        var ctorIds = type.InstanceConstructors.Select(SymbolIds.MethodId).Distinct().ToList();
+
+        foreach (var initializer in initializers)
+            foreach (var (site, constructed) in ConstructedTypes(initializer, model, inScope))
+                foreach (var ctorId in ctorIds)
+                    yield return new ConstructionSiteInfo(ctorId, constructed.ToDisplayString(), LineOf(site));
+    }
+
+    private static int LineOf(SyntaxNode node) =>
+        node.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+
+    /// <summary>
     /// Call sites for one type's field and property initializers. Initializers
     /// execute inside the instance constructors, not inside any method
     /// declaration, so the method walk never sees them. Their calls are

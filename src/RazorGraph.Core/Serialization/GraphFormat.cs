@@ -54,11 +54,21 @@ internal static class GraphFormat
     /// the argument payloads riding them. 1.2 added the document-level
     /// <c>builtAt</c> stamp behind per-node freshness. 1.3 added the literal
     /// index — Literal nodes and Mentions edges — and covers the Overrides edge,
-    /// which was added between 1.2 and here without a bump of its own. All
-    /// additive, so an older reader loads a newer graph with a caveat rather than
-    /// a refusal, and a graph written without the stamp reads back as "cannot
-    /// tell" rather than as fresh.
+    /// which was added between 1.2 and here without a bump of its own. 1.4 added
+    /// the Constructs edge, type-level and property-level Implements edges, and
+    /// the <c>interfaces</c> property on type nodes. All additive, so an older
+    /// reader loads a newer graph with a caveat rather than a refusal, and a graph
+    /// written without the stamp reads back as "cannot tell" rather than as fresh.
     /// </summary>
+    /// <remarks>
+    /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
+    /// KIND, which an older reader keeps verbatim as foreign data. The Implements
+    /// edges are not: they are more edges of a type every reader already knows, so
+    /// an older reader absorbs them silently into whatever it does with Implements.
+    /// That is the riskier half of the two and the reason the bump is worth having
+    /// — the caveat is the only thing that tells a reader the population changed
+    /// under an existing name.
+    /// </remarks>
     /// <remarks>
     /// New node and edge kinds are precisely what the MINOR rule below is for, and
     /// a reader that does not know them still loads them: ParseType falls back to
@@ -67,7 +77,7 @@ internal static class GraphFormat
     /// which is the trade the stamp exists to make. Overrides shipping unstamped is
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(1, 3);
+    public static readonly GraphFormatVersion Current = new(1, 4);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

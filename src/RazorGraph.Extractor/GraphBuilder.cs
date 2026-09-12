@@ -226,7 +226,9 @@ public sealed class GraphBuilder : IAsyncDisposable
         }
 
         _declarations.AddExtensionEdges(_symbols);
+        _declarations.AddTypeImplementsEdges(_symbols);
         _declarations.AddMethodImplementsEdges(_symbols);
+        _declarations.AddMemberImplementsEdges(_symbols);
         _declarations.AddMethodOverridesEdges(_symbols);
 
         foreach (var sym in symbols)
@@ -236,6 +238,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         }
 
         _usage.AddCallEdges(_roslyn.ExtractCallSites());
+        _declarations.AddConstructsEdges(_roslyn.ExtractConstructionSites());
         _usage.AddMemberAccessEdges(_roslyn.ExtractMemberAccesses());
         // One scan, two consumers. ExtractQuotedNames is a lazy walk over every
         // syntax tree in the solution, so enumerating it twice would compile the

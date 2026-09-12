@@ -219,7 +219,8 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
             new[]
             {
                 "Advance_ThroughARunnerThatHoldsTheBase", "Advance_ThroughTheBaseDeclaration",
-                "Cache_SeedsItself", "Greet_ThroughTheInterface", "List_ReturnsSortedCatalogs",
+                "Cache_SeedsItself", "Channel_ThroughTheInterface",
+                "Greet_ThroughTheInterface", "List_ReturnsSortedCatalogs",
                 "Preload_CountsCatalogs", "Warm_IsPositive"
             },
             tests.OrderBy(t => t, StringComparer.Ordinal));
@@ -1190,6 +1191,246 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         // with overrides mixed in would be a fuller answer that is also wrong.
         Assert.DoesNotContain(_solutionGraph!.Outgoing(PatrolAdvance), e => e.Type == EdgeType.Implements);
     }
+
+    // ---- Type-level interface implementation ---------------------------------
+    //
+    // "Which classes implement this interface" is the question a reader asks
+    // FIRST, and until 2026-09-11 the graph answered it with a well-formed zero:
+    // the relation existed only between MEMBERS, so the interface TYPE had no
+    // incoming Implements at all. Every assertion below fails without the
+    // type-level pass, and each shape here reaches the interface by a different
+    // route, because handling one route is what makes a partial answer look
+    // complete.
+
+    private const string Sink = "type:SampleLib.ISink";
+    private const string AuditSink = "type:SampleLib.IAuditSink";
+    private const string SinkBase = "type:SampleLib.SinkBase";
+    private const string RelaySink = "type:SampleLib.RelaySink";
+    private const string LedgerSink = "type:SampleLib.LedgerSink";
+    private const string ScratchSink = "type:SampleLib.ScratchSink";
+    private const string HiddenSink = "type:SampleLib.HiddenSink";
+
+    [Fact]
+    public void TypeLevelImplements_NamesEveryImplementingClass()
+    {
+        // The question, asked at the node a reader actually tries.
+        var implementers = _solutionGraph!.Incoming(Sink)
+            .Where(e => e.Type == EdgeType.Implements)
+            .Select(e => e.FromId)
+            .ToList();
+
+        Assert.Contains(SinkBase, implementers);    // declares it outright
+        Assert.Contains(RelaySink, implementers);   // through a base CLASS
+        Assert.Contains(LedgerSink, implementers);  // through a base INTERFACE
+        Assert.Contains(ScratchSink, implementers); // beside an out-of-solution one
+        Assert.Contains(HiddenSink, implementers);  // explicit implementation
+    }
+
+    [Fact]
+    public void TypeLevelImplements_CarryTheDistanceToTheDeclaration()
+    {
+        // Depth is what keeps both questions askable: "what does this class
+        // itself declare" is depth 1, and a flat list cannot answer it.
+        Assert.Equal(1, Implements(SinkBase, Sink).GetProperty<int>("depth"));
+        Assert.Equal(1, Implements(LedgerSink, AuditSink).GetProperty<int>("depth"));
+
+        // Reached through the base class, and through the base interface. Both
+        // are two hops, and both read as zero before this change.
+        Assert.Equal(2, Implements(RelaySink, Sink).GetProperty<int>("depth"));
+        Assert.Equal(2, Implements(LedgerSink, Sink).GetProperty<int>("depth"));
+    }
+
+    [Fact]
+    public void TypeLevelImplements_RecordsInterfaceInheritance_WhichInheritsCannotSee()
+    {
+        // Inherits is driven by BaseType, which is null on an interface, so
+        // without this edge nothing in the graph records that IAuditSink is an
+        // ISink at all.
+        Assert.Equal(1, Implements(AuditSink, Sink).GetProperty<int>("depth"));
+        Assert.DoesNotContain(_solutionGraph!.Outgoing(AuditSink), e => e.Type == EdgeType.Inherits);
+    }
+
+    [Fact]
+    public void TypeLevelImplements_SkipsInterfacesOutsideTheSolution()
+    {
+        // The control, and the only case that separates "emit an edge per
+        // declared interface" from "emit one per interface that is a node".
+        // ScratchSink declares ISink and System.IComparable on one line.
+        Assert.NotNull(Implements(ScratchSink, Sink));
+        Assert.DoesNotContain(
+            _solutionGraph!.Outgoing(ScratchSink),
+            e => e.Type == EdgeType.Implements && e.ToId.Contains("IComparable", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TypeNodes_ListEveryInterface_IncludingTheOnesWithNoNode()
+    {
+        // The node's own answer, so a reader who has one node in hand does not
+        // need a second call. baseType said "object" for all of these.
+        var scratch = Type(_solutionGraph!, "SampleLib.ScratchSink");
+        var interfaces = scratch.GetProperty<List<string>>("interfaces");
+
+        Assert.NotNull(interfaces);
+        Assert.Contains("SampleLib.ISink", interfaces);
+
+        // Kept here precisely because it gets no edge: the list is a fact about
+        // the declaration, and an absent far end does not make it untrue.
+        Assert.Contains("System.IComparable", interfaces);
+        Assert.Equal("object", scratch.GetProperty<string>("baseType"));
+    }
+
+    [Fact]
+    public void TypeLevelImplements_ResolvesAGenericInterfaceToItsDefinition()
+    {
+        // CountTally implements ITally<int>; the node that exists is ITally<T>.
+        // Recording what is written at the use site would produce a name that
+        // matches no node, so the generic case would fail silently while every
+        // non-generic one passed.
+        var tally = Type(_solutionGraph!, "SampleLib.ITally<T>");
+        var implementers = _solutionGraph!.Incoming(tally.Id)
+            .Where(e => e.Type == EdgeType.Implements)
+            .Select(e => e.FromId)
+            .ToList();
+
+        Assert.Contains("type:SampleLib.CountTally", implementers);
+    }
+
+    [Fact]
+    public void PropertyImplementations_CarryTheirOwnImplementsEdge()
+    {
+        // The quietest of the three gaps, because it degraded by degree: an
+        // interface with a method AND a property still reported implementers
+        // through the method, so the answer looked complete while being partial.
+        var implementers = _solutionGraph!.Incoming("prop:SampleLib.ISink.Channel")
+            .Where(e => e.Type == EdgeType.Implements)
+            .Select(e => e.FromId)
+            .ToList();
+
+        Assert.Contains("prop:SampleLib.LedgerSink.Channel", implementers);
+        Assert.Contains("prop:SampleLib.ScratchSink.Channel", implementers);
+
+        // Explicit implementation: the declared name carries the interface, so
+        // anything matching on simple name misses it while the type plainly
+        // implements the interface.
+        Assert.Contains(implementers, id => id.Contains("HiddenSink", StringComparison.Ordinal));
+
+        // The ABSTRACT declaration is the implementer, not the override that
+        // replaces it: Roslyn maps the interface member to SinkBase.Channel, and
+        // RelaySink.Channel merely overrides that. Recorded here because it is
+        // the boundary of what this relation claims — "which body runs" for a
+        // property is the override chain, and properties carry no Overrides edge
+        // at all, so that question is still unanswerable. Methods got their
+        // Overrides edge on 2026-09-05; the property twin does not exist.
+        Assert.Contains("prop:SampleLib.SinkBase.Channel", implementers);
+        Assert.DoesNotContain("prop:SampleLib.RelaySink.Channel", implementers);
+    }
+
+    [Fact]
+    public void PropertyImplements_DoNotWidenCoverage_AndThatIsDeliberate()
+    {
+        // Pinned as a LIMIT, not asserted as a success. Reading a property is a
+        // Reads edge and the Covers walk steps along Calls, so the property node
+        // is never reached and there is nothing to widen from — SinkTests binds
+        // to ISink.Channel and still covers no implementation.
+        //
+        // Here so that whoever makes the walk follow Reads finds a failing test
+        // telling them what changed, rather than a silent shift in every
+        // coverage number in the repository.
+        var query = new GraphQuery(_solutionGraph!);
+
+        Assert.Empty(query.GetCoveringTests("prop:SampleLib.LedgerSink.Channel"));
+    }
+
+    // ---- Construction --------------------------------------------------------
+    //
+    // `new X()` put no incoming edge on X. A new-expression already produced a
+    // Calls edge to the CONSTRUCTOR, but a type whose constructor the compiler
+    // supplied has no .ctor node, so the edge was dropped for want of a far end —
+    // and the plainest types, the ones a composition root builds and passes as an
+    // interface, were zero-degree nodes that read as dead.
+
+    private const string PlainPart = "type:SampleLib.PlainPart";
+    private const string SeededPart = "type:SampleLib.SeededPart";
+
+    private List<GraphEdge> Constructs(string toId) =>
+        _solutionGraph!.Incoming(toId).Where(e => e.Type == EdgeType.Constructs).ToList();
+
+    [Fact]
+    public void Constructs_ReachesATypeWhoseConstructorTheCompilerSupplied()
+    {
+        // The motivating case. PlainPart is built once, in a field initializer,
+        // and has no constructor of its own.
+        Assert.DoesNotContain(
+            _solutionGraph!.Nodes,
+            n => n.Id.StartsWith("m:SampleLib.PlainPart..ctor", StringComparison.Ordinal));
+
+        var built = Constructs(PlainPart);
+
+        // Attributed to the constructor, because that is what runs an initializer.
+        Assert.Contains(built, e => e.FromId.Contains("PartFactory..ctor", StringComparison.Ordinal));
+        Assert.All(built, e => Assert.True(e.GetProperty<int>("line") > 0));
+    }
+
+    [Fact]
+    public void Constructs_ReachesATypeWithAPrimaryConstructor()
+    {
+        // Different syntax, same hole — pinned separately rather than assumed.
+        Assert.Contains(
+            Constructs("type:SampleLib.PrimaryPart"),
+            e => e.FromId.Contains("PartFactory.Sized", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Constructs_SaysWhichImplementationTheCompositionRootPicked()
+    {
+        // The whole point of the edge. The interface's implementers are the
+        // candidates; only this says which one production builds.
+        Assert.Contains(
+            Constructs(SeededPart),
+            e => e.FromId.Contains("PartFactory.Pick", StringComparison.Ordinal));
+
+        // And through a lambda body, which is not a scope of its own.
+        Assert.Contains(
+            Constructs(SeededPart),
+            e => e.FromId.Contains("PartFactory.Later", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Constructs_ResolvesAGenericToItsDefinition_AndCountsAnInitialiserOnce()
+    {
+        // new Holder<int> { Item = 5 } — the object initialiser hangs off the
+        // creation node rather than being one, so this is a single site.
+        var built = Constructs("type:SampleLib.Holder<T>");
+
+        var edge = Assert.Single(built, e => e.FromId.Contains("PartFactory.Held", StringComparison.Ordinal));
+        Assert.Null(edge.GetProperty<object>("sites"));
+    }
+
+    [Fact]
+    public void Constructs_IsNotMintedForNamingATypeOrForAnUnboundTypeParameter()
+    {
+        // The assertions that stop the walk being wrong in a way that reads as
+        // thorough. typeof names a type without building one — Registers is the
+        // edge for "the framework will consult this" — and new T() resolves to no
+        // constructor at all, so an edge would name a type the site does not build.
+        Assert.DoesNotContain(Constructs(PlainPart), e => e.FromId.Contains("Named", StringComparison.Ordinal));
+
+        // Resolve the node first. Asking a mistyped id for its edges returns an
+        // empty list, and a "no Constructs edge" assertion would then pass for
+        // the one reason this whole change set exists to stop trusting.
+        var fresh = _solutionGraph!.Nodes.Single(n =>
+            n.Id.StartsWith("m:SampleLib.PartFactory.Fresh", StringComparison.Ordinal));
+
+        Assert.DoesNotContain(_solutionGraph!.Outgoing(fresh.Id), e => e.Type == EdgeType.Constructs);
+    }
+
+    /// <summary>
+    /// The Implements edge between two types. Single rather than FirstOrDefault
+    /// so a missing edge fails saying so, instead of a null that the next line
+    /// reports as a depth mismatch.
+    /// </summary>
+    private GraphEdge Implements(string fromId, string toId) =>
+        _solutionGraph!.Outgoing(fromId).Single(e => e.Type == EdgeType.Implements && e.ToId == toId);
 
     [Fact]
     public void CoveringTests_ReachTheOverrideThatActuallyRan()

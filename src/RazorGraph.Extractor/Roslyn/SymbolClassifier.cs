@@ -30,6 +30,11 @@ internal static class SymbolClassifier
 
         var baseType = symbol.BaseType?.ToDisplayString() ?? "";
         var interfaces = symbol.AllInterfaces.Select(i => i.ToDisplayString()).ToList();
+
+        // Flat for the naming heuristics above, with distances for the graph.
+        // AllInterfaces cannot say which of these the declaration itself names,
+        // and that is the half a reader asks for first.
+        var implemented = InterfaceImplementations(symbol);
         var (filePath, lineStart, lineEnd, lineDocs) = GetLines(symbol);
 
         // PageModel detection
@@ -101,7 +106,7 @@ internal static class SymbolClassifier
                 LineStart = lineStart,
                 LineEnd = lineEnd,
                 LineDocs = lineDocs,
-                ImplementedInterfaces = interfaces.Where(i => i.EndsWith("Service")).ToList(),
+                ImplementedInterfaces = implemented,
                 Methods = ExtractMethods(symbol),
                 MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
                 MemberNodes = ExtractMemberNodes(symbol, inScope, policy)
@@ -152,7 +157,7 @@ internal static class SymbolClassifier
             LineEnd = lineEnd,
             LineDocs = lineDocs,
             BaseType = baseType,
-            ImplementedInterfaces = interfaces,
+            ImplementedInterfaces = implemented,
             Properties = ExtractProperties(symbol, policy),
             Methods = ExtractMethods(symbol),
             MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
@@ -317,6 +322,7 @@ internal static class SymbolClassifier
                     Kind = NodeType.Property,
                     MemberType = p.Type.ToDisplayString(),
                     ReferencedTypeFullNames = InScopeNamedTypes(p.Type, inScope),
+                    ImplementsIds = InSolutionImplementedProperties(p, inScope),
                     IsPublic = p.DeclaredAccessibility == Accessibility.Public,
                     IsStatic = p.IsStatic,
                     IsReadOnly = p.IsReadOnly,
@@ -904,6 +910,97 @@ internal static class SymbolClassifier
             }
         }
         return ids;
+    }
+
+    /// <summary>
+    /// Ids of the in-solution interface properties this property implements.
+    /// </summary>
+    /// <remarks>
+    /// The property twin of <see cref="InSolutionImplementedMembers"/>, which
+    /// could not cover this by widening: it filters to MethodKind.Ordinary, and
+    /// a property's accessors are PropertyGet and PropertySet. So an interface
+    /// declaring <c>string Channel { get; }</c> had implementers that were
+    /// findable through a sibling METHOD member and not otherwise — and an
+    /// interface whose members are all properties had none that were findable
+    /// at all, while reporting a well-formed zero.
+    /// <para>
+    /// Explicit implementations are included and need no special case:
+    /// FindImplementationForInterfaceMember resolves them, which matching by
+    /// simple name would not, since their declared name carries the interface.
+    /// </para>
+    /// </remarks>
+    private static List<string> InSolutionImplementedProperties(IPropertySymbol p, IReadOnlySet<string> inScope)
+    {
+        if (p.IsStatic) return new List<string>();
+
+        var ids = new List<string>();
+        foreach (var iface in p.ContainingType.AllInterfaces)
+        {
+            if (iface.ContainingAssembly?.Name is not { } assembly || !inScope.Contains(assembly)) continue;
+
+            foreach (var member in iface.GetMembers().OfType<IPropertySymbol>())
+                if (SymbolEqualityComparer.Default.Equals(
+                        p.ContainingType.FindImplementationForInterfaceMember(member), p))
+                    ids.Add(SymbolIds.MemberId(member));
+        }
+        return ids;
+    }
+
+    /// <summary>
+    /// Every interface a type implements, each with the number of hops from
+    /// this declaration to the one that brought it in.
+    /// </summary>
+    /// <remarks>
+    /// Breadth-first over declared interfaces and base types, so the SHORTEST
+    /// route wins: a class that names IFoo itself and also inherits a base
+    /// naming it implements IFoo directly, and recording 2 there would be true
+    /// of some path and wrong about the declaration.
+    /// <para>
+    /// A walk rather than a read of <c>AllInterfaces</c> because that property
+    /// is flat. Three routes reach an interface — written here, through a base
+    /// CLASS, or through a base INTERFACE — and a fix that handles only the
+    /// first leaves the other two reporting a confident zero, which is the
+    /// failure this whole change exists to remove.
+    /// </para>
+    /// <para>
+    /// Out-of-solution interfaces are kept. Whether the far end is a node the
+    /// graph can point at is the emitter's question, not the classifier's, and
+    /// deciding it here would mean the node could not list IDisposable even as
+    /// a plain fact about the declaration.
+    /// </para>
+    /// </remarks>
+    private static List<InterfaceImplementation> InterfaceImplementations(INamedTypeSymbol symbol)
+    {
+        var found = new HashSet<string>(StringComparer.Ordinal);
+        var seen = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+        var implementations = new List<InterfaceImplementation>();
+        var queue = new Queue<(INamedTypeSymbol Type, int Depth)>();
+        queue.Enqueue((symbol, 0));
+
+        while (queue.Count > 0)
+        {
+            var (current, depth) = queue.Dequeue();
+            if (!seen.Add(current)) continue;
+
+            foreach (var iface in current.Interfaces)
+            {
+                // The DEFINITION, not the constructed form. A node is minted for
+                // ITally<T> and never for ITally<int>, so recording what is
+                // written at the use site would produce a name that matches no
+                // node and an edge that is silently dropped — the generic case
+                // failing while every non-generic one passed. The cost is that a
+                // type implementing ITally<int> and ITally<string> lists one
+                // entry, which is also all the graph has one node for.
+                var name = iface.OriginalDefinition.ToDisplayString();
+                if (found.Add(name)) implementations.Add(new InterfaceImplementation(name, depth + 1));
+
+                queue.Enqueue((iface, depth + 1));
+            }
+
+            if (current.BaseType is { } baseType) queue.Enqueue((baseType, depth + 1));
+        }
+
+        return implementations;
     }
 
     /// <summary>

@@ -74,6 +74,12 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
         if (sym.Properties.Count > 0) node.SetProperty("properties", sym.Properties.Select(p => p.Name).ToList());
         if (sym.Methods.Count > 0) node.SetProperty("methods", sym.Methods.Select(m => m.Name).ToList());
         if (sym.InjectedServices.Count > 0) node.SetProperty("injectedServices", sym.InjectedServices);
+        // Every interface, including the out-of-solution ones that get no edge.
+        // baseType alone said "object" for a class with a full interface list,
+        // which is not wrong so much as the least informative true thing the
+        // node could say about its own shape.
+        if (sym.ImplementedInterfaces.Count > 0)
+            node.SetProperty("interfaces", sym.ImplementedInterfaces.Select(i => i.FullName).ToList());
 
         graph.AddNode(node);
 
@@ -306,6 +312,94 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
     }
 
     /// <summary>
+    /// Constructs edges, from the member holding a new-expression to the type it
+    /// builds, carrying the line and — when a member builds the same type more
+    /// than once — how many sites there were.
+    /// </summary>
+    /// <remarks>
+    /// Lives here rather than on UsageEmitter because it needs the name→id map,
+    /// and grouped per (member, type) pair the way call edges are: a member that
+    /// news up the same type twice is one relationship, and the count keeps the
+    /// second site from being silently dropped.
+    /// <para>
+    /// Runs after every type node exists. An unresolvable name is skipped rather
+    /// than minting an ext: node: a type outside the solution was already filtered
+    /// at the scanner, so a miss here means the classifier declined the type, and
+    /// inventing a node for it would put a type nothing declares into the graph.
+    /// </para>
+    /// </remarks>
+    internal void AddConstructsEdges(IEnumerable<ConstructionSiteInfo> sites)
+    {
+        foreach (var group in sites.GroupBy(s => (s.FromId, s.ToTypeFullName)))
+        {
+            var (fromId, typeName) = group.Key;
+
+            if (!_typeIdByFullName.TryGetValue(typeName, out var toId)) continue;
+            if (!graph.HasNode(fromId) || !graph.HasNode(toId)) continue;
+
+            var edge = new GraphEdge
+            {
+                FromId = fromId,
+                ToId = toId,
+                Type = EdgeType.Constructs
+            };
+            edge.Properties["line"] = group.Min(s => s.Line);
+            if (group.Count() > 1) edge.Properties["sites"] = group.Count();
+            graph.AddEdge(edge);
+        }
+    }
+
+    /// <summary>
+    /// Type-level Implements edges, implementing type → interface, carrying the
+    /// number of hops to the declaration that brought the interface in.
+    /// </summary>
+    /// <remarks>
+    /// The edge <see cref="AddMethodImplementsEdges"/>'s own summary claimed
+    /// existed and did not, until 2026-09-11. Its absence was not a smaller
+    /// answer but a wrong one: asking an interface TYPE who implements it
+    /// returned a well-formed zero, which is indistinguishable from nobody
+    /// implementing it, and the real answer was one node away on the interface's
+    /// METHOD. A reader who trusted the zero concluded the graph did not index
+    /// implementation at all.
+    /// <para>
+    /// The SAME edge type as the method-level relation rather than a new one,
+    /// which is the opposite of the call made for Overrides and Mentions. Those
+    /// answer different QUESTIONS from the edge they were kept out of; this
+    /// answers the same question at a different granularity, exactly as Contains
+    /// runs type → method and type → property. The test is whether mixing them
+    /// makes an existing answer wrong, and the only walk that reads Implements
+    /// edges is CoverageEmitter.Steps, which now takes member-level edges only.
+    /// </para>
+    /// <para>
+    /// Interface-to-interface is included: a derived interface reaches its base
+    /// through the same walk, and since Inherits is driven by BaseType — null on
+    /// an interface — nothing else in the graph records that relation at all.
+    /// Callers wanting classes only can read isInterface on the far node.
+    /// </para>
+    /// </remarks>
+    internal void AddTypeImplementsEdges(IReadOnlyList<SymbolInfo> symbols)
+    {
+        foreach (var sym in symbols)
+            foreach (var iface in sym.ImplementedInterfaces)
+            {
+                // Out-of-solution interfaces have no node to point at. They stay
+                // on the node's `interfaces` list, which is where a plain fact
+                // about the declaration belongs; an edge needs two ends.
+                if (!_typeIdByFullName.TryGetValue(iface.FullName, out var interfaceId)) continue;
+                if (!graph.HasNode(sym.Id) || interfaceId == sym.Id) continue;
+
+                var edge = new GraphEdge
+                {
+                    FromId = sym.Id,
+                    ToId = interfaceId,
+                    Type = EdgeType.Implements
+                };
+                edge.Properties["depth"] = iface.Depth;
+                graph.AddEdge(edge);
+            }
+    }
+
+    /// <summary>
     /// Method-level Implements edges, implementation → interface method. The
     /// type-level edge says the class implements the interface; this one says
     /// which body actually runs when a caller binds to the interface member —
@@ -323,6 +417,50 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
                     {
                         FromId = method.Id,
                         ToId = interfaceMethodId,
+                        Type = EdgeType.Implements
+                    });
+                }
+    }
+
+    /// <summary>
+    /// Member-level Implements edges for PROPERTIES, implementation → interface
+    /// property. The same relation <see cref="AddMethodImplementsEdges"/> emits,
+    /// for the members it could not see.
+    /// </summary>
+    /// <remarks>
+    /// Its absence was the quietest of the three gaps closed on 2026-09-11,
+    /// because it degraded by DEGREE: an interface with a method and a property
+    /// still reported implementers — through the method — so the answer looked
+    /// complete and was merely partial. Only an interface whose members are all
+    /// properties failed outright, and it failed as a zero.
+    /// <para>
+    /// These edges answer "who implements this" and do NOT widen coverage, which
+    /// is worth stating because the opposite is the natural assumption. The
+    /// Covers walk steps along Calls edges, and reading a property produces a
+    /// Reads edge, so a property node is never reached in the first place and
+    /// there is nothing for the dispatch step to widen FROM. Making it reachable
+    /// means following Reads in CoverageEmitter.Steps, which changes coverage for
+    /// every property in every repository and wants its own evidence.
+    /// </para>
+    /// <para>
+    /// Said here deliberately. The bug this change set exists to fix was a doc
+    /// comment on AddMethodImplementsEdges asserting a type-level edge that was
+    /// never built, and a comment claiming a widening that does not happen would
+    /// be the same mistake one method down.
+    /// </para>
+    /// </remarks>
+    internal void AddMemberImplementsEdges(IReadOnlyList<SymbolInfo> symbols)
+    {
+        foreach (var sym in symbols)
+            foreach (var member in sym.MemberNodes)
+                foreach (var interfaceMemberId in member.ImplementsIds)
+                {
+                    if (!graph.HasNode(member.Id) || !graph.HasNode(interfaceMemberId)) continue;
+
+                    graph.AddEdge(new GraphEdge
+                    {
+                        FromId = member.Id,
+                        ToId = interfaceMemberId,
                         Type = EdgeType.Implements
                     });
                 }

@@ -354,6 +354,41 @@ public sealed class RoslynExtractor : IAsyncDisposable
     }
 
     /// <summary>
+    /// Every place an in-solution type is built with a new-expression, from the
+    /// member that builds it.
+    /// </summary>
+    /// <remarks>
+    /// A separate walk from <see cref="ExtractCallSites"/> rather than a second
+    /// consumer of it, because the two keep different things: a call site keeps
+    /// the CONSTRUCTOR and is dropped when that constructor has no node, which is
+    /// exactly the case this edge exists for — a type whose constructor the
+    /// compiler supplied had no incoming edge of any kind and read as dead.
+    /// </remarks>
+    internal IEnumerable<ConstructionSiteInfo> ExtractConstructionSites()
+    {
+        if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
+
+        var inScope = InScopeAssemblies();
+
+        foreach (var (root, model) in _loaded.SelectMany(
+                     l => l.Compilation.SyntaxTrees.Select(t => (t.GetRoot(), l.Compilation.GetSemanticModel(t)))))
+        {
+            foreach (var site in TopLevelProgram.MethodScopes(root)
+                .SelectMany(scope => CallSiteScanner.ConstructionSites(scope, model, inScope)))
+            {
+                yield return site;
+            }
+
+            foreach (var site in root.DescendantNodes()
+                .OfType<TypeDeclarationSyntax>()
+                .SelectMany(typeDecl => CallSiteScanner.InitializerConstructionSites(typeDecl, model, inScope)))
+            {
+                yield return site;
+            }
+        }
+    }
+
+    /// <summary>
     /// The views each controller action renders, with the name worked out from
     /// the semantic model; see ViewCallScanner. Names are not resolved to files
     /// here — that needs the Razor layer, which is built later.

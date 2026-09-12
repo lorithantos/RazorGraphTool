@@ -21,10 +21,38 @@ internal sealed record CallSiteInfo(
     bool IsDelegate = false);
 
 /// <summary>
+/// One place a method builds an instance of an in-solution type: the member
+/// holding the new-expression, the type's full name, and the line.
+/// </summary>
+/// <remarks>
+/// The type's name rather than a node id, for the same reason MemberDetail
+/// carries ReferencedTypeFullNames: the id prefix depends on how the type
+/// classified (type:, vm:, pm:), so only the emitter — which owns the name→id
+/// map — can turn a name into an id.
+/// </remarks>
+internal sealed record ConstructionSiteInfo(string FromId, string ToTypeFullName, int Line);
+
+/// <summary>
 /// One resource a method disposes implicitly, and whether the disposal is
 /// await using — which resolves DisposeAsync rather than Dispose.
 /// </summary>
 internal readonly record struct DisposedResource(ITypeSymbol Type, bool IsAsync);
+
+/// <summary>
+/// One interface a type implements, and the number of hops to the declaration
+/// that brought it in: 1 when the interface is written in this type's own
+/// declaration, more when it arrives through a base class or a base interface.
+/// </summary>
+/// <remarks>
+/// The depth is the finding, not decoration. "Which interfaces does this class
+/// itself declare" and "which interfaces does an instance of it satisfy" are
+/// different questions, and <c>AllInterfaces</c> answers only the second — so a
+/// flat list cannot tell a declared interface from an inherited one, and the
+/// reader who wanted the first gets a fuller answer that is also a wrong one.
+/// Carrying the distance keeps both askable, the same way Covers and Overrides
+/// carry theirs.
+/// </remarks>
+internal sealed record InterfaceImplementation(string FullName, int Depth);
 
 internal sealed class SymbolInfo
 {
@@ -62,7 +90,18 @@ internal sealed class SymbolInfo
     public bool IsInterface { get; init; }
 
     public string? BaseType { get; init; }
-    public List<string> ImplementedInterfaces { get; init; } = new();
+
+    /// <summary>
+    /// Every interface this type implements, and how far away each was declared;
+    /// see SymbolClassifier.InterfaceImplementations.
+    /// </summary>
+    /// <remarks>
+    /// Out-of-solution interfaces are KEPT here and dropped only when edges are
+    /// emitted. The node listing IDisposable is a fact worth having; an edge to
+    /// it would point at nothing.
+    /// </remarks>
+    public List<InterfaceImplementation> ImplementedInterfaces { get; init; } = new();
+
     public List<string> InjectedServices { get; init; } = new();
     public List<PropertyInfo> Properties { get; init; } = new();
     public List<MethodInfo> Methods { get; init; } = new();
@@ -178,6 +217,18 @@ internal sealed record MemberDetail
 
     /// <summary>In-solution named types the declared type mentions, recursively.</summary>
     public List<string> ReferencedTypeFullNames { get; init; } = new();
+
+    /// <summary>
+    /// Ids of in-solution interface PROPERTIES this member implements; the
+    /// member-level twin of MethodDetail.ImplementsIds.
+    /// </summary>
+    /// <remarks>
+    /// Missing until 2026-09-11, and invisible rather than merely absent: an
+    /// interface whose members are all properties had implementers that no
+    /// query could reach, because InSolutionImplementedMembers filters to
+    /// MethodKind.Ordinary and a property accessor is not one.
+    /// </remarks>
+    public List<string> ImplementsIds { get; init; } = new();
 
     public string? FilePath { get; init; }
     public int? LineStart { get; init; }

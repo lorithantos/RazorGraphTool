@@ -149,6 +149,29 @@ states which kind of absence it is, once, per response.
 (`MapsToRoute`, `HandlesHttpMethod`, `UrlGeneratedBy`), `Covers`, `Escapes`, and
 `Extends` — an extension method pointing at the in-solution type it extends.
 
+`Constructs` runs from the member holding a `new X()` to the type X, carrying the
+line. It is what answers *which implementation did the composition root pick* — an
+interface's implementers are the candidates, and only construction says which one
+production builds. A new-expression already produced a `Calls` edge to the
+constructor, which looks like it makes this redundant and does not: that edge needs
+a `.ctor` node at the far end, and a type whose constructor the compiler supplied
+has none, so the plainest types — the ones a root news up and passes as an
+interface — had no incoming edge of any kind and read as dead. Not emitted for
+`typeof(X)` (that is `Registers`: consulting a type is not building one) or for
+`new T()` on a type parameter, which resolves to no constructor, so an edge would
+name a type the call site does not build.
+
+`Implements` runs at both granularities, the way `Contains` does. Type → interface
+answers *which classes implement this*, carrying `depth`: 1 when the interface is
+written in the type's own declaration, more when it arrives through a base class or
+a base interface, so "what does this class itself declare" stays askable. Member →
+member answers *which body runs* when a caller binds to a declaration, and that is
+the one coverage and escape propagation widen across. Asking an interface **type**
+for its implementers returned a well-formed zero until 2026-09-11, which is
+indistinguishable from nobody implementing it — the answer was there, one node away
+on the interface's method, and a reader who trusted the zero concluded the graph did
+not index implementation at all.
+
 `DomSelectedBy` is the selector contract: element ids a page composition (page +
 layout + partials) renders that a script reaches with literal `getElementById` /
 `querySelector` / jQuery selectors. Selector ids no referencing page renders are
@@ -286,7 +309,10 @@ a name matches it). Rows are candidates to read.
 **A node says what a person can change about it.** Type nodes carry `isInterface` —
 interfaces are `Class` nodes unless DI registration promotes them to
 `ServiceInterface`, so without the flag most of a codebase's interfaces are
-indistinguishable from classes. Method nodes carry `isOverride` and
+indistinguishable from classes. They also carry `interfaces`, every interface the
+type implements including the out-of-solution ones that get no edge, because
+`baseType` alone reported `object` for a class with a full interface list — true,
+and the least informative true thing the node could say about its own shape. Method nodes carry `isOverride` and
 `isPrimaryConstructor`, because neither has a modifier of its own: an override must
 match the base declaration, and a primary constructor *is* the type header. These
 are what let `excess_visibility` offer only edits that exist. A node's `line` is its

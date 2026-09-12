@@ -143,6 +143,31 @@ internal sealed class CoverageEmitter(CodeGraph graph)
             if (edge.Type == EdgeType.Calls) yield return edge.ToId;
 
         foreach (var edge in graph.Incoming(id))
-            if (edge.Type is EdgeType.Implements or EdgeType.Overrides) yield return edge.FromId;
+            if ((edge.Type is EdgeType.Implements or EdgeType.Overrides) && Dispatches(edge)) yield return edge.FromId;
     }
+
+    /// <summary>
+    /// Whether an implementation edge describes DISPATCH — one body standing in
+    /// for another — rather than one type declaring another as its interface.
+    /// </summary>
+    /// <remarks>
+    /// Implements runs type → interface as well as member → member since
+    /// 2026-09-11, and the two answer different questions. Following the
+    /// type-level edge here would step from an interface TYPE to an implementing
+    /// TYPE and mark the whole class covered because a test reached the
+    /// interface — a claim no test made, arrived at by absorbing an edge that
+    /// was added for something else.
+    /// <para>
+    /// DEFENSIVE, and worth being honest about: no walk reaches it today. Steps
+    /// descends along Calls, which run member → member, so a type id never enters
+    /// the walk and the type-level edge is unreachable here by construction. That
+    /// is a property of which edges Steps follows, not of the Implements edges
+    /// themselves — it holds by accident of the current walk, and the accident
+    /// ends the day anyone teaches Steps a new edge that lands on a type. Cheap
+    /// insurance against a silent widening that would mark a whole class covered
+    /// because a test reached its interface.
+    /// </para>
+    /// </remarks>
+    private bool Dispatches(GraphEdge edge) =>
+        graph.GetNode(edge.FromId)?.Type is NodeType.Method or NodeType.Property;
 }

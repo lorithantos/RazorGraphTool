@@ -124,5 +124,28 @@ public enum EdgeType
     // though containment says it lives on a static class elsewhere.
     Extends,
 
+    // Construction. Emitted from the method containing a `new X()` to the type X,
+    // carrying the line. The fact that answers "which implementation did the
+    // composition root actually pick" — an interface's implementers are the
+    // CANDIDATES, and only construction says which one production builds.
+    //
+    // A new-expression already produced a Calls edge to the constructor METHOD,
+    // so this looks redundant and is not. That edge needs a .ctor node at the far
+    // end, and a type whose constructor is compiler-supplied has none — so the
+    // plainest types, the ones a composition root news up and passes as an
+    // interface, had NO incoming edge of any kind and read as dead. The edge
+    // lands on the TYPE precisely so the answer does not depend on whether
+    // somebody happened to write a constructor out.
+    //
+    // Deliberately NOT folded into References, for the reason that kept Registers
+    // out of it: References answers "which member declarations mention this type",
+    // and its worth is that an empty incoming set proves no declaration names one.
+    // Construction is not a declaration mentioning a type, and mixing the two
+    // would end that proof while every existing traversal absorbed the new edges.
+    // Distinct from Registers too — "the framework will consult this type" and
+    // "this method builds one" are different claims, and a reachability answer
+    // that cannot tell them apart is the one that sent a reader to grep.
+    Constructs,
+
     Unknown
 }
