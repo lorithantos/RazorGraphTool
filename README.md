@@ -163,6 +163,16 @@ direction. **A binding that names nothing is recorded on the view** as
 renamed property leaves an expression that resolves to nothing and reports itself
 by drawing an empty control.
 
+Where a `DataTemplate` carries `DataType`, the author has stated what the context
+is, so bindings inside it resolve against **that type alone** — a declared relation
+rather than a name heuristic, and the difference between a candidate set and an
+answer. A binding that leaves the template deliberately (`RelativeSource`,
+`ElementName`, an explicit `Source`) is not scoped to it, because there the
+declared type is the wrong answer rather than a better one. A name the declared
+type does not have is reported separately as `missingOnDataType`: with no declared
+context an unmatched name may only mean the `DataContext` is outside the candidate
+bound, but with one it is a defect.
+
 `Constructs` runs from the member holding a `new X()` to the type X, carrying the
 line. It is what answers *which implementation did the composition root pick* — an
 interface's implementers are the candidates, and only construction says which one

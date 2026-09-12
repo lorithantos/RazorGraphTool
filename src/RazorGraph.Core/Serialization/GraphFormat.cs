@@ -60,7 +60,9 @@ internal static class GraphFormat
     /// type nodes, and Constructs edges sourced at a TYPE rather than a member —
     /// which is what static initialization has to be attributed to, there being no
     /// member to blame. 1.6 added the XAML view layer — XamlView nodes and DataBinds
-    /// edges — so a desktop app's view layer is in the graph at all. All additive, so an older reader loads a newer graph with a
+    /// edges — so a desktop app's view layer is in the graph at all. 1.7 scoped those
+    /// edges by the DataType a template declares, which changes which members they
+    /// resolve to, and added missingOnDataType. All additive, so an older reader loads a newer graph with a
     /// caveat rather than a refusal, and a graph written without the stamp reads
     /// back as "cannot tell" rather than as fresh.
     /// </summary>
@@ -101,7 +103,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(1, 6);
+    public static readonly GraphFormatVersion Current = new(1, 7);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

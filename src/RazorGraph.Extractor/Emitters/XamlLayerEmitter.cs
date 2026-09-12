@@ -75,10 +75,12 @@ internal sealed class XamlLayerEmitter(CodeGraph graph)
     private void AddBindingEdges(XamlViewInfo view)
     {
         var unresolved = new List<string>();
+        var missingOnDataType = new List<string>();
 
-        foreach (var group in view.Bindings.GroupBy(b => b.Member, StringComparer.Ordinal))
+        foreach (var group in view.Bindings.GroupBy(b => (b.Member, b.ContextType)))
         {
-            var targets = Candidates(group.Key, view.CodeBehindType);
+            var (member, contextType) = group.Key;
+            var targets = Candidates(member, view.CodeBehindType, contextType);
 
             // A binding that names NOTHING is the finding, not the leftover. It is
             // the failure mode XAML has no compiler for: a renamed or mistyped
@@ -92,9 +94,16 @@ internal sealed class XamlLayerEmitter(CodeGraph graph)
             // type is outside the candidate bound and produces the same zero. So
             // the graph reports the name that resolved to nothing and leaves the
             // adjudicating to a reader who can open the file.
+            // TWO DIFFERENT FACTS, and collapsing them would waste the stronger
+            // one. A binding under a template that DECLARES its DataType and names
+            // a member that type does not have is a defect: the author said what
+            // the context is, and the member is not on it. A binding with no
+            // declared context that matched nothing is a maybe — the DataContext
+            // may simply be a type outside the candidate bound.
             if (targets.Count == 0)
             {
-                unresolved.Add(group.Key);
+                if (contextType != null) missingOnDataType.Add($"{contextType}.{member}");
+                else unresolved.Add(member);
                 continue;
             }
 
@@ -118,11 +127,18 @@ internal sealed class XamlLayerEmitter(CodeGraph graph)
             }
         }
 
+        if (graph.GetNode(view.Id) is not { } node) return;
+
         // Ordered, so a rebuilt graph equals a replayed one exactly.
-        if (unresolved.Count > 0 && graph.GetNode(view.Id) is { } node)
+        if (unresolved.Count > 0)
             node.SetProperty(
                 "unresolvedBindings",
-                unresolved.OrderBy(n => n, StringComparer.Ordinal).ToList());
+                unresolved.Distinct(StringComparer.Ordinal).OrderBy(n => n, StringComparer.Ordinal).ToList());
+
+        if (missingOnDataType.Count > 0)
+            node.SetProperty(
+                "missingOnDataType",
+                missingOnDataType.Distinct(StringComparer.Ordinal).OrderBy(n => n, StringComparer.Ordinal).ToList());
     }
 
     /// <summary>
@@ -142,9 +158,20 @@ internal sealed class XamlLayerEmitter(CodeGraph graph)
     /// declines to choose.
     /// </para>
     /// </remarks>
-    private List<string> Candidates(string member, string? codeBehindType)
+    private List<string> Candidates(string member, string? codeBehindType, string? contextType)
     {
         BuildIndexes();
+
+        // A declared DataType REPLACES the candidate set rather than widening it.
+        // It is the author's own statement of what the context is, so falling back
+        // to the name heuristic when it misses would convert a defect into a wrong
+        // edge pointing at some unrelated type that happens to share the name —
+        // and the wrong edge is the failure worth avoiding, because it reads as
+        // confirmation.
+        if (contextType != null)
+            return _membersByType!.TryGetValue((contextType, member), out var onContext)
+                ? onContext.Distinct(StringComparer.Ordinal).ToList()
+                : [];
 
         var found = new List<string>();
         if (_candidatesByName!.TryGetValue(member, out var byName)) found.AddRange(byName);

@@ -3,8 +3,19 @@ namespace RazorGraph.Extractor.Xaml;
 using System.Xml;
 using System.Xml.Linq;
 
-/// <summary>One binding expression in a view, and the member name it reaches for.</summary>
-internal sealed record XamlBinding(string Member, string Expression, int Line);
+/// <summary>
+/// One binding expression in a view: the member name it reaches for, and the type
+/// its DataContext is DECLARED to be, when the markup says so.
+/// </summary>
+/// <remarks>
+/// ContextType is the author's own statement, not a guess. A DataTemplate that
+/// carries DataType names the type it renders, so a binding inside it resolves
+/// against that type exactly — which turns a candidate set into an answer, and
+/// turns a name that type does not have into a defect rather than a maybe.
+/// Null when no enclosing template declares one, or when the binding explicitly
+/// leaves the template context.
+/// </remarks>
+internal sealed record XamlBinding(string Member, string Expression, int Line, string? ContextType);
 
 /// <summary>
 /// A XAML file as the graph sees it: identity, where it is, the code-behind type
@@ -117,8 +128,97 @@ internal static class XamlExtractor
                 if (BoundMember(attribute.Value) is not { } member) continue;
 
                 var line = attribute is IXmlLineInfo info && info.HasLineInfo() ? info.LineNumber : 0;
-                yield return new XamlBinding(member, attribute.Value.Trim(), line);
+                yield return new XamlBinding(
+                    member,
+                    attribute.Value.Trim(),
+                    line,
+                    LeavesTemplateContext(attribute.Value) ? null : DeclaredContextType(attribute));
             }
+    }
+
+    /// <summary>
+    /// Whether a binding deliberately resolves somewhere other than the DataContext
+    /// it sits in.
+    /// </summary>
+    /// <remarks>
+    /// RelativeSource walks up the visual tree, ElementName jumps to a named
+    /// element, and an explicit Source leaves the tree altogether — so for these
+    /// the enclosing template's DataType is the wrong answer, not a better one.
+    /// Treating them as scoped resolves a binding against a type it never touches
+    /// and reports candidates:1, which is a wrong answer wearing the appearance of
+    /// an exact one.
+    /// <para>
+    /// Two clauses and not three, which a mutation established rather than taste:
+    /// a RelativeSource test was there first and never fired, because the only
+    /// spelling that reaches this parser is the attribute form
+    /// <c>RelativeSource={...}</c>, and that already contains <c>Source=</c>.
+    /// A clause that cannot fire is a claim about what is load-bearing that
+    /// happens to be false.
+    /// </para>
+    /// <para>
+    /// The <c>=</c> in <c>Source=</c> is doing work: it separates the SETTING from
+    /// a path that merely happens to be called Source, so <c>{Binding Source}</c>
+    /// and <c>{Binding ImageSource}</c> stay ordinary bindings.
+    /// </para>
+    /// </remarks>
+    private static bool LeavesTemplateContext(string expression) =>
+        expression.Contains("Source=", StringComparison.Ordinal)
+        || expression.Contains("ElementName", StringComparison.Ordinal);
+
+    /// <summary>
+    /// The full type name declared by the nearest enclosing template, or null.
+    /// </summary>
+    private static string? DeclaredContextType(XAttribute attribute)
+    {
+        for (var element = attribute.Parent; element != null; element = element.Parent)
+        {
+            // HierarchicalDataTemplate as well as DataTemplate, and both may be
+            // written in any namespace prefix the document chose.
+            if (!element.Name.LocalName.EndsWith("DataTemplate", StringComparison.Ordinal)) continue;
+            if (element.Attribute("DataType")?.Value is not { } declared) continue;
+
+            return ResolveTypeName(declared, element);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// A XAML type reference to a CLR full name: <c>{x:Type vm:Thing}</c> or the
+    /// bare <c>vm:Thing</c>, with the prefix resolved through the xmlns
+    /// declarations in scope at that element.
+    /// </summary>
+    /// <remarks>
+    /// Null unless the prefix resolves to a clr-namespace declaration. A type in
+    /// the default presentation namespace is a framework type with no node to
+    /// point at, and guessing a namespace for an unprefixed name would mint a full
+    /// name nothing declares.
+    /// </remarks>
+    private static string? ResolveTypeName(string declared, XElement scope)
+    {
+        var text = declared.Trim();
+
+        if (text.StartsWith('{'))
+        {
+            var inner = text.Trim('{', '}').Trim();
+            var space = inner.IndexOf(' ');
+            if (space < 0) return null;
+
+            text = inner[(space + 1)..].Trim();
+        }
+
+        var colon = text.IndexOf(':');
+        if (colon <= 0) return null;
+
+        var resolved = scope.GetNamespaceOfPrefix(text[..colon])?.NamespaceName;
+        if (resolved is null || !resolved.StartsWith("clr-namespace:", StringComparison.Ordinal)) return null;
+
+        var clrNamespace = resolved["clr-namespace:".Length..];
+        var assembly = clrNamespace.IndexOf(';');
+        if (assembly >= 0) clrNamespace = clrNamespace[..assembly];
+
+        var local = text[(colon + 1)..].Trim();
+        return clrNamespace.Length == 0 ? local : $"{clrNamespace}.{local}";
     }
 
     /// <summary>

@@ -1,6 +1,7 @@
 <Window x:Class="SampleLib.SinkView"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:lib="clr-namespace:SampleLib">
 
   <!-- Every binding here exists because it reaches its member by a different
        route, or fails to reach one in a different way. A walk that handles one
@@ -36,6 +37,31 @@
 
     <!-- Not a binding at all. -->
     <TextBlock Text="Channel" />
+
+    <!-- A template that DECLARES what it renders. LedgerSink is an ordinary
+         class, not named like a view model, so the name heuristic cannot reach
+         its members at all — the declared type is the only thing that can. -->
+    <ContentControl>
+      <ContentControl.ContentTemplate>
+        <DataTemplate DataType="{x:Type lib:LedgerSink}">
+
+          <!-- Resolved against the declared type, exactly. -->
+          <TextBlock Text="{Binding Seal}" />
+
+          <!-- THE DEFECT the declared type makes provable. The author said what
+               the context is and this member is not on it, so unlike an
+               unresolved name with no declared context, this is not a maybe. -->
+          <TextBlock Text="{Binding Nonexistent}" />
+
+          <!-- Leaves the template context deliberately, so the declared type is
+               the WRONG answer here rather than a better one. LedgerSink also
+               declares Write, so scoping this one would resolve it to the wrong
+               member and look like a success. -->
+          <TextBlock Text="{Binding Write, RelativeSource={RelativeSource AncestorType=Window}}" />
+
+        </DataTemplate>
+      </ContentControl.ContentTemplate>
+    </ContentControl>
 
   </StackPanel>
 </Window>

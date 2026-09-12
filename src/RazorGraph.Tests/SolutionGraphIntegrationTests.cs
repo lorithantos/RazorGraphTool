@@ -1365,6 +1365,50 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void DataBinds_ResolvesAgainstTheTypeATemplateDeclares()
+    {
+        // LedgerSink is an ordinary class, not named like a view model, so the
+        // name heuristic cannot reach its members at all. DataType is the author
+        // stating the context, which turns a candidate set into an answer.
+        Assert.Equal(1, DataBinds("m:SampleLib.LedgerSink.Seal()").GetProperty<int>("candidates"));
+    }
+
+    [Fact]
+    public void ABindingMissingFromItsDeclaredDataType_IsSeparatedFromAMereUnknown()
+    {
+        // The two facts a reader acts on differently. With a declared DataType,
+        // a name the type does not have is a defect — the author said what the
+        // context is. Without one, an unmatched name may only mean the DataContext
+        // is a type outside the candidate bound.
+        var view = _solutionGraph!.GetNode(SinkViewId)!;
+
+        var missing = view.GetProperty<List<string>>("missingOnDataType");
+        Assert.NotNull(missing);
+        Assert.Contains("SampleLib.LedgerSink.Nonexistent", missing!);
+
+        // And it is NOT filed under the weaker heading.
+        Assert.DoesNotContain(
+            view.GetProperty<List<string>>("unresolvedBindings")!,
+            n => n.Contains("Nonexistent", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ABindingThatLeavesTheTemplateContext_IsNotScopedToTheDeclaredType()
+    {
+        // RelativeSource walks out of the template, so the declared type is the
+        // wrong answer rather than a better one. LedgerSink declares Write too,
+        // so scoping this binding would resolve it to the wrong member and look
+        // exactly like a success — which is the failure mode worth guarding.
+        Assert.Contains(
+            _solutionGraph!.Outgoing(SinkViewId),
+            e => e.Type == EdgeType.DataBinds && e.ToId == "m:SampleLib.SinkViewModel.Write(int)");
+
+        Assert.DoesNotContain(
+            _solutionGraph!.Outgoing(SinkViewId),
+            e => e.Type == EdgeType.DataBinds && e.ToId == "m:SampleLib.LedgerSink.Write(int)");
+    }
+
+    [Fact]
     public void ABindingThatNamesNothing_IsRecordedOnTheView()
     {
         // The failure XAML has no compiler for. Recorded rather than raised: this
