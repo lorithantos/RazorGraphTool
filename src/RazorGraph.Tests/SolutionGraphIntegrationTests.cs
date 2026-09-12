@@ -1431,7 +1431,18 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         // enclosing template's LedgerSink and on no view model, so walking past
         // the inner template would resolve it confidently to the wrong member
         // instead of admitting it does not know.
-        Assert.Equal(new[] { "Missing", "Seal" }, unresolved);
+        // Rows is here for the same reason as Seal by a different construct: a
+        // grid column binds against the row item, not against the context the
+        // grid sits in. Scoping it to the enclosing LedgerSink would report
+        // "LedgerSink has no member Rows" — a defect claim naming a real type,
+        // and wrong.
+        Assert.Equal(new[] { "Missing", "Rows", "Seal" }, unresolved);
+
+        // Neither reaches the stronger list, which is the whole point: a
+        // confident defect claim is only earned where the context is known.
+        Assert.DoesNotContain(
+            _solutionGraph!.GetNode(SinkViewId)!.GetProperty<List<string>>("missingOnDataType")!,
+            n => n.EndsWith(".Rows", StringComparison.Ordinal) || n.EndsWith(".Seal", StringComparison.Ordinal));
     }
 
     [Fact]

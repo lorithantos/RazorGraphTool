@@ -28,7 +28,8 @@ internal sealed record XamlViewInfo(
     string RelativePath,
     string? CodeBehindType,
     int LineCount,
-    IReadOnlyList<XamlBinding> Bindings);
+    IReadOnlyList<XamlBinding> Bindings,
+    string? ParseError = null);
 
 /// <summary>
 /// Reads the XAML files of a project. Text in, facts out — no correlation to C#
@@ -75,16 +76,27 @@ internal static class XamlExtractor
     }
 
     /// <summary>
-    /// One file, or null when it cannot be read or parsed.
+    /// One file. A view that cannot be parsed still comes back, carrying the
+    /// reason and no bindings.
     /// </summary>
     /// <remarks>
-    /// A malformed view is skipped rather than thrown, deliberately: a build spans
-    /// every file in a solution, and one unparseable view taking the whole build
-    /// down would cost every other answer in it. The cost of skipping is that its
-    /// bindings are absent, which is exactly the state before this layer existed.
+    /// Not thrown, because a build spans every file in a solution and one
+    /// unparseable view taking it down would cost every other answer. Not skipped
+    /// either, which was the first version and was wrong: a skipped file is
+    /// INVISIBLE, so a view with a syntax error and a view with no bindings look
+    /// identical, and the graph quietly answers "nothing binds this member" for an
+    /// entire file it never read. Demonstrated on this very extractor's own
+    /// fixture, where an illegal XML comment removed a view and the only signal
+    /// was a node that failed to exist.
+    /// <para>
+    /// So the node is minted regardless and says why it is empty. An absent file
+    /// is a question a reader cannot even ask.
+    /// </para>
     /// </remarks>
     private static XamlViewInfo? ReadView(string file, string projectDir, string? idScope)
     {
+        var relativePath = Path.GetRelativePath(projectDir, file).Replace('\\', '/');
+
         XDocument doc;
         string text;
         try
@@ -94,16 +106,22 @@ internal static class XamlExtractor
         }
         catch (Exception e) when (e is XmlException or IOException or UnauthorizedAccessException)
         {
-            return null;
+            return new XamlViewInfo(
+                Id: ViewId(idScope, relativePath),
+                Name: Path.GetFileName(file),
+                FilePath: file,
+                RelativePath: relativePath,
+                CodeBehindType: null,
+                LineCount: 0,
+                Bindings: [],
+                ParseError: e.Message);
         }
 
-        var relative = Path.GetRelativePath(projectDir, file).Replace('\\', '/');
-
         return new XamlViewInfo(
-            Id: ViewId(idScope, relative),
+            Id: ViewId(idScope, relativePath),
             Name: Path.GetFileName(file),
             FilePath: file,
-            RelativePath: relative,
+            RelativePath: relativePath,
             CodeBehindType: CodeBehindType(doc),
             LineCount: text.Count(c => c == '\n') + 1,
             Bindings: Bindings(doc).ToList());
@@ -172,6 +190,15 @@ internal static class XamlExtractor
     {
         for (var element = attribute.Parent; element != null; element = element.Parent)
         {
+            // A grid COLUMN binds against the row item, not against the context
+            // the grid sits in, so it resets the context exactly as a template
+            // does. DataGridTextColumn, DataGridCheckBoxColumn, GridViewColumn —
+            // all of them. Measured on one app: 48 such columns, and every one of
+            // their bindings was being attributed to the page view model that
+            // merely contains the grid, producing a list of member-does-not-exist
+            // claims that named real types and real members and were all wrong.
+            if (element.Name.LocalName.EndsWith("Column", StringComparison.Ordinal)) return null;
+
             // HierarchicalDataTemplate as well as DataTemplate, and both may be
             // written in any namespace prefix the document chose.
             if (!element.Name.LocalName.EndsWith("DataTemplate", StringComparison.Ordinal)) continue;

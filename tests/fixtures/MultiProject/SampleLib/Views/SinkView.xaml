@@ -72,6 +72,16 @@
             </ItemsControl.ItemTemplate>
           </ItemsControl>
 
+          <!-- A grid COLUMN binds against the row item, not against the context
+               the grid sits in, so it resets the context the same way. Scoping
+               this to the enclosing LedgerSink would claim LedgerSink has no
+               member Rows: a defect report naming a real type, and wrong. -->
+          <DataGrid>
+            <DataGrid.Columns>
+              <DataGridTextColumn Binding="{Binding Rows}" />
+            </DataGrid.Columns>
+          </DataGrid>
+
         </DataTemplate>
       </ContentControl.ContentTemplate>
     </ContentControl>

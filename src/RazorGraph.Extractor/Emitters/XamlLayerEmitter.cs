@@ -58,6 +58,12 @@ internal sealed class XamlLayerEmitter(CodeGraph graph)
         // failed to read are both silent otherwise, and they are not the same.
         node.SetProperty("bindingCount", view.Bindings.Count);
 
+        // Which is why the unreadable one says so rather than going missing. A
+        // file the extractor never parsed reports zero bindings exactly like a
+        // file that has none, and the graph then answers "nothing binds this
+        // member" on the strength of a file it could not read.
+        if (view.ParseError != null) node.SetProperty("parseError", view.ParseError);
+
         graph.AddNode(node);
     }
 
