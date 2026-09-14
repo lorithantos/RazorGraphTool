@@ -32,7 +32,7 @@ internal static class TypeInitializers
         {
             switch (member)
             {
-                case FieldDeclarationSyntax f when !f.Modifiers.Any(SyntaxKind.StaticKeyword):
+                case FieldDeclarationSyntax f when !f.Modifiers.Any(SyntaxKind.StaticKeyword) && !f.Modifiers.Any(SyntaxKind.ConstKeyword):
                     foreach (var variable in f.Declaration.Variables)
                         if (variable.Initializer != null)
                             yield return variable.Initializer;

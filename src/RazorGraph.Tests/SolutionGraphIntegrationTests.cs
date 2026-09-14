@@ -761,6 +761,18 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void ImplicitCtor_WithOnlyAConst_IsNotANode()
+    {
+        // CatalogLimits's only `=` is a const. A const is a compile-time value,
+        // not initializer code, so its implicit ctor runs nothing — same verdict
+        // as CatalogStore, and the same noise if it were minted.
+        Assert.DoesNotContain(_solutionGraph!.Nodes, n =>
+            n.Type == NodeType.Method &&
+            n.Name == ".ctor" &&
+            n.GetProperty<string>("declaringType") == "SampleLib.CatalogLimits");
+    }
+
+    [Fact]
     public void CoversEdges_IncludeUsingDisposal()
     {
         var dispose = Method(_solutionGraph!, "SampleLib.CatalogStore", "Dispose");

@@ -57,3 +57,15 @@ public class CatalogCache
 
     public int Size() => _seed;
 }
+
+/// <summary>
+/// No explicit constructor and no initializer that RUNS: a const is a
+/// compile-time value, not code, so the implicit ctor executes nothing and
+/// must not be a node. The `=` is the trap — it is not an initializer.
+/// </summary>
+public class CatalogLimits
+{
+    public const int Unbounded = -1;
+
+    public int Cap() => Unbounded;
+}
