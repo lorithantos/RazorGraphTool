@@ -211,6 +211,7 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
             if (member.IsStatic) node.SetProperty("isStatic", true);
             if (member.IsConst) node.SetProperty("isConst", true);
             if (member.IsReadOnly) node.SetProperty("isReadOnly", true);
+            if (member.IsOverride) node.SetProperty("isOverride", true);
             if (member.HasBindProperty) node.SetProperty("bindProperty", true);
             node.SetProperty("isPublic", member.IsPublic);
             StampGenerated(node);

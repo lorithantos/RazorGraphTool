@@ -336,6 +336,7 @@ internal static class SymbolClassifier
                     IsPublic = p.DeclaredAccessibility == Accessibility.Public,
                     IsStatic = p.IsStatic,
                     IsReadOnly = p.IsReadOnly,
+                    IsOverride = p.IsOverride,
                     HasBindProperty = HasBindProperty(p, policy),
                     Attributes = ExtractAttributes(p, "property", inScope)
                 },

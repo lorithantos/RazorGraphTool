@@ -265,6 +265,8 @@ internal sealed record MemberDetail
     public bool IsStatic { get; init; }
     public bool IsReadOnly { get; init; }
     public bool IsConst { get; init; }
+    /// <summary>Overrides a base property, so its accessibility is the base declaration's to choose; the member twin of MethodDetail.IsOverride.</summary>
+    public bool IsOverride { get; init; }
     public bool HasBindProperty { get; init; }
 
     /// <summary>Attributes written on this member.</summary>

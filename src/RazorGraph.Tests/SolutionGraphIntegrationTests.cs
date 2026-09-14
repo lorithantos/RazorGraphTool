@@ -804,6 +804,28 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void ExcessVisibility_DoesNotOfferAPublicOverrideProperty()
+    {
+        // PulseBeacon is public and consumed by SampleWeb, so the audit judges
+        // its members one by one. Signal overrides Beacon.Signal, and an
+        // override cannot be narrower than what it overrides (CS0507), so the
+        // query must not offer it. The guard reads isOverride off the node,
+        // which Method nodes carried and Property nodes did not -- so this is
+        // asserted through the query, not the flag: only the query pins that
+        // the consumer is actually fed the field.
+        var found = new GraphQuery(_solutionGraph!)
+            .FindExcessVisibility("SampleLib", includeMembers: true)
+            .Select(r => r.Node.Id)
+            .ToList();
+
+        Assert.DoesNotContain("prop:SampleLib.PulseBeacon.Signal", found);
+
+        // The control: a plain property on the same type is still offered, so
+        // the override is excluded by its own flag and not hidden by its owner.
+        Assert.Contains("prop:SampleLib.PulseBeacon.Cadence", found);
+    }
+
+    [Fact]
     public void CoversEdges_IncludeUsingDisposal()
     {
         var dispose = Method(_solutionGraph!, "SampleLib.CatalogStore", "Dispose");
