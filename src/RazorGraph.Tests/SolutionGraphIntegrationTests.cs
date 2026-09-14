@@ -1740,6 +1740,47 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         Assert.Equal(NodeType.Class, from!.Type);
     }
 
+    // ---- Static-initializer calls ---------------------------------------------
+    //
+    // The invocation twin of the static Constructs edge above, left open when
+    // that shipped: `Drawn = DrawnBoard();` in a static field initializer put no
+    // Calls edge on DrawnBoard, so "who calls this" answered nobody and the
+    // method read as dead. The edge starts at the TYPE for the reason pinned by
+    // StaticConstruction_StartsAtTheTypeAndMintsNoStaticConstructorNode, which
+    // asserts globally that no .cctor node exists and so covers this edge too.
+
+    /// <summary>
+    /// Incoming Calls on the method whose id starts with the prefix. The node is
+    /// resolved first so a mistyped id fails here rather than as an empty list
+    /// that a "no callers" assertion would then pass on.
+    /// </summary>
+    private List<GraphEdge> CallsInto(string idPrefix)
+    {
+        var node = _solutionGraph!.Nodes.Single(n => n.Id.StartsWith(idPrefix, StringComparison.Ordinal));
+        return _solutionGraph!.Incoming(node.Id).Where(e => e.Type == EdgeType.Calls).ToList();
+    }
+
+    [Fact]
+    public void Calls_ReachesAMethodInvokedOnlyByAStaticFieldInitializer()
+    {
+        // The motivating case. ComputeSeed is invoked once, from a static field
+        // initializer, and nowhere else.
+        var edge = Assert.Single(CallsInto("m:SampleLib.PartRegistry.ComputeSeed("));
+
+        Assert.Equal("type:SampleLib.PartRegistry", edge.FromId);
+        Assert.Equal(NodeType.Class, _solutionGraph!.GetNode(edge.FromId)!.Type);
+    }
+
+    [Fact]
+    public void Calls_ReachesAMethodInvokedOnlyInAnExplicitStaticConstructor()
+    {
+        // Walked all along — a static ctor is a method declaration like any other
+        // — and dropped all along, for want of a node to start from.
+        Assert.Equal(
+            "type:SampleLib.PartRegistry",
+            Assert.Single(CallsInto("m:SampleLib.PartRegistry.Warm(")).FromId);
+    }
+
     /// <summary>
     /// The Implements edge between two types. Single rather than FirstOrDefault
     /// so a missing edge fails saying so, instead of a null that the next line

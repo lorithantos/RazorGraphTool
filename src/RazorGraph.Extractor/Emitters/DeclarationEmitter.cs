@@ -95,6 +95,14 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
         _typeIdByFullName.TryAdd(sym.FullName, sym.Id);
     }
 
+    /// <summary>
+    /// The node id a declared type's full name resolves to, or null when the
+    /// classifier declined the type. Handed to emitters that do not own the map
+    /// but need one lookup from it — the Calls edge sourced at a type.
+    /// </summary>
+    internal string? TypeIdFor(string fullName) =>
+        _typeIdByFullName.TryGetValue(fullName, out var id) ? id : null;
+
     internal void AddMethodNodes(SymbolInfo sym)
     {
         foreach (var method in sym.MethodNodes)

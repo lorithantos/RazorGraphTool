@@ -11,7 +11,13 @@ using RazorGraph.Extractor.Roslyn;
 /// </summary>
 internal sealed class UsageEmitter(CodeGraph graph)
 {
-    internal void AddCallEdges(IEnumerable<CallSiteInfo> callSites)
+    /// <param name="typeIdByFullName">
+    /// Resolves a type's full name to its node id, for the one shape of call
+    /// whose near end is a type rather than a member: a call made in static
+    /// initialization. The id prefix depends on how the type classified, so
+    /// only the emitter that minted the type nodes can answer.
+    /// </param>
+    internal void AddCallEdges(IEnumerable<CallSiteInfo> callSites, Func<string, string?> typeIdByFullName)
     {
         // One edge per caller→callee pair because a caller invoking the same
         // method three times is one dependency, and the graph is read as
@@ -19,9 +25,14 @@ internal sealed class UsageEmitter(CodeGraph graph)
         // rides along as the intersection across sites: an exception passes
         // this edge unless every site guards it, so a type missing from the
         // intersection is a possible escape — the conservative direction.
-        foreach (var group in callSites.GroupBy(s => (s.FromId, s.ToId)))
+        foreach (var group in callSites.GroupBy(s => (s.FromId, s.FromTypeFullName, s.ToId)))
         {
-            var (fromId, toId) = group.Key;
+            var (memberId, fromTypeName, toId) = group.Key;
+
+            // Static initialization has no member to attribute to, so the near end
+            // is a type name resolved through the map that owns the type ids.
+            var fromId = memberId ?? (fromTypeName is not null ? typeIdByFullName(fromTypeName) : null);
+            if (fromId is null) continue;
 
             // Calls into types the classifier skipped have no node to point at.
             if (!graph.HasNode(fromId) || !graph.HasNode(toId)) continue;

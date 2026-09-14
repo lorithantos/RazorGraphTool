@@ -350,6 +350,13 @@ public sealed class RoslynExtractor : IAsyncDisposable
             {
                 yield return site;
             }
+
+            foreach (var site in root.DescendantNodes()
+                .OfType<TypeDeclarationSyntax>()
+                .SelectMany(typeDecl => CallSiteScanner.StaticInitializerCallSites(typeDecl, model, inScope)))
+            {
+                yield return site;
+            }
         }
     }
 

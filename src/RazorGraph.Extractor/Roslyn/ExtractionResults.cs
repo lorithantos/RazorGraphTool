@@ -13,12 +13,22 @@ using RazorGraph.Core.Graph;
 /// rather than a tuple so the two ids cannot be swapped silently at a call
 /// site.
 /// </summary>
+/// <remarks>
+/// Exactly one of <paramref name="FromId"/> and <paramref name="FromTypeFullName"/>
+/// is set, the same split <see cref="ConstructionSiteInfo"/> makes and for the
+/// same reason: a call in static initialization — a static field or property
+/// initializer, or an explicit static constructor body — has no member to
+/// attribute to, because a static constructor is not a graph node, so it is
+/// attributed to the declaring TYPE by name, which only the emitter can turn
+/// into an id.
+/// </remarks>
 internal sealed record CallSiteInfo(
-    string FromId,
+    string? FromId,
     string ToId,
     IReadOnlyList<string> GuardedBy,
     IReadOnlyList<string> FilteredBy,
-    bool IsDelegate = false);
+    bool IsDelegate = false,
+    string? FromTypeFullName = null);
 
 /// <summary>
 /// One place a method builds an instance of an in-solution type: the member

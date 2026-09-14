@@ -119,11 +119,28 @@ public static class PartRegistry
     public static readonly IPart Default = new StaticPart();
 
     /// <summary>
+    /// A static field initializer that INVOKES rather than constructs — the
+    /// Calls twin of <see cref="Default"/>. The method it calls has no other
+    /// caller, so without an edge sourced at the type it reads as dead.
+    /// </summary>
+    public static readonly int Seed = ComputeSeed();
+
+    /// <summary>
     /// An EXPLICIT static constructor. It IS walked — it is a method declaration
     /// like any other — and its edges were still dropped, because the node they
     /// would start from does not exist.
     /// </summary>
-    static PartRegistry() => Fallback = new FallbackPart();
+    static PartRegistry()
+    {
+        Fallback = new FallbackPart();
+        Warm();
+    }
 
     public static FallbackPart Fallback { get; }
+
+    /// <summary>Called only from a static field initializer.</summary>
+    private static int ComputeSeed() => 7;
+
+    /// <summary>Called only from the explicit static constructor body.</summary>
+    private static void Warm() { }
 }

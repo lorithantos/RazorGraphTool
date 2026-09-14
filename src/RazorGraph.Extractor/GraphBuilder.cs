@@ -241,7 +241,7 @@ public sealed class GraphBuilder : IAsyncDisposable
             _declarations.AddAttributeEdges(sym);
         }
 
-        _usage.AddCallEdges(_roslyn.ExtractCallSites());
+        _usage.AddCallEdges(_roslyn.ExtractCallSites(), _declarations.TypeIdFor);
         _declarations.AddConstructsEdges(_roslyn.ExtractConstructionSites());
         _usage.AddMemberAccessEdges(_roslyn.ExtractMemberAccesses());
         // One scan, two consumers. ExtractQuotedNames is a lazy walk over every

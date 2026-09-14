@@ -30,7 +30,14 @@ internal static class CallSiteScanner
         SyntaxNode decl, SemanticModel model, IReadOnlySet<string> inScope)
     {
         if (TopLevelProgram.DeclaredMethod(decl, model) is not { } caller) yield break;
-        var fromId = SymbolIds.MethodId(caller);
+
+        // An EXPLICIT static constructor is reached here — it is a
+        // BaseMethodDeclarationSyntax like any other — but it is not a graph node,
+        // so attributing to it would drop every call for want of a near end. The
+        // same answer ConstructionSites gives: attribute to the declaring type.
+        var isStaticCtor = caller.MethodKind == MethodKind.StaticConstructor;
+        var fromId = isStaticCtor ? null : SymbolIds.MethodId(caller);
+        var fromType = isStaticCtor ? caller.ContainingType.OriginalDefinition.ToDisplayString() : null;
 
         foreach (var (site, target) in TopLevelProgram.BodyNodes(decl).SelectMany(b => CallTargetSites(b, model)))
         {
@@ -38,7 +45,7 @@ internal static class CallSiteScanner
             if (toId == fromId) continue; // direct recursion adds no navigational value
 
             var (guardedBy, filteredBy) = ExceptionFlow.SiteGuards(site, decl, model);
-            yield return new CallSiteInfo(fromId, toId, guardedBy, filteredBy);
+            yield return new CallSiteInfo(fromId, toId, guardedBy, filteredBy, FromTypeFullName: fromType);
         }
 
         // A method group handed somewhere is a call the future makes. The edge
@@ -50,7 +57,7 @@ internal static class CallSiteScanner
             if (toId == fromId) continue;
 
             yield return new CallSiteInfo(
-                fromId, toId, Array.Empty<string>(), Array.Empty<string>(), IsDelegate: true);
+                fromId, toId, Array.Empty<string>(), Array.Empty<string>(), IsDelegate: true, FromTypeFullName: fromType);
         }
 
         foreach (var (resourceType, isAsync) in DisposedResources(decl, model))
@@ -59,7 +66,8 @@ internal static class CallSiteScanner
             if (SymbolIds.InScopeMethodId(dispose, inScope) is not { } toId) continue;
             if (toId == fromId) continue;
 
-            yield return new CallSiteInfo(fromId, toId, Array.Empty<string>(), Array.Empty<string>());
+            yield return new CallSiteInfo(
+                fromId, toId, Array.Empty<string>(), Array.Empty<string>(), FromTypeFullName: fromType);
         }
     }
 
@@ -222,6 +230,39 @@ internal static class CallSiteScanner
                     if (toId != ctorId)
                         yield return new CallSiteInfo(
                             ctorId, toId, Array.Empty<string>(), Array.Empty<string>());
+            }
+    }
+
+    /// <summary>
+    /// Call sites in one type's STATIC field and property initializers,
+    /// attributed to the declaring type — the twin of
+    /// <see cref="StaticInitializerConstructionSites"/>, and the gap it left:
+    /// <c>private static readonly Board Drawn = DrawnBoard();</c> invokes a
+    /// method that otherwise has no caller and reads as dead.
+    /// </summary>
+    /// <remarks>
+    /// The near end is the TYPE and not a member, for the reason recorded on the
+    /// construction twin: a static constructor is not a node, and minting one
+    /// would name nothing a reader can open while adding every static ctor in
+    /// the solution to uncovered_methods as a confident untested claim. An
+    /// initializer cannot contain a try, so the sites are always unguarded.
+    /// </remarks>
+    internal static IEnumerable<CallSiteInfo> StaticInitializerCallSites(
+        TypeDeclarationSyntax typeDecl, SemanticModel model, IReadOnlySet<string> inScope)
+    {
+        var initializers = TypeInitializers.StaticInitializers(typeDecl).ToList();
+        if (initializers.Count == 0) yield break;
+        if (model.GetDeclaredSymbol(typeDecl) is not INamedTypeSymbol type) yield break;
+
+        var fromType = type.OriginalDefinition.ToDisplayString();
+
+        foreach (var initializer in initializers)
+            foreach (var (_, target) in CallTargetSites(initializer, model))
+            {
+                if (SymbolIds.InScopeMethodId(target, inScope) is not { } toId) continue;
+
+                yield return new CallSiteInfo(
+                    null, toId, Array.Empty<string>(), Array.Empty<string>(), FromTypeFullName: fromType);
             }
     }
 
