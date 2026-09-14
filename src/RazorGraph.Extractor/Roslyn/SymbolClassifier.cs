@@ -496,13 +496,25 @@ internal static class SymbolClassifier
     private static List<MethodDetail> ExtractMethodNodes(
         INamedTypeSymbol symbol, Compilation compilation, IReadOnlySet<string> inScope, AttributePolicy policy)
     {
+        // The copy-constructor shape: exactly one parameter typed as the
+        // containing type itself. Shape rather than IsRecord, because the shape
+        // is what makes it a copy constructor.
+        static bool IsCopyConstructorShape(IMethodSymbol ctor) =>
+            ctor.Parameters.Length == 1
+            && SymbolEqualityComparer.Default.Equals(ctor.Parameters[0].Type, ctor.ContainingType);
+
         var hasInitializers = TypeInitializers.HasInstanceInitializers(symbol);
 
         var members = symbol.GetMembers().OfType<IMethodSymbol>()
             .Where(m => m.MethodKind switch
             {
                 MethodKind.Ordinary => !m.IsImplicitlyDeclared,
-                MethodKind.Constructor => !m.IsImplicitlyDeclared || hasInitializers,
+                // A record's synthesized copy ctor is implicitly declared too,
+                // but it copies fields rather than running initializers (those
+                // run in the primary or default ctor), and it has no syntax to
+                // point a row at — so initializers do not admit it.
+                MethodKind.Constructor => !m.IsImplicitlyDeclared
+                    || (hasInitializers && !IsCopyConstructorShape(m)),
                 _ => false
             })
             // Extension-block methods are nodes of the type that holds the

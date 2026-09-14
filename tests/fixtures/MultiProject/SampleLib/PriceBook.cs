@@ -61,3 +61,31 @@ public partial class PriceBook
 /// compiler's EqualityContract must not.
 /// </summary>
 public record PriceTag(string Label, decimal Amount);
+
+/// <summary>
+/// Record with an initializer and no explicit ctor. Its implicit parameterless
+/// ctor is a node because the initializer is the code it runs; its synthesized
+/// copy ctor is NOT — Roslyn's copy ctor copies fields and never runs an
+/// initializer, and it has no syntax, so a row for it would have no line.
+/// </summary>
+public record PriceQuote
+{
+    public string Currency { get; init; } = "EUR";
+}
+
+/// <summary>
+/// Record whose copy ctor is written by hand: the same one-parameter-of-own-type
+/// shape as the synthesized one, but authored code with a body and a line, so
+/// it must remain a node.
+/// </summary>
+public record SignedPriceQuote
+{
+    public string Signer { get; init; } = "";
+
+    public SignedPriceQuote() { }
+
+    protected SignedPriceQuote(SignedPriceQuote other)
+    {
+        Signer = other.Signer.Trim();
+    }
+}

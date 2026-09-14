@@ -773,6 +773,37 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void RecordCopyCtor_Synthesized_IsNotANode()
+    {
+        // PriceQuote has an initializer and no explicit ctor. Its implicit
+        // parameterless ctor is the code that runs the initializer, so it is a
+        // node; its synthesized copy ctor copies fields, runs no initializer
+        // and has no syntax — a row for it would have no line to open.
+        var ctors = _solutionGraph!.Nodes.Where(n =>
+            n.Type == NodeType.Method &&
+            n.Name == ".ctor" &&
+            n.GetProperty<string>("declaringType") == "SampleLib.PriceQuote").ToList();
+
+        var only = Assert.Single(ctors);
+        Assert.Equal(".ctor()", only.GetProperty<string>("signature"));
+    }
+
+    [Fact]
+    public void RecordCopyCtor_Explicit_IsStillANode()
+    {
+        // SignedPriceQuote writes its copy ctor by hand: the same shape as the
+        // synthesized one, but authored code with a body and a line, so the
+        // exclusion must not reach it.
+        var copy = _solutionGraph!.Nodes.Single(n =>
+            n.Type == NodeType.Method &&
+            n.Name == ".ctor" &&
+            n.GetProperty<string>("declaringType") == "SampleLib.SignedPriceQuote" &&
+            n.GetProperty<string>("signature") == ".ctor(SampleLib.SignedPriceQuote)");
+
+        Assert.NotNull(copy.LineStart);
+    }
+
+    [Fact]
     public void CoversEdges_IncludeUsingDisposal()
     {
         var dispose = Method(_solutionGraph!, "SampleLib.CatalogStore", "Dispose");
