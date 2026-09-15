@@ -247,6 +247,13 @@ public sealed class RoslynExtractor : IAsyncDisposable
 
         var inScope = InScopeAssemblies();
 
+        // Gathered once, ahead of the walk: a registration attribute sits on the
+        // implementation, so the interface it names has nothing on its own
+        // symbol for ClassifySymbol to read.
+        var registeredServices = new HashSet<string>();
+        foreach (var l in _loaded)
+            registeredServices.UnionWith(SymbolClassifier.RegisteredServiceTypes(l.Compilation, inScope));
+
         var compiledItemsByLoaded = new Dictionary<LoadedProject, Dictionary<INamedTypeSymbol, string>>();
 
         foreach (var (loaded, tree) in _loaded.SelectMany(l => l.Compilation.SyntaxTrees.Select(t => (l, t))))
@@ -259,7 +266,8 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 var symbol = model.GetDeclaredSymbol(typeDecl);
                 if (symbol == null) continue;
 
-                var info = SymbolClassifier.ClassifySymbol(symbol, loaded.Name, loaded.Compilation, inScope, Policy);
+                var info = SymbolClassifier.ClassifySymbol(
+                    symbol, loaded.Name, loaded.Compilation, inScope, registeredServices, Policy);
                 if (info == null) continue;
 
                 // A type still living in a .g.cs after mapping is generated
@@ -290,7 +298,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 && !programType.DeclaringSyntaxReferences.Any(r => r.GetSyntax() is TypeDeclarationSyntax))
             {
                 var info = SymbolClassifier.ClassifySymbol(
-                    programType, loaded.Name, loaded.Compilation, inScope, Policy);
+                    programType, loaded.Name, loaded.Compilation, inScope, registeredServices, Policy);
                 if (info != null) yield return info;
             }
         }

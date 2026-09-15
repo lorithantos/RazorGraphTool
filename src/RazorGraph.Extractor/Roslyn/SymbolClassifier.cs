@@ -16,7 +16,7 @@ internal static class SymbolClassifier
 {
     internal static SymbolInfo? ClassifySymbol(
         INamedTypeSymbol symbol, string projectName, Compilation compilation, IReadOnlySet<string> inScope,
-        AttributePolicy policy)
+        IReadOnlySet<string> registeredServices, AttributePolicy policy)
     {
         // A C# 14 extension block is a TypeDeclarationSyntax, so the type walk
         // reaches it — but it is syntax, not a type a reader navigates to. It
@@ -98,8 +98,21 @@ internal static class SymbolClassifier
         if (MethodRoles.IsControllerType(symbol, policy))
             return Node("ctrl", NodeType.ApiController, ExtractControllerActions(symbol));
 
-        // Service detection (heuristic: ends with Service, or implements interface ending with Service)
-        if (symbol.Name.EndsWith("Service") || interfaces.Any(i => i.EndsWith("Service")))
+        // Service detection: registration OR name. A type is a service when an
+        // attribute registration names it -- as the service type, or as the
+        // implementation carrying the attribute (see RegisteredServiceTypes) --
+        // or when its own name, or an interface it implements, ends in
+        // "Service".
+        //
+        // The name fallback is retained deliberately, and this rule must only
+        // ever ADD promotions. A codebase that registers at call sites
+        // (services.AddScoped<IFoo, Foo>()) rather than by attribute -- which
+        // is how RetirementCore and this repository itself work -- shows the
+        // extractor no registration at all, and dropping the fallback would
+        // demote every service in it. The fallback is a convention guess
+        // standing in for a registration the extractor cannot observe.
+        if (registeredServices.Contains(symbol.ToDisplayString())
+            || symbol.Name.EndsWith("Service") || interfaces.Any(i => i.EndsWith("Service")))
             return Node("svc", symbol.TypeKind == TypeKind.Interface
                 ? NodeType.ServiceInterface
                 : NodeType.ServiceImplementation);
@@ -688,6 +701,51 @@ internal static class SymbolClassifier
             Source = source,
             UnresolvedArgs = unresolvedArgs
         };
+    }
+
+    /// <summary>
+    /// Every in-scope type an attribute registration names, across the whole
+    /// compilation, plus the type carrying each such attribute: for
+    /// <c>[RegisterDependency&lt;ILori&gt;] class LoriImpl2 : ILori</c> that is
+    /// both <c>ILori</c> (the service type) and <c>LoriImpl2</c> (the registered
+    /// implementation). Gathered BEFORE the type walk because classification is
+    /// per-symbol and the attribute sits on the implementation, so when
+    /// ClassifySymbol reaches the interface there is nothing on that symbol to
+    /// read.
+    /// </summary>
+    /// <remarks>
+    /// Walks symbols, not syntax: no syntax tree or semantic model is touched,
+    /// which keeps it cheap and independent of the tree walk it runs ahead of.
+    /// Reuses RegisteredTypes so the set agrees exactly with the Registers edges
+    /// the attribute extraction emits.
+    /// </remarks>
+    internal static IReadOnlySet<string> RegisteredServiceTypes(
+        Compilation compilation, IReadOnlySet<string> inScope)
+    {
+        var result = new HashSet<string>();
+        Visit(compilation.GlobalNamespace);
+        return result;
+
+        void Visit(INamespaceSymbol ns)
+        {
+            foreach (var child in ns.GetNamespaceMembers()) Visit(child);
+            foreach (var type in ns.GetTypeMembers()) VisitType(type);
+        }
+
+        void VisitType(INamedTypeSymbol type)
+        {
+            foreach (var attr in type.GetAttributes())
+            {
+                if (attr.AttributeClass is not { } attributeClass || attributeClass.TypeKind == TypeKind.Error)
+                    continue;
+                if (RegisteredTypes(attr, attributeClass, inScope) is not { } registered) continue;
+
+                result.UnionWith(registered);
+                result.Add(type.ToDisplayString());
+            }
+
+            foreach (var nested in type.GetTypeMembers()) VisitType(nested);
+        }
     }
 
     /// <summary>

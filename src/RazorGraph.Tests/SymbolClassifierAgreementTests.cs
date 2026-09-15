@@ -144,8 +144,11 @@ public class SymbolClassifierAgreementTests
         var symbol = compilation.GetTypeByMetadataName($"Fixture.{typeName}")
             ?? throw new InvalidOperationException($"Fixture type not found: {typeName}");
 
+        var inScope = new HashSet<string> { "Fx" };
+        var registeredServices = SymbolClassifier.RegisteredServiceTypes(compilation, inScope);
+
         return SymbolClassifier.ClassifySymbol(
-            symbol, "Fx", compilation, new HashSet<string> { "Fx" }, AttributePolicy.Default)
+            symbol, "Fx", compilation, inScope, registeredServices, AttributePolicy.Default)
             ?? throw new InvalidOperationException($"ClassifySymbol returned null for {typeName}");
     }
 

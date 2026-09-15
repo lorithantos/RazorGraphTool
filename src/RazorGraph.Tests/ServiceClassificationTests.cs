@@ -9,28 +9,37 @@ using Xunit;
 using SymbolInfo = RazorGraph.Extractor.Roslyn.SymbolInfo;
 
 /// <summary>
-/// What actually promotes a type to ServiceInterface or ServiceImplementation.
+/// What actually promotes a type to ServiceInterface or ServiceImplementation:
+/// an attribute registration naming it, OR a name ending in "Service".
 /// </summary>
 /// <remarks>
-/// The catalog records these kinds as the ones DI registration promotes. The
-/// code promotes on a name ending in "Service" and consults no registration at
-/// all. Both rules agree on every type in every corpus measured, because a
-/// codebase that registers a service also calls it one -- so the claim has never
-/// been tested by a case that could falsify it.
+/// The catalog records these kinds as the ones DI registration promotes. Until
+/// 2026-09-15 the code promoted on the name alone and consulted no registration;
+/// measured on ImageSelectorV2 that left 23 registered interfaces and 13
+/// registered implementations as plain Class. Classification now reads the
+/// registrations gathered ahead of the walk (SymbolClassifier
+/// .RegisteredServiceTypes) as well as the name.
 /// <para>
-/// These fixtures are that case. They are a PAIR chosen so the two rules
-/// disagree in opposite directions: one type is registered and unconventionally
-/// named, the other is conventionally named and registered nowhere. A
-/// registration-driven classifier promotes the first and not the second. A
-/// name-driven one does the reverse, and there is no third answer, so whichever
-/// way this test reads it names the rule that is really running.
+/// These fixtures are a PAIR chosen so the two rules disagree in opposite
+/// directions: one type is registered and unconventionally named, the other is
+/// conventionally named and registered nowhere. A registration-only classifier
+/// promotes the first and not the second; a name-only one does the reverse. The
+/// rule that runs promotes BOTH, and the table below says so.
+/// </para>
+/// <para>
+/// The name fallback is retained deliberately. A codebase that registers at
+/// call sites (services.AddScoped&lt;IFoo, Foo&gt;()) rather than by attribute --
+/// RetirementCore, and this repository itself -- shows the extractor no
+/// registration at all, so a registration-only rule would demote every service
+/// in it. The fallback is a convention guess standing in for a registration the
+/// extractor cannot observe, and the rule change adds promotions and removes
+/// none.
 /// </para>
 /// <para>
 /// The registration is deliberately VISIBLE to the extractor rather than merely
 /// present in the source: the assertions below check the attribute's recorded
 /// registered type before checking the classification, so a failure cannot be
-/// read as "the extractor could not see it". The information is there and the
-/// classifier does not ask for it.
+/// read as "the extractor could not see it".
 /// </para>
 /// </remarks>
 public class ServiceClassificationTests
@@ -79,8 +88,13 @@ public class ServiceClassificationTests
         var symbol = compilation.GetTypeByMetadataName($"Fixture.{typeName}")
             ?? throw new InvalidOperationException($"Fixture type not found: {typeName}");
 
+        // The real collector, not a hand-built set: a set written here would
+        // prove nothing about what the pipeline actually gathers.
+        var inScope = new HashSet<string> { "Fx" };
+        var registeredServices = SymbolClassifier.RegisteredServiceTypes(compilation, inScope);
+
         return SymbolClassifier.ClassifySymbol(
-            symbol, "Fx", compilation, new HashSet<string> { "Fx" }, AttributePolicy.Default)
+            symbol, "Fx", compilation, inScope, registeredServices, AttributePolicy.Default)
             ?? throw new InvalidOperationException($"ClassifySymbol returned null for {typeName}");
     }
 
@@ -105,30 +119,33 @@ public class ServiceClassificationTests
         Assert.Empty(RegisteredTypes(Classify("WidgetService")));
 
     /// <summary>
-    /// The finding. A registered implementation is NOT promoted, and an
-    /// unregistered one IS -- so the kind that reads as "this participates in
-    /// DI" is reporting what a type is called.
+    /// The rule. A registered pair is promoted whether or not its names follow
+    /// the convention -- the interface through the attribute on its
+    /// implementation, which is why the set is gathered before the walk -- and
+    /// a conventionally named pair is still promoted with no registration in
+    /// sight.
     /// </summary>
     /// <remarks>
-    /// This test passes today and is expected to. It is written to be INVERTED
-    /// when classification learns to read registrations: at that point
-    /// LoriImpl2 becomes ServiceImplementation, ILori becomes ServiceInterface,
-    /// and WidgetService stops being either unless something registers it. Until
-    /// then this is the executable statement of which rule is running, and it is
-    /// deliberately not phrased as an approval of it.
+    /// The first two rows were inverted on 2026-09-15 when classification
+    /// learned to read registrations; before that they read Class. The last
+    /// two are unchanged, and are the executable statement that the name
+    /// fallback survived: WidgetService is registered nowhere (asserted above),
+    /// so only the name can be carrying it. Mutating RegisteredServiceTypes to
+    /// return an empty set fails the first two rows and leaves these two green,
+    /// which is the proof that the new rule and not the old one carries them.
     /// </remarks>
     [Theory]
-    [InlineData("LoriImpl2", NodeType.Class, "registered, and not promoted")]
-    [InlineData("ILori", NodeType.Class, "the registered interface, also not promoted")]
+    [InlineData("LoriImpl2", NodeType.ServiceImplementation, "registered by attribute, promoted")]
+    [InlineData("ILori", NodeType.ServiceInterface, "the registered interface, promoted through its implementation's attribute")]
     [InlineData("WidgetService", NodeType.ServiceImplementation, "unregistered, promoted on its name")]
     [InlineData("IWidgetService", NodeType.ServiceInterface, "unregistered, promoted on its name")]
-    public void ClassificationFollowsTheName_NotTheRegistration(
+    public void RegistrationPromotes_AndTheNameFallbackStillDoes(
         string typeName, NodeType expected, string why)
     {
         var actual = Classify(typeName).Type;
 
         Assert.True(expected == actual,
-            $"{typeName} was {actual}, expected {expected} -- {why}. If this failed because "
-            + "classification now reads registrations, invert the table rather than restoring it.");
+            $"{typeName} was {actual}, expected {expected} -- {why}. The name fallback is deliberate: "
+            + "call-site registration is invisible to the extractor, so do not remove it.");
     }
 }
