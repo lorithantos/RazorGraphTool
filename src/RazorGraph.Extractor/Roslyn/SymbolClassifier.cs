@@ -37,118 +37,65 @@ internal static class SymbolClassifier
         var implemented = InterfaceImplementations(symbol);
         var (filePath, lineStart, lineEnd, lineDocs) = GetLines(symbol);
 
+        // The one place a type node is built. The classification below decides
+        // only three things -- the id prefix, the kind, and (for a controller)
+        // which extractor describes the method surface -- and everything a node
+        // carries is set here, once, for all of them.
+        //
+        // This is structural rather than tidy. Five parallel object initialisers
+        // produced three separate defects of the same shape, each a field wired
+        // into some branches and not others: ImplementedInterfaces on two of
+        // five, baseType on three of five, isStatic caught only by accident. The
+        // divergence was invisible to the obvious test because the fixture you
+        // reach for while editing a branch is a type that routes down it. With
+        // one initialiser a new field cannot be added to a subset -- there is no
+        // subset to add it to. SymbolClassifierAgreementTests holds the line if
+        // this ever splits again.
+        SymbolInfo Node(string idPrefix, NodeType type, List<MethodInfo>? methods = null) =>
+            new()
+            {
+                Id = $"{idPrefix}:{symbol.ToDisplayString()}",
+                Project = projectName,
+                Attributes = ExtractAttributes(symbol, "type", inScope),
+                Type = type,
+                Name = symbol.Name,
+                FullName = symbol.ToDisplayString(),
+                IsPublic = IsEffectivelyPublic(symbol),
+                IsInterface = symbol.TypeKind == TypeKind.Interface,
+                IsStatic = symbol.IsStatic,
+                FilePath = filePath,
+                LineStart = lineStart,
+                LineEnd = lineEnd,
+                LineDocs = lineDocs,
+                BaseType = baseType,
+                ImplementedInterfaces = implemented,
+                Properties = ExtractProperties(symbol, policy),
+                Methods = methods ?? ExtractMethods(symbol),
+                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
+                MemberNodes = ExtractMemberNodes(symbol, inScope, policy),
+                InjectedServices = ExtractInjectedServices(symbol)
+            };
+
         // PageModel detection
         if (baseType.Contains("PageModel") || baseType.Contains("Microsoft.AspNetCore.Mvc.RazorPages.PageModel"))
-        {
-            return new SymbolInfo
-            {
-                Id = $"pm:{symbol.ToDisplayString()}",
-                Project = projectName,
-                Attributes = ExtractAttributes(symbol, "type", inScope),
-                Type = NodeType.PageModel,
-                Name = symbol.Name,
-                FullName = symbol.ToDisplayString(),
-                IsPublic = IsEffectivelyPublic(symbol),
-                IsInterface = symbol.TypeKind == TypeKind.Interface,
-                IsStatic = symbol.IsStatic,
-                FilePath = filePath,
-                LineStart = lineStart,
-                LineEnd = lineEnd,
-                LineDocs = lineDocs,
-                BaseType = baseType,
-                ImplementedInterfaces = implemented,
-                Properties = ExtractProperties(symbol, policy),
-                Methods = ExtractMethods(symbol),
-                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
-                MemberNodes = ExtractMemberNodes(symbol, inScope, policy),
-                InjectedServices = ExtractInjectedServices(symbol)
-            };
-        }
+            return Node("pm", NodeType.PageModel);
 
         // Controller detection — the shared predicate, so this branch and the
-        // entry-point classifier can never disagree.
+        // entry-point classifier can never disagree. Its action list is the one
+        // genuine per-branch difference left: a controller's method surface is
+        // its routable actions, not its public methods.
         if (MethodRoles.IsControllerType(symbol, policy))
-        {
-            return new SymbolInfo
-            {
-                Id = $"ctrl:{symbol.ToDisplayString()}",
-                Project = projectName,
-                Attributes = ExtractAttributes(symbol, "type", inScope),
-                Type = NodeType.ApiController,
-                Name = symbol.Name,
-                FullName = symbol.ToDisplayString(),
-                IsPublic = IsEffectivelyPublic(symbol),
-                IsInterface = symbol.TypeKind == TypeKind.Interface,
-                IsStatic = symbol.IsStatic,
-                FilePath = filePath,
-                LineStart = lineStart,
-                LineEnd = lineEnd,
-                LineDocs = lineDocs,
-                BaseType = baseType,
-                ImplementedInterfaces = implemented,
-                Properties = ExtractProperties(symbol, policy),
-                Methods = ExtractControllerActions(symbol),
-                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
-                MemberNodes = ExtractMemberNodes(symbol, inScope, policy),
-                InjectedServices = ExtractInjectedServices(symbol)
-            };
-        }
+            return Node("ctrl", NodeType.ApiController, ExtractControllerActions(symbol));
 
         // Service detection (heuristic: ends with Service, or implements interface ending with Service)
         if (symbol.Name.EndsWith("Service") || interfaces.Any(i => i.EndsWith("Service")))
-        {
-            return new SymbolInfo
-            {
-                Id = $"svc:{symbol.ToDisplayString()}",
-                Project = projectName,
-                Attributes = ExtractAttributes(symbol, "type", inScope),
-                Type = symbol.TypeKind == TypeKind.Interface ? NodeType.ServiceInterface : NodeType.ServiceImplementation,
-                Name = symbol.Name,
-                FullName = symbol.ToDisplayString(),
-                IsPublic = IsEffectivelyPublic(symbol),
-                IsInterface = symbol.TypeKind == TypeKind.Interface,
-                IsStatic = symbol.IsStatic,
-                FilePath = filePath,
-                LineStart = lineStart,
-                LineEnd = lineEnd,
-                LineDocs = lineDocs,
-                BaseType = baseType,
-                ImplementedInterfaces = implemented,
-                Properties = ExtractProperties(symbol, policy),
-                Methods = ExtractMethods(symbol),
-                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
-                MemberNodes = ExtractMemberNodes(symbol, inScope, policy),
-                InjectedServices = ExtractInjectedServices(symbol)
-            };
-        }
+            return Node("svc", symbol.TypeKind == TypeKind.Interface
+                ? NodeType.ServiceInterface
+                : NodeType.ServiceImplementation);
 
         // ViewModel detection (heuristic: ends with VM or ViewModel, or used in @model directives)
         if (symbol.Name.EndsWith("VM") || symbol.Name.EndsWith("ViewModel") || symbol.Name.EndsWith("Model"))
-        {
-            return new SymbolInfo
-            {
-                Id = $"vm:{symbol.ToDisplayString()}",
-                Project = projectName,
-                Attributes = ExtractAttributes(symbol, "type", inScope),
-                Type = NodeType.ViewModel,
-                Name = symbol.Name,
-                FullName = symbol.ToDisplayString(),
-                IsPublic = IsEffectivelyPublic(symbol),
-                IsInterface = symbol.TypeKind == TypeKind.Interface,
-                IsStatic = symbol.IsStatic,
-                FilePath = filePath,
-                LineStart = lineStart,
-                LineEnd = lineEnd,
-                LineDocs = lineDocs,
-                BaseType = baseType,
-                ImplementedInterfaces = implemented,
-                Properties = ExtractProperties(symbol, policy),
-                Methods = ExtractMethods(symbol),
-                MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
-                MemberNodes = ExtractMemberNodes(symbol, inScope, policy),
-                InjectedServices = ExtractInjectedServices(symbol)
-            };
-        }
+            return Node("vm", NodeType.ViewModel);
 
         // Everything else that is still a declared type in this project. Without
         // this the graph silently omits most of the codebase -- helpers, domain
@@ -156,29 +103,7 @@ internal static class SymbolClassifier
         // because the caller was never a node.
         if (IsCompilerGenerated(symbol)) return null;
 
-        return new SymbolInfo
-        {
-            Id = $"type:{symbol.ToDisplayString()}",
-            Project = projectName,
-            Attributes = ExtractAttributes(symbol, "type", inScope),
-            Type = NodeType.Class,
-            Name = symbol.Name,
-            FullName = symbol.ToDisplayString(),
-            IsPublic = IsEffectivelyPublic(symbol),
-            IsInterface = symbol.TypeKind == TypeKind.Interface,
-            IsStatic = symbol.IsStatic,
-            FilePath = filePath,
-            LineStart = lineStart,
-            LineEnd = lineEnd,
-            LineDocs = lineDocs,
-            BaseType = baseType,
-            ImplementedInterfaces = implemented,
-            Properties = ExtractProperties(symbol, policy),
-            Methods = ExtractMethods(symbol),
-            MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
-            MemberNodes = ExtractMemberNodes(symbol, inScope, policy),
-            InjectedServices = ExtractInjectedServices(symbol)
-        };
+        return Node("type", NodeType.Class);
     }
 
     /// <summary>
