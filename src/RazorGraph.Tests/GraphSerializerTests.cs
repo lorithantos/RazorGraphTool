@@ -256,6 +256,35 @@ public class GraphSerializerTests
     }
 
     [Fact]
+    public void RoundTrip_PreservesExtractorBuiltAt()
+    {
+        var graph = BuildGraph();
+        graph.ExtractorBuiltAt = new DateTimeOffset(2026, 9, 12, 8, 3, 0, TimeSpan.Zero);
+
+        var restored = GraphSerializer.FromJson(GraphSerializer.ToJson(graph));
+
+        Assert.Equal(graph.ExtractorBuiltAt, restored.ExtractorBuiltAt);
+    }
+
+    /// <summary>
+    /// A graph written without the extractor stamp must read back as "cannot
+    /// tell", never as current: the field exists to expose a stale binary, and
+    /// a fabricated value would hide exactly that.
+    /// </summary>
+    [Fact]
+    public void Read_GraphWithoutExtractorBuiltAt_ReportsUnknownRatherThanCurrent()
+    {
+        var graph = BuildGraph();
+        graph.ExtractorBuiltAt = null;
+
+        var json = GraphSerializer.ToJson(graph);
+        using (var doc = JsonDocument.Parse(json))
+            Assert.False(doc.RootElement.TryGetProperty("extractorBuiltAt", out _));
+
+        Assert.Null(GraphSerializer.FromJson(json).ExtractorBuiltAt);
+    }
+
+    [Fact]
     public void Read_CurrentVersion_HasNoCaveat()
     {
         var result = GraphSerializer.Read(GraphSerializer.ToJson(BuildGraph()));

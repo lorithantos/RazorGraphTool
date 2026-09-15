@@ -56,6 +56,7 @@ internal sealed class GraphNavigationTools(GraphStore store)
             totalMatches = all.Count,
             truncated = all.Count > page.Count,
             builtAt = graph.BuiltAt,
+            extractorBuiltAt = graph.ExtractorBuiltAt,
             freshnessCaveat = ToolResponses.FreshnessCaveat(graph),
             nodes = page
         });
@@ -119,6 +120,7 @@ internal sealed class GraphNavigationTools(GraphStore store)
             // as it stood at build time, so a reader needs to know when that was
             // before opening a file at lineStart.
             builtAt = graph.BuiltAt,
+            extractorBuiltAt = graph.ExtractorBuiltAt,
             freshnessCaveat = ToolResponses.FreshnessCaveat(graph),
             node = ToolResponses.NodeDetail(node, new GraphFreshness(graph), fields),
             outgoing = Side(outEdges, expandOut, edgeType, limit, e => new

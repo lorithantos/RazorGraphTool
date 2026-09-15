@@ -35,6 +35,7 @@ public static class GraphSerializer
             // asks is when the graph was EXTRACTED. A graph built before the
             // stamp existed writes null and reads back as "cannot tell".
             BuiltAt = graph.BuiltAt,
+            ExtractorBuiltAt = graph.ExtractorBuiltAt,
             ForeignData = DescribeForeignData(graph),
             Nodes = graph.Nodes.Select(ToNodeDto).ToList(),
             Edges = graph.Edges.Select(e => new EdgeDto
@@ -126,7 +127,7 @@ public static class GraphSerializer
 
     private static CodeGraph ToGraph(GraphDto dto, GraphFormatAssessment assessment)
     {
-        var graph = new CodeGraph { BuiltAt = dto.BuiltAt };
+        var graph = new CodeGraph { BuiltAt = dto.BuiltAt, ExtractorBuiltAt = dto.ExtractorBuiltAt };
 
         // Provenance the elements cannot carry. A newer format can add a property
         // to a kind we do know, which leaves nothing locally strange to spot at
@@ -290,6 +291,11 @@ public static class GraphSerializer
         /// <summary>When the graph was extracted. Null on graphs written before
         /// the stamp existed, which read back as "cannot tell".</summary>
         public DateTimeOffset? BuiltAt { get; set; }
+
+        /// <summary>When the extractor that produced the graph was itself built.
+        /// Null when the extractor could not tell, or on graphs written before
+        /// the stamp existed; either reads back as "cannot tell".</summary>
+        public DateTimeOffset? ExtractorBuiltAt { get; set; }
 
         // Second for the same reason, and omitted entirely when the graph holds
         // nothing foreign -- its presence is the signal.

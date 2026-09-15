@@ -65,6 +65,30 @@ public class GraphBuilderIntegrationTests : IAsyncLifetime
         Assert.True(process.ExitCode == 0, $"dotnet restore of fixture failed:\n{output}");
     }
 
+    /// <summary>
+    /// The extractor stamp is actually produced, not merely carried.
+    /// </summary>
+    /// <remarks>
+    /// The serializer tests round-trip a value someone handed them, and the tool
+    /// tests assert the field is emitted -- neither runs the code that has to
+    /// come up with it. If ExtractorBuildTime ever returns null on every path,
+    /// all of those still pass and every graph reports "cannot tell", which is a
+    /// well-formed answer and a useless one. This is the only test that builds a
+    /// graph the way a caller does and looks at what the stamp came out as.
+    /// </remarks>
+    [Fact]
+    public void Builds_ExtractorStamp_FromTheAssemblyThatRan()
+    {
+        Assert.NotNull(_graph!.ExtractorBuiltAt);
+
+        // Not in the future, and not the default value dressed up as a time:
+        // either would mean the helper invented something rather than read it.
+        Assert.True(_graph.ExtractorBuiltAt > DateTimeOffset.UnixEpoch,
+            $"Extractor stamp is not a real file time: {_graph.ExtractorBuiltAt}");
+        Assert.True(_graph.ExtractorBuiltAt <= DateTimeOffset.UtcNow,
+            $"Extractor stamp is in the future: {_graph.ExtractorBuiltAt}");
+    }
+
     [Fact]
     public void Builds_RazorPageNode_WithRouteTemplate()
     {

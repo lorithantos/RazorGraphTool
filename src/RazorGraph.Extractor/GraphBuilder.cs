@@ -17,8 +17,26 @@ public sealed class GraphBuilder : IAsyncDisposable
     // Stamped at construction rather than at return: extraction is the slow part,
     // and the baseline a consumer wants is the source as it stood when reading
     // began. Stamping afterwards would call a file edited mid-build fresh.
-    private readonly CodeGraph _graph = new() { BuiltAt = DateTimeOffset.UtcNow };
+    private readonly CodeGraph _graph = new() { BuiltAt = DateTimeOffset.UtcNow, ExtractorBuiltAt = ExtractorBuildTime() };
     private readonly RoslynExtractor _roslyn = new();
+
+    /// <summary>
+    /// Last-write time of the assembly this extractor lives in -- the closest
+    /// thing to "which build produced this graph" that does not require knowing
+    /// how the host deploys itself. Null rather than a guess when the location is
+    /// unavailable, which a single-file publish reports as an empty string.
+    /// </summary>
+    private static DateTimeOffset? ExtractorBuildTime()
+    {
+        try
+        {
+            var location = typeof(GraphBuilder).Assembly.Location;
+            if (string.IsNullOrEmpty(location) || !File.Exists(location)) return null;
+            return new DateTimeOffset(File.GetLastWriteTimeUtc(location), TimeSpan.Zero);
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
 
     /// <summary>
     /// Symbols from every loaded project. Razor correlation runs per project but

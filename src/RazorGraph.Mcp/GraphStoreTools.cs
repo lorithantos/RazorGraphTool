@@ -192,7 +192,7 @@ internal sealed class GraphStoreTools(GraphStore store)
     }
 
     [McpServerTool(Name = "list_graphs")]
-    [Description("Every graph currently held by the server: id, source, when it was BUILT and when it was loaded, and its size. Cheap. The 'current' one is what tools use when graphId is omitted. builtAt is the one that matters for trusting an answer — loadedAt only says when it entered this server, so a graph loaded from a saved file a minute ago can have been built days before. builtAt is null on a graph saved before the stamp existed, which means \"cannot tell\", never \"fresh\".")]
+    [Description("Every graph currently held by the server: id, source, when it was BUILT and when it was loaded, and its size. Cheap. The 'current' one is what tools use when graphId is omitted. builtAt is the one that matters for trusting an answer — loadedAt only says when it entered this server, so a graph loaded from a saved file a minute ago can have been built days before. builtAt is null on a graph saved before the stamp existed, which means \"cannot tell\", never \"fresh\". extractorBuiltAt is the other half: it says which extractor produced the graph rather than when extraction ran, so a graph rebuilt seconds ago can still carry answers from a binary older than the working tree. Null there means \"cannot tell\" too, never \"current\".")]
     public string ListGraphs()
     {
         var entries = store.List().Select(e => new
@@ -203,6 +203,7 @@ internal sealed class GraphStoreTools(GraphStore store)
             // answers the wrong question: load_graph of a week-old saved graph
             // reports loadedAt as seconds ago, which reads as fresh.
             builtAt = e.Graph.BuiltAt,
+            extractorBuiltAt = e.Graph.ExtractorBuiltAt,
             loadedAt = e.LoadedAt,
             nodes = e.Graph.Nodes.Count,
             edges = e.Graph.Edges.Count,
@@ -218,7 +219,7 @@ internal sealed class GraphStoreTools(GraphStore store)
         ToolResponses.ToJson(new { dropped = store.Remove(graphId), graphId });
 
     [McpServerTool(Name = "graph_summary")]
-    [Description("Summary of one graph: source path and node/edge counts by type. Cheap orientation call.")]
+    [Description("Summary of one graph: source path, node/edge counts by type, and both build stamps. Cheap orientation call. builtAt is when extraction ran; extractorBuiltAt is when the extractor that ran it was itself built, so a graph rebuilt seconds ago can still carry answers from an older binary. Either is null when it cannot be told, which is never \"fresh\".")]
     public string GraphSummary([Description(ToolArguments.GraphIdDescription)] string? graphId = null) =>
         Summarize(store.Require(graphId));
 
@@ -249,6 +250,11 @@ internal sealed class GraphStoreTools(GraphStore store)
         {
             graphId = entry.Id,
             source = entry.Source,
+            // Both stamps, on every response that returns a summary: a build
+            // response is the first thing a caller sees, and it must say which
+            // extractor answered, not only that extraction just ran.
+            builtAt = graph.BuiltAt,
+            extractorBuiltAt = graph.ExtractorBuiltAt,
             // Present on load responses: which format the file on disk carried.
             // A freshly built graph is this build's format by construction, so
             // only a load has something to report.

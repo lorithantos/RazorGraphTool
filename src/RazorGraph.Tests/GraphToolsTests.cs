@@ -482,6 +482,41 @@ public class GraphToolsTests
         Assert.True(doc.RootElement.TryGetProperty("freshnessCaveat", out _));
     }
 
+    [Fact]
+    public void ListGraphs_ReportsBothBuildStamps()
+    {
+        // builtAt says when extraction ran; extractorBuiltAt says which extractor
+        // ran it. A host serving a published binary can rebuild seconds ago with
+        // code days old, and only the second stamp shows that.
+        var graph = MixedKindGraph();
+        graph.BuiltAt = new DateTimeOffset(2026, 9, 15, 12, 0, 0, TimeSpan.Zero);
+        graph.ExtractorBuiltAt = new DateTimeOffset(2026, 9, 12, 8, 3, 0, TimeSpan.Zero);
+        var tools = new GraphStoreTools(StoreOver(graph));
+
+        using var doc = JsonDocument.Parse(tools.ListGraphs());
+
+        var entry = Assert.Single(doc.RootElement.GetProperty("graphs").EnumerateArray());
+        Assert.Equal(graph.BuiltAt, entry.GetProperty("builtAt").GetDateTimeOffset());
+        Assert.Equal(graph.ExtractorBuiltAt, entry.GetProperty("extractorBuiltAt").GetDateTimeOffset());
+    }
+
+    [Fact]
+    public void GraphSummary_ReportsBothBuildStamps()
+    {
+        // Summarize backs build_graph, build_solution, load_graph and
+        // graph_summary, so the build response itself now says which extractor
+        // answered rather than only that extraction just ran.
+        var graph = MixedKindGraph();
+        graph.BuiltAt = new DateTimeOffset(2026, 9, 15, 12, 0, 0, TimeSpan.Zero);
+        graph.ExtractorBuiltAt = new DateTimeOffset(2026, 9, 12, 8, 3, 0, TimeSpan.Zero);
+        var tools = new GraphStoreTools(StoreOver(graph));
+
+        using var doc = JsonDocument.Parse(tools.GraphSummary("g"));
+
+        Assert.Equal(graph.BuiltAt, doc.RootElement.GetProperty("builtAt").GetDateTimeOffset());
+        Assert.Equal(graph.ExtractorBuiltAt, doc.RootElement.GetProperty("extractorBuiltAt").GetDateTimeOffset());
+    }
+
     private const string CoveredMethodId = "m:Web.Doctrine.Advance()";
 
     /// <summary>

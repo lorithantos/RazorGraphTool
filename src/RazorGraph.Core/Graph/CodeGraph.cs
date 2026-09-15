@@ -26,6 +26,22 @@ public sealed class CodeGraph
     public DateTimeOffset? BuiltAt { get; set; }
 
     /// <summary>
+    /// When the extractor assembly that produced this graph was itself built, or
+    /// null when that cannot be determined.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="BuiltAt"/>, and the distinction is the whole point.
+    /// BuiltAt says when extraction RAN; this says which extractor RAN it. A host
+    /// serving a published binary can rebuild a graph with an extractor older than
+    /// the working tree, and BuiltAt stays honest and useless at once: it reports a
+    /// build seconds ago while the answers come from code days old. Compare this
+    /// against the newest source timestamp to see whether the binary is owed a
+    /// rotation. Null means "cannot tell", never "current" -- the same contract
+    /// BuiltAt's null already carries.
+    /// </remarks>
+    public DateTimeOffset? ExtractorBuiltAt { get; set; }
+
+    /// <summary>
     /// Format versions newer than this build's that data in this graph was read
     /// from. Empty for a graph built from source, or loaded from a file at or
     /// below this build's version.
