@@ -86,6 +86,7 @@ internal static class SymbolClassifier
                 LineDocs = lineDocs,
                 BaseType = baseType,
                 ImplementedInterfaces = implemented,
+                Properties = ExtractProperties(symbol, policy),
                 Methods = ExtractControllerActions(symbol),
                 MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
                 MemberNodes = ExtractMemberNodes(symbol, inScope, policy),
@@ -113,9 +114,11 @@ internal static class SymbolClassifier
                 LineDocs = lineDocs,
                 BaseType = baseType,
                 ImplementedInterfaces = implemented,
+                Properties = ExtractProperties(symbol, policy),
                 Methods = ExtractMethods(symbol),
                 MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
-                MemberNodes = ExtractMemberNodes(symbol, inScope, policy)
+                MemberNodes = ExtractMemberNodes(symbol, inScope, policy),
+                InjectedServices = ExtractInjectedServices(symbol)
             };
         }
 
@@ -140,8 +143,10 @@ internal static class SymbolClassifier
                 BaseType = baseType,
                 ImplementedInterfaces = implemented,
                 Properties = ExtractProperties(symbol, policy),
+                Methods = ExtractMethods(symbol),
                 MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
-                MemberNodes = ExtractMemberNodes(symbol, inScope, policy)
+                MemberNodes = ExtractMemberNodes(symbol, inScope, policy),
+                InjectedServices = ExtractInjectedServices(symbol)
             };
         }
 
