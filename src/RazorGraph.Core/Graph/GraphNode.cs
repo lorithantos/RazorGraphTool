@@ -39,7 +39,7 @@ public sealed class GraphNode
     /// missing value.
     /// </summary>
     /// <remarks>
-    /// The point of it is reading exactly the chunk you meant: <c>lineDocs ??
+    /// The point of it is reading exactly the chunk you meant: <c>docsStart ??
     /// lineStart</c> through <c>lineEnd</c> is the member with its
     /// documentation and nothing else, so a caller never has to open a file at
     /// a line and guess how far down to go.
@@ -52,7 +52,7 @@ public sealed class GraphNode
     /// them.
     /// </para>
     /// </remarks>
-    public int? LineDocs { get; init; }
+    public int? DocsStart { get; init; }
 
     /// <summary>
     /// Type-agnostic properties. Keys are well-known per NodeType.

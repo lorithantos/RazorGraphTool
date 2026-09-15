@@ -35,7 +35,7 @@ internal static class SymbolClassifier
         // AllInterfaces cannot say which of these the declaration itself names,
         // and that is the half a reader asks for first.
         var implemented = InterfaceImplementations(symbol);
-        var (filePath, lineStart, lineEnd, lineDocs) = GetLines(symbol);
+        var (filePath, lineStart, lineEnd, docsStart) = GetLines(symbol);
 
         // The one place a type node is built. The classification below decides
         // only three things -- the id prefix, the kind, and (for a controller)
@@ -77,7 +77,7 @@ internal static class SymbolClassifier
                 FilePath = filePath,
                 LineStart = lineStart,
                 LineEnd = lineEnd,
-                LineDocs = lineDocs,
+                DocsStart = docsStart,
                 BaseType = baseType,
                 ImplementedInterfaces = implemented,
                 Properties = ExtractProperties(symbol, policy),
@@ -158,7 +158,7 @@ internal static class SymbolClassifier
     /// .g.cs path honestly — the generated marker downstream tells a reader
     /// which kind they are looking at.
     /// </summary>
-    private static (string? FilePath, int? Start, int? End, int? Docs) GetLines(INamedTypeSymbol symbol)
+    private static (string? FilePath, int? Start, int? End, int? DocsStart) GetLines(INamedTypeSymbol symbol)
     {
         var syntaxRef = symbol.DeclaringSyntaxReferences.FirstOrDefault();
         if (syntaxRef == null) return (symbol.Locations.FirstOrDefault()?.SourceTree?.FilePath, null, null, null);
@@ -174,7 +174,7 @@ internal static class SymbolClassifier
     /// This is what lets a reader take exactly the chunk it meant. A node used
     /// to say "line 91" and nothing else, so opening it meant guessing how far
     /// down the member ran and how far up its documentation started; with this
-    /// and LineEnd, <c>lineDocs ?? lineStart</c> through <c>lineEnd</c> is the
+    /// and LineEnd, <c>docsStart ?? lineStart</c> through <c>lineEnd</c> is the
     /// member and its documentation, exactly.
     /// <para>
     /// Read from the whole declaration's leading trivia, which sits above the
@@ -309,7 +309,7 @@ internal static class SymbolClassifier
                     FilePath = span.Path,
                     LineStart = span.StartLinePosition.Line + 1,
                     LineEnd = span.EndLinePosition.Line + 1,
-                    LineDocs = DocumentationLine(syntaxRef)
+                    DocsStart = DocumentationLine(syntaxRef)
                 };
             }
             members.Add(detail);
@@ -537,7 +537,7 @@ internal static class SymbolClassifier
                     FilePath = mapped?.Path ?? m.Locations.FirstOrDefault()?.SourceTree?.FilePath,
                     LineStart = mapped?.StartLinePosition.Line + 1,
                     LineEnd = mapped?.EndLinePosition.Line + 1,
-                    LineDocs = syntaxRef == null ? null : DocumentationLine(syntaxRef),
+                    DocsStart = syntaxRef == null ? null : DocumentationLine(syntaxRef),
                     Attributes = ExtractMethodAttributes(m, inScope),
                     Parameters = ExtractParameterNodes(m, inScope)
                 };

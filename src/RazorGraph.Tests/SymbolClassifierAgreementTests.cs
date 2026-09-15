@@ -117,7 +117,7 @@ public class SymbolClassifierAgreementTests
         ["FilePath"] = !string.IsNullOrEmpty(info.FilePath),
         ["LineStart"] = info.LineStart is not null,
         ["LineEnd"] = info.LineEnd is not null,
-        ["LineDocs"] = info.LineDocs is not null,
+        ["DocsStart"] = info.DocsStart is not null,
         ["BaseType"] = !string.IsNullOrEmpty(info.BaseType),
         ["ImplementedInterfaces"] = info.ImplementedInterfaces.Count > 0,
         ["Attributes"] = info.Attributes.Count > 0,

@@ -333,6 +333,45 @@ public class GraphSerializerTests
         Assert.Contains("predates", result.Format.Caveat);
     }
 
+    /// <summary>
+    /// 2.0 renamed lineDocs to docsStart. A 2.0 reader given a 1.x graph would
+    /// otherwise find no docsStart, take the absence at face value and report
+    /// every node as undocumented — a well-formed answer, silently wrong, on a
+    /// file that parsed perfectly. Reading the old key is what keeps those
+    /// graphs whole.
+    /// </summary>
+    [Fact]
+    public void Read_OneDotXGraph_ReadsLineDocsAsDocsStart()
+    {
+        const string json = """
+            {"formatVersion":"1.8","nodes":[{"id":"m:App.Go()","type":"method","name":"Go","lineStart":12,"lineEnd":20,"lineDocs":9}],"edges":[]}
+            """;
+
+        var result = GraphSerializer.Read(json);
+
+        Assert.Equal(9, result.Graph.GetNode("m:App.Go()")!.DocsStart);
+        Assert.Contains("predates", result.Format.Caveat);
+    }
+
+    [Fact]
+    public void RoundTrip_WritesDocsStart_AndNeverTheOldKey()
+    {
+        // The alias is read-only: a 2.0 file carries one spelling, or a reader
+        // could never tell which one to believe when the two disagreed.
+        var graph = new CodeGraph();
+        graph.AddNode(new GraphNode { Id = "m:App.Go()", Type = NodeType.Method, Name = "Go", LineStart = 12, LineEnd = 20, DocsStart = 9 });
+
+        var json = GraphSerializer.ToJson(graph);
+        using (var doc = JsonDocument.Parse(json))
+        {
+            var node = doc.RootElement.GetProperty("nodes")[0];
+            Assert.Equal(9, node.GetProperty("docsStart").GetInt32());
+            Assert.False(node.TryGetProperty("lineDocs", out _));
+        }
+
+        Assert.Equal(9, GraphSerializer.FromJson(json).GetNode("m:App.Go()")!.DocsStart);
+    }
+
     [Fact]
     public void Read_UnparseableVersion_Refuses()
     {

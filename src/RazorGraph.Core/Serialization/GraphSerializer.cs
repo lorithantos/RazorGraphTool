@@ -57,7 +57,7 @@ public static class GraphSerializer
         FilePath = n.FilePath,
         LineStart = n.LineStart,
         LineEnd = n.LineEnd,
-        LineDocs = n.LineDocs,
+        DocsStart = n.DocsStart,
         Properties = n.Properties,
         Labels = n.Labels
     };
@@ -150,7 +150,7 @@ public static class GraphSerializer
                 FilePath = n.FilePath,
                 LineStart = n.LineStart,
                 LineEnd = n.LineEnd,
-                LineDocs = n.LineDocs
+                DocsStart = n.DocsStart ?? n.LegacyLineDocs
             };
             foreach (var p in n.Properties) node.Properties[p.Key] = NormalizeValue(p.Value);
             foreach (var l in n.Labels) node.Labels.Add(l);
@@ -336,13 +336,27 @@ public static class GraphSerializer
         public int? LineEnd { get; set; }
 
         /// <summary>
-        /// Null on any graph saved before 2026-09-05, and on any declaration
-        /// with no documentation comment. The two are indistinguishable here on
-        /// purpose: a saved graph carries no build date of its own, so read an
-        /// absent value as "not known", never as "undocumented", unless you know
-        /// when the graph was built.
+        /// Null on any graph saved before 2026-09-05 -- the 1.x graphs that
+        /// predate the field under either name -- and on any declaration with no
+        /// documentation comment. The two are indistinguishable here on purpose:
+        /// a saved graph carries no build date of its own, so read an absent
+        /// value as "not known", never as "undocumented", unless you know when
+        /// the graph was built.
         /// </summary>
-        public int? LineDocs { get; set; }
+        public int? DocsStart { get; set; }
+
+        /// <summary>
+        /// The 1.x spelling of <see cref="DocsStart"/>, read and never written.
+        /// </summary>
+        /// <remarks>
+        /// A 2.0 reader loading a 1.x graph would otherwise take the absent
+        /// docsStart at face value and report every node as undocumented -- a
+        /// well-formed answer, silently wrong, on a file that parsed perfectly.
+        /// Reading the old key costs one property and keeps those graphs whole,
+        /// which is what lets an old and a new graph still be diffed side by side.
+        /// </remarks>
+        [JsonPropertyName("lineDocs")]
+        public int? LegacyLineDocs { get; set; }
         public double? Relevance { get; set; }
         public Dictionary<string, object> Properties { get; set; } = new();
         public List<string> Labels { get; set; } = new();

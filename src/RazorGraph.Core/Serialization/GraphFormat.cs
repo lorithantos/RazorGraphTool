@@ -64,9 +64,20 @@ internal static class GraphFormat
     /// edges by the DataType a template declares, which changes which members they
     /// resolve to, and added missingOnDataType. 1.8 put baseType on the service and
     /// view-model node kinds, which had never carried it, and which changes which
-    /// members a binding resolves to through the inheritance walk. All additive, so an older reader loads a newer graph with a
-    /// caveat rather than a refusal, and a graph written without the stamp reads
-    /// back as "cannot tell" rather than as fresh.
+    /// members a binding resolves to through the inheritance walk. Everything up to
+    /// 1.8 was additive, so an older reader loads any of those graphs with a caveat
+    /// rather than a refusal, and a graph written without the stamp reads back as
+    /// "cannot tell" rather than as fresh. 2.0 renamed <c>lineDocs</c> to
+    /// <c>docsStart</c>, and is the first change that is not additive. Beside
+    /// lineStart and lineEnd the old name read as a COUNT of documentation lines,
+    /// and a consumer took it for one on first contact; the new name says what it
+    /// is, the line the documentation begins on. A 1.x reader given a 2.0 graph
+    /// would not merely miss something new: it would find no lineDocs, take the
+    /// absence at face value, and report every node as undocumented — a
+    /// well-formed answer, silently wrong, on a file that parsed perfectly. That is
+    /// exactly the case the hard refusal on a newer major exists for. The old key
+    /// is still READ, so a 1.x graph loads whole under this build and can still be
+    /// diffed against a 2.0 one; only the writing of it stopped.
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -94,7 +105,9 @@ internal static class GraphFormat
     /// built one, and compare edge counts by type. Node count unchanged and every
     /// pre-existing edge type byte-identical is "additive only" measured instead of
     /// asserted, and it is a check no amount of fixture testing substitutes for.
-    /// A major bump forfeits this, which is a real cost to weigh against one.
+    /// A major bump forfeits this, which is a real cost to weigh against one —
+    /// and it is why 2.0, the first major bump, still reads the key it renamed:
+    /// paying that cost was optional, and the alias is what kept the diff.
     /// </para>
     /// <para>
     /// New node and edge kinds are precisely what the MINOR rule below is for, and
@@ -105,7 +118,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(1, 8);
+    public static readonly GraphFormatVersion Current = new(2, 0);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

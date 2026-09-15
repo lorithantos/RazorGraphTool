@@ -40,9 +40,9 @@ internal static class ToolResponses
     };
 
     /// <summary>
-    /// <c>lineDocs</c> is the first line of the declaration's XML documentation
+    /// <c>docsStart</c> is the first line of the declaration's XML documentation
     /// comment, absent when it has none. With <c>lineEnd</c> it makes the node
-    /// say what to read rather than only where to look: <c>lineDocs ??
+    /// say what to read rather than only where to look: <c>docsStart ??
     /// lineStart</c> through <c>lineEnd</c> is the declaration and its
     /// documentation, so a caller opens the exact chunk instead of a line
     /// number and a guess.
@@ -91,7 +91,7 @@ internal static class ToolResponses
             type = n.DisplayType,
             name = n.Name,
             filePath = n.FilePath,
-            lineDocs = n.LineDocs,
+            docsStart = n.DocsStart,
             lineStart = n.LineStart,
             lineEnd = n.LineEnd,
             fileWrittenSince = Stale(n, freshness),
@@ -163,7 +163,7 @@ internal static class ToolResponses
     /// absence this is.
     /// <para>
     /// This matters most for the line span. <c>lineStart</c>, <c>lineEnd</c> and
-    /// <c>lineDocs</c> are only true of the source as it stood at build time, so
+    /// <c>docsStart</c> are only true of the source as it stood at build time, so
     /// "the file behind this node has not been written since" is exactly the
     /// warrant for reading them — and on a graph with no stamp there is no
     /// warrant, only a quiet field.

@@ -102,19 +102,21 @@ total — a narrowing argument must never change what the unasked-for half of an
 claims about itself.
 
 **A node says what to read, not just where to look.** Every node carries `lineStart`,
-`lineEnd`, and `lineDocs` — the first line of its XML documentation comment, absent when
-it has none. So `lineDocs ?? lineStart` through `lineEnd` is the declaration and its
+`lineEnd`, and `docsStart` — the first line of its XML documentation comment, absent when
+it has none. So `docsStart ?? lineStart` through `lineEnd` is the declaration and its
 documentation and nothing else, and a caller opens the exact chunk instead of a line
-number and a guess about how far down to go. Absent `lineDocs` is a fact rather than a
+number and a guess about how far down to go. Absent `docsStart` is a fact rather than a
 gap: that declaration is undocumented.
 
 One edge to know: attributes are part of the declaration node while the doc comment is
 leading trivia in front of it, and `lineStart` deliberately points at the declaration
-rather than at the `[`. So `lineDocs` clears the attribute list on a documented member,
+rather than at the `[`. So `docsStart` clears the attribute list on a documented member,
 while an attributed *undocumented* member has its attributes sitting just above
 `lineStart`. Methods, properties and fields carried only `lineStart` before 2026-09-05;
-a graph saved earlier has no `lineEnd` on them and no `lineDocs` anywhere, and an absent
-value there means "not known", not "undocumented".
+a graph saved earlier has no `lineEnd` on them and no doc line anywhere, and an absent
+value there means "not known", not "undocumented". Format 1.x graphs saved since then
+spell the doc line `lineDocs`; format 2.0 renamed it `docsStart` and still reads the old
+key, so a 1.x graph loads whole and can be diffed against a 2.0 one.
 
 **A span is only true of the source as it stood at build time**, so every node result
 says when that was. `builtAt` is on the response, `fileWrittenSince` is on the node when

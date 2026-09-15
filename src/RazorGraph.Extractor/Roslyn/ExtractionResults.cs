@@ -91,7 +91,7 @@ internal sealed class SymbolInfo
     public int? LineEnd { get; init; }
 
     /// <summary>First line of the XML doc comment, when the type has one.</summary>
-    public int? LineDocs { get; init; }
+    public int? DocsStart { get; init; }
 
     /// <summary>Source file a generated type was compiled from (first #line directive); null for hand-written types.</summary>
     public string? GeneratedFrom { get; set; }
@@ -270,7 +270,7 @@ internal sealed record MemberDetail
     public int? LineEnd { get; init; }
 
     /// <summary>First line of the XML doc comment, when the member has one.</summary>
-    public int? LineDocs { get; init; }
+    public int? DocsStart { get; init; }
     public bool IsPublic { get; init; }
     public bool IsStatic { get; init; }
     public bool IsReadOnly { get; init; }
@@ -392,7 +392,7 @@ internal sealed class MethodDetail
     public int? LineEnd { get; init; }
 
     /// <summary>First line of the XML doc comment, when the method has one.</summary>
-    public int? LineDocs { get; init; }
+    public int? DocsStart { get; init; }
 
     /// <summary>Attributes written on this method, including its return value.</summary>
     public List<AttributeUsage> Attributes { get; init; } = new();
