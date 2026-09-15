@@ -99,6 +99,43 @@ public class GraphSerializerTests
     }
 
     /// <summary>
+    /// The 3.0 constructorDependencies shape -- a list of {type, kind} objects,
+    /// kind as its camelCase enum name -- rides the generic object path rather
+    /// than a bespoke DTO field, so this pins that the path really does hand
+    /// back the same shape it was given. The emitter stores exactly this
+    /// List&lt;object&gt; of dictionaries for that reason; a typed list would be
+    /// a different CLR shape on the loaded side from identical bytes.
+    /// </summary>
+    [Fact]
+    public void RoundTrip_PreservesConstructorDependencies_AsTypeAndKind()
+    {
+        var graph = new CodeGraph();
+        var node = new GraphNode { Id = "type:App.Widget", Type = NodeType.Class, Name = "Widget" };
+        node.SetProperty("constructorDependencies", new List<object>
+        {
+            new Dictionary<string, object> { ["type"] = "App.IWidgetDep", ["kind"] = "interface" },
+            new Dictionary<string, object> { ["type"] = "int", ["kind"] = "value" }
+        });
+        graph.AddNode(node);
+
+        var json = GraphSerializer.ToJson(graph);
+        Assert.Contains("\"constructorDependencies\"", json);
+        Assert.Contains("\"kind\": \"interface\"", json);
+        Assert.DoesNotContain("injectedServices", json);
+
+        var deps = GraphSerializer.FromJson(json).GetNode("type:App.Widget")!
+            .GetProperty<List<object>>("constructorDependencies");
+
+        Assert.NotNull(deps);
+        Assert.Equal(2, deps!.Count);
+        var first = Assert.IsType<Dictionary<string, object>>(deps[0]);
+        Assert.Equal("App.IWidgetDep", first["type"]);
+        Assert.Equal("interface", first["kind"]);
+        var second = Assert.IsType<Dictionary<string, object>>(deps[1]);
+        Assert.Equal("value", second["kind"]);
+    }
+
+    /// <summary>
     /// A null slot in an argument list must come back as null. Attribute args
     /// keep one slot per argument so indices never shift, and a failed or
     /// genuinely-null slot holds null — which deserialized as a JsonElement of

@@ -76,6 +76,65 @@ internal readonly record struct DisposedResource(ITypeSymbol Type, bool IsAsync)
 /// </remarks>
 internal sealed record InterfaceImplementation(string FullName, int Depth);
 
+/// <summary>
+/// What kind of thing a constructor parameter's type is. This is the fact the
+/// flat string list this replaced could not carry: it named a <c>double</c> and
+/// an interface in the same breath, and a reader could not tell a seam from a
+/// number. Scope decides among Interface, Type and Framework; the TYPE alone
+/// decides Value, wherever it is declared.
+/// </summary>
+/// <remarks>
+/// An in-solution enum is Value, not Type, and that is deliberate: it is what
+/// stops an enum from reading as a dependency. Neither an enum nor a struct
+/// ever gets an InjectedInto edge -- the enum because the type walk emits no
+/// node for it at all, the struct because it is Value and Value is never
+/// resolved -- so on those the property and the edges legitimately disagree:
+/// the entry is recorded, and nothing points at the type. That is a modelling
+/// gap in the node vocabulary, not a classification error.
+/// </remarks>
+internal enum DependencyKind
+{
+    /// <summary>
+    /// In scope and <c>TypeKind.Interface</c>. A substitution point: a seam with
+    /// a candidate set of implementations.
+    /// </summary>
+    Interface,
+
+    /// <summary>In scope and not an interface. A hard-wired dependency on a concrete type.</summary>
+    Type,
+
+    /// <summary>
+    /// Out of scope and a reference type: ILogger&lt;T&gt;, IConfiguration,
+    /// TimeProvider, a collection. A real dependency, declared outside this
+    /// solution. Whether a container actually supplies it depends on
+    /// registrations the extractor cannot see, so this says "declared
+    /// elsewhere", not "injectable".
+    /// </summary>
+    Framework,
+
+    /// <summary>
+    /// A value type, an enum, or string, wherever it is declared. Required by the
+    /// constructor, and not satisfiable by the container's default constructor
+    /// injection: the container has nothing to hand it. A type carrying one is
+    /// therefore either registered with a factory (services.AddSingleton(sp =>
+    /// new Foo(42)) passes whatever it likes), constructed explicitly -- new, or
+    /// ActivatorUtilities with arguments -- or not container-constructed at all.
+    /// The kind asserts none of those; it says only that default activation
+    /// cannot be how this parameter is filled.
+    /// </summary>
+    Value
+}
+
+/// <summary>
+/// One parameter of a type's first public instance constructor, by type, with
+/// what kind of thing that type is; see SymbolClassifier.ExtractConstructorDependencies.
+/// </summary>
+/// <param name="TypeFullName">
+/// The parameter type's display string, constructed type arguments included, so
+/// it is exactly the name AddInjectionEdges has always resolved edges by.
+/// </param>
+internal sealed record InjectedDependency(string TypeFullName, DependencyKind Kind);
+
 internal sealed class SymbolInfo
 {
     public required string Id { get; init; }
@@ -137,7 +196,16 @@ internal sealed class SymbolInfo
     /// </remarks>
     public List<InterfaceImplementation> ImplementedInterfaces { get; init; } = new();
 
-    public List<string> InjectedServices { get; init; } = new();
+    /// <summary>
+    /// The parameter types of the first public instance constructor, each
+    /// classified; see SymbolClassifier.ExtractConstructorDependencies.
+    /// </summary>
+    /// <remarks>
+    /// Framework and Value entries are KEPT. Dropping them would lose the fact
+    /// that the constructor takes them; the kind is what marks them, and it is
+    /// AddInjectionEdges that declines to resolve them.
+    /// </remarks>
+    public List<InjectedDependency> ConstructorDependencies { get; init; } = new();
     public List<PropertyInfo> Properties { get; init; } = new();
     public List<MethodInfo> Methods { get; init; } = new();
 

@@ -125,7 +125,7 @@ public class SymbolClassifierAgreementTests
         ["Methods"] = info.Methods.Count > 0,
         ["MethodNodes"] = info.MethodNodes.Count > 0,
         ["MemberNodes"] = info.MemberNodes.Count > 0,
-        ["InjectedServices"] = info.InjectedServices.Count > 0
+        ["ConstructorDependencies"] = info.ConstructorDependencies.Count > 0
     };
 
     private static SymbolInfo Classify(string typeName)

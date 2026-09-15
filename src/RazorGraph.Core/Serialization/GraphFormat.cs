@@ -77,7 +77,18 @@ internal static class GraphFormat
     /// well-formed answer, silently wrong, on a file that parsed perfectly. That is
     /// exactly the case the hard refusal on a newer major exists for. The old key
     /// is still READ, so a 1.x graph loads whole under this build and can still be
-    /// diffed against a 2.0 one; only the writing of it stopped.
+    /// diffed against a 2.0 one; only the writing of it stopped. 3.0 renamed
+    /// <c>injectedServices</c> to <c>constructorDependencies</c> and changed its
+    /// shape, from a list of type names to a list of classified entries, each a
+    /// <c>type</c> and a <c>kind</c> -- interface, type, framework or value. The
+    /// old name claimed DI injection for what is really the first public
+    /// constructor's parameter types: measured on one corpus, 181 of its 286
+    /// entries were primitives, framework types or collections, and a flat string
+    /// list could not say which. Unlike 2.0 there is NO read alias for the old
+    /// key, and that is deliberate. Graphs are rebuilt in seconds rather than
+    /// archived, no intermediate consumer exists, and an older major already
+    /// reports a caveat on load -- so a 2.x graph simply has no
+    /// constructorDependencies, and Assess says why.
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -118,7 +129,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(2, 0);
+    public static readonly GraphFormatVersion Current = new(3, 0);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

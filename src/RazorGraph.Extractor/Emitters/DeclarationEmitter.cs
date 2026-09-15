@@ -1,5 +1,6 @@
 namespace RazorGraph.Extractor;
 
+using System.Text.Json;
 using RazorGraph.Core.Graph;
 using RazorGraph.Extractor.Roslyn;
 
@@ -78,7 +79,18 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
         StampGenerated(node);
         if (sym.Properties.Count > 0) node.SetProperty("properties", sym.Properties.Select(p => p.Name).ToList());
         if (sym.Methods.Count > 0) node.SetProperty("methods", sym.Methods.Select(m => m.Name).ToList());
-        if (sym.InjectedServices.Count > 0) node.SetProperty("injectedServices", sym.InjectedServices);
+        // One object per constructor parameter, kind as its camelCase enum name.
+        // Stored as List<object> of Dictionary<string, object> rather than as the
+        // records themselves, because that is exactly the shape the serializer
+        // hands back on load -- so a graph reads the same either side of a save.
+        if (sym.ConstructorDependencies.Count > 0)
+            node.SetProperty("constructorDependencies", sym.ConstructorDependencies
+                .Select(d => (object)new Dictionary<string, object>
+                {
+                    ["type"] = d.TypeFullName,
+                    ["kind"] = JsonNamingPolicy.CamelCase.ConvertName(d.Kind.ToString())
+                })
+                .ToList());
         // Every interface, including the out-of-solution ones that get no edge.
         // baseType alone said "object" for a class with a full interface list,
         // which is not wrong so much as the least informative true thing the
@@ -698,9 +710,17 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
 
     internal void AddInjectionEdges(SymbolInfo sym)
     {
-        foreach (var serviceType in sym.InjectedServices)
+        foreach (var dependency in sym.ConstructorDependencies)
         {
-            var serviceNode = FindServiceNode(serviceType);
+            // Framework and Value entries are skipped rather than looked up.
+            // FindServiceNode matches on the fullName of nodes this solution
+            // declares; a Framework type is declared outside it, and a Value is
+            // either out of scope too or an in-solution enum or struct that
+            // nothing resolves. Neither could ever have matched, so the skip
+            // changes no edge -- measured on two corpora before it went in.
+            if (dependency.Kind is DependencyKind.Framework or DependencyKind.Value) continue;
+
+            var serviceNode = FindServiceNode(dependency.TypeFullName);
             if (serviceNode != null)
             {
                 graph.AddEdge(new GraphEdge

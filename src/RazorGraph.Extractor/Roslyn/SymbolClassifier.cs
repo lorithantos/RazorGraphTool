@@ -52,10 +52,10 @@ internal static class SymbolClassifier
         // subset to add it to. SymbolClassifierAgreementTests holds the line if
         // this ever splits again, and found three more gaps of the same shape on
         // its first run: Properties absent from two branches, Methods from one,
-        // InjectedServices from two.
+        // ConstructorDependencies (then InjectedServices) from two.
         //
         // That last was the expensive one, and not for the reason first given.
-        // AddInjectionEdges reads InjectedServices and nothing else, so a type on
+        // AddInjectionEdges reads ConstructorDependencies and nothing else, so a type on
         // the service or view-model branch emitted no injection edge at all.
         // Measured across the rotation on 2026-09-15, restoring it added 61 to
         // RetirementCore's InjectedInto count and nothing to GameHub's, which has
@@ -84,7 +84,7 @@ internal static class SymbolClassifier
                 Methods = methods ?? ExtractMethods(symbol),
                 MethodNodes = ExtractMethodNodes(symbol, compilation, inScope, policy),
                 MemberNodes = ExtractMemberNodes(symbol, inScope, policy),
-                InjectedServices = ExtractInjectedServices(symbol)
+                ConstructorDependencies = ExtractConstructorDependencies(symbol, inScope)
             };
 
         // PageModel detection
@@ -1131,11 +1131,41 @@ internal static class SymbolClassifier
         return ids;
     }
 
-    private static List<string> ExtractInjectedServices(INamedTypeSymbol symbol)
+    /// <summary>
+    /// The parameter types of a type's FIRST public instance constructor, each
+    /// classified by what it is; see <see cref="DependencyKind"/>.
+    /// </summary>
+    /// <remarks>
+    /// Reads only the first public instance constructor, which is arbitrary for
+    /// a type that has several -- a known limitation, and not one this
+    /// classification set out to fix.
+    /// <para>
+    /// Classified from the SYMBOL, not from the graph: the parameter type's
+    /// containing assembly decides in-scope and its TypeKind decides interface,
+    /// so the answer does not depend on which nodes happened to be emitted.
+    /// Value is decided by the type alone, wherever it is declared, and is
+    /// checked first so an in-solution enum or struct lands there rather than
+    /// in Type. Every entry is kept, framework types and values included: the
+    /// kind is what marks them, and dropping them would lose the fact that the
+    /// constructor takes them at all.
+    /// </para>
+    /// </remarks>
+    private static List<InjectedDependency> ExtractConstructorDependencies(INamedTypeSymbol symbol, IReadOnlySet<string> inScope)
     {
         var ctor = symbol.InstanceConstructors.FirstOrDefault(c => c.DeclaredAccessibility == Accessibility.Public);
-        if (ctor == null) return new List<string>();
-        return ctor.Parameters.Select(p => p.Type.ToDisplayString()).ToList();
+        if (ctor == null) return new List<InjectedDependency>();
+        return ctor.Parameters
+            .Select(p => new InjectedDependency(p.Type.ToDisplayString(), ClassifyDependency(p.Type, inScope)))
+            .ToList();
+    }
+
+    private static DependencyKind ClassifyDependency(ITypeSymbol type, IReadOnlySet<string> inScope)
+    {
+        if (type.IsValueType || type.TypeKind == TypeKind.Enum || type.SpecialType == SpecialType.System_String)
+            return DependencyKind.Value;
+        if (type.ContainingAssembly?.Name is not { } assembly || !inScope.Contains(assembly))
+            return DependencyKind.Framework;
+        return type.TypeKind == TypeKind.Interface ? DependencyKind.Interface : DependencyKind.Type;
     }
 
     private static string? InferHttpMethod(IMethodSymbol method)
