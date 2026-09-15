@@ -252,7 +252,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
         // symbol for ClassifySymbol to read.
         var registeredServices = new HashSet<string>();
         foreach (var l in _loaded)
-            registeredServices.UnionWith(SymbolClassifier.RegisteredServiceTypes(l.Compilation, inScope));
+            registeredServices.UnionWith(SymbolClassifier.RegisteredServiceTypes(l.Compilation, inScope, Policy));
 
         var compiledItemsByLoaded = new Dictionary<LoadedProject, Dictionary<INamedTypeSymbol, string>>();
 

@@ -244,9 +244,7 @@ public class GraphBuilderIntegrationTests : IAsyncLifetime
         var registers = _graph!.Outgoing("prop:SampleApp.Models.IndexViewModel.BoundName")
             .Single(e => e.Type == EdgeType.Registers);
 
-        // svc:, not type: -- the binder carries [RegisterService<GreetingNameBinder>]
-        // on its own declaration, and a registration promotes since 2026-09-15.
-        Assert.Equal("svc:SampleApp.Infrastructure.GreetingNameBinder", registers.ToId);
+        Assert.Equal("type:SampleApp.Infrastructure.GreetingNameBinder", registers.ToId);
         Assert.Equal("ext:Microsoft.AspNetCore.Mvc.ModelBinderAttribute", registers.GetProperty<string>("attribute"));
 
         // The payload keeps the typeof spelling, so the edge and what a reader
@@ -278,7 +276,7 @@ public class GraphBuilderIntegrationTests : IAsyncLifetime
         // expected still has TypedConstantKind.Array, and reading its Values
         // used to throw. An authored null is an argument, not a failure — the
         // failure signal is unresolvedArgs, and it must stay absent.
-        var edge = _graph!.Outgoing("svc:SampleApp.Infrastructure.GreetingNameBinder")
+        var edge = _graph!.Outgoing("type:SampleApp.Infrastructure.GreetingNameBinder")
             .Single(e => e.Type == EdgeType.DecoratedBy);
 
         Assert.Equal(new List<object?> { null }, edge.GetProperty<List<object?>>("args"));

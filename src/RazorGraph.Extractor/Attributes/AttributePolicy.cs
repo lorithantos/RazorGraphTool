@@ -39,8 +39,10 @@ public sealed class AttributePolicy
 
     /// <summary>
     /// Per-codebase registration vocabulary — attributes that mean "this type is
-    /// registered with a container". Carried as data for the DI lookup work;
-    /// nothing in the extractor consumes it yet.
+    /// registered with a container". Service classification consumes
+    /// <c>Attribute</c> and <c>ServiceTypeFrom</c> (SymbolClassifier
+    /// .RegisteredServiceTypes); <c>LifetimeFrom</c> is carried for the DI
+    /// lookup work and consumed by nothing yet.
     /// </summary>
     public IReadOnlyList<RegistrationDeclaration> Registrations { get; }
 

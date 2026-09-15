@@ -66,9 +66,11 @@
       "says where the service type is written - 'typeArgument:0', 'argument:0', or",
       "'named:ServiceType'; 'lifetimeFrom' optionally names the argument carrying the lifetime,",
       "e.g. 'named:Lifetime'.",
-      "Parsed and carried today so override files can already declare their vocabulary; the",
-      "consumer - registration lookup plus the container's own constructor-selection rules - is",
-      "the DI work this feeds."
+      "Service classification consumes 'attribute' and 'serviceTypeFrom': a type is promoted to",
+      "ServiceInterface/ServiceImplementation when a declared attribute names it, and an attribute",
+      "declared nowhere here contributes nothing, however registration-shaped it looks.",
+      "'lifetimeFrom' is parsed and carried; its consumer - registration lookup plus the",
+      "container's own constructor-selection rules - is the DI work this feeds."
     ],
     "declarations": []
   }

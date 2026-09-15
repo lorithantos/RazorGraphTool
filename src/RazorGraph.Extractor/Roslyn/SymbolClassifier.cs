@@ -704,25 +704,48 @@ internal static class SymbolClassifier
     }
 
     /// <summary>
-    /// Every in-scope type an attribute registration names, across the whole
-    /// compilation, plus the type carrying each such attribute: for
-    /// <c>[RegisterDependency&lt;ILori&gt;] class LoriImpl2 : ILori</c> that is
-    /// both <c>ILori</c> (the service type) and <c>LoriImpl2</c> (the registered
-    /// implementation). Gathered BEFORE the type walk because classification is
-    /// per-symbol and the attribute sits on the implementation, so when
-    /// ClassifySymbol reaches the interface there is nothing on that symbol to
-    /// read.
+    /// Every in-scope type a POLICY-DECLARED registration attribute names,
+    /// across the whole compilation, plus the type carrying each such
+    /// attribute: for <c>[RegisterDependency&lt;ILori&gt;] class LoriImpl2 : ILori</c>
+    /// with a declaration for <c>RegisterDependencyAttribute&lt;T&gt;</c> reading
+    /// <c>typeArgument:0</c>, that is both <c>ILori</c> (the service type) and
+    /// <c>LoriImpl2</c> (the registered implementation). Gathered BEFORE the
+    /// type walk because classification is per-symbol and the attribute sits on
+    /// the implementation, so when ClassifySymbol reaches the interface there
+    /// is nothing on that symbol to read.
     /// </summary>
     /// <remarks>
+    /// Only attributes matching <see cref="AttributePolicy.Registrations"/>
+    /// count. An attribute naming a type through typeof() or a type argument is
+    /// structurally identical whether it registers that type or merely refers
+    /// to it -- <c>[DbContext(typeof(CatalogContext))]</c> on an EF migration is
+    /// the measured case -- so the meaning is per-codebase and lives in the
+    /// policy. The Registers EDGE (RegisteredTypes) stays loose on purpose: it
+    /// records that the attribute names the type, which is true either way.
+    /// <para>
+    /// A declaration matches on the attribute class's ORIGINAL DEFINITION
+    /// display string (<c>Ns.RegisterDependencyAttribute&lt;TInterface&gt;</c>),
+    /// so one entry covers every closing of a generic attribute. Several
+    /// declarations may match one attribute and each contributes -- a factory
+    /// attribute registers both of its type arguments that way. A selector the
+    /// attribute cannot satisfy (index out of range, named argument absent,
+    /// value not a type) is a policy/code mismatch and is skipped, not thrown.
+    /// </para>
+    /// <para>
     /// Walks symbols, not syntax: no syntax tree or semantic model is touched,
     /// which keeps it cheap and independent of the tree walk it runs ahead of.
-    /// Reuses RegisteredTypes so the set agrees exactly with the Registers edges
-    /// the attribute extraction emits.
+    /// </para>
     /// </remarks>
     internal static IReadOnlySet<string> RegisteredServiceTypes(
-        Compilation compilation, IReadOnlySet<string> inScope)
+        Compilation compilation, IReadOnlySet<string> inScope, AttributePolicy policy)
     {
         var result = new HashSet<string>();
+        if (policy.Registrations.Count == 0) return result;
+
+        var declarationsByAttribute = policy.Registrations
+            .GroupBy(d => d.Attribute, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
+
         Visit(compilation.GlobalNamespace);
         return result;
 
@@ -738,14 +761,67 @@ internal static class SymbolClassifier
             {
                 if (attr.AttributeClass is not { } attributeClass || attributeClass.TypeKind == TypeKind.Error)
                     continue;
-                if (RegisteredTypes(attr, attributeClass, inScope) is not { } registered) continue;
+                if (!declarationsByAttribute.TryGetValue(
+                        attributeClass.OriginalDefinition.ToDisplayString(), out var declarations))
+                    continue;
 
-                result.UnionWith(registered);
-                result.Add(type.ToDisplayString());
+                foreach (var declaration in declarations)
+                {
+                    if (ResolveServiceType(attr, attributeClass, declaration.ServiceTypeFrom) is not { } serviceType)
+                        continue;
+
+                    result.UnionWith(InScopeNamedTypes(serviceType, inScope));
+                    result.Add(type.ToDisplayString());
+                }
             }
 
             foreach (var nested in type.GetTypeMembers()) VisitType(nested);
         }
+    }
+
+    /// <summary>
+    /// The type a registration declaration's <c>serviceTypeFrom</c> selector
+    /// points at on one attribute application: <c>typeArgument:N</c> reads the
+    /// attribute class's Nth type argument, <c>argument:N</c> the Nth
+    /// constructor argument, <c>named:Name</c> the named argument called Name.
+    /// Reads the ITypeSymbol the compiler resolved, never the rendered
+    /// "typeof(X)" string. Null when the selector does not fit the attribute.
+    /// </summary>
+    private static ITypeSymbol? ResolveServiceType(
+        AttributeData data, INamedTypeSymbol attributeClass, string serviceTypeFrom)
+    {
+        var separator = serviceTypeFrom.IndexOf(':');
+        if (separator <= 0 || separator == serviceTypeFrom.Length - 1) return null;
+
+        var kind = serviceTypeFrom[..separator];
+        var selector = serviceTypeFrom[(separator + 1)..];
+
+        switch (kind)
+        {
+            case "typeArgument":
+                return int.TryParse(selector, out var typeIndex)
+                    && typeIndex >= 0 && typeIndex < attributeClass.TypeArguments.Length
+                    ? attributeClass.TypeArguments[typeIndex]
+                    : null;
+
+            case "argument":
+                return int.TryParse(selector, out var argIndex)
+                    && argIndex >= 0 && argIndex < data.ConstructorArguments.Length
+                    ? TypeOf(data.ConstructorArguments[argIndex])
+                    : null;
+
+            case "named":
+                foreach (var (name, constant) in data.NamedArguments)
+                    if (string.Equals(name, selector, StringComparison.Ordinal))
+                        return TypeOf(constant);
+                return null;
+
+            default:
+                return null;
+        }
+
+        static ITypeSymbol? TypeOf(TypedConstant constant) =>
+            constant.Kind == TypedConstantKind.Type && constant.Value is ITypeSymbol type ? type : null;
     }
 
     /// <summary>

@@ -10,7 +10,8 @@ using SymbolInfo = RazorGraph.Extractor.Roslyn.SymbolInfo;
 
 /// <summary>
 /// What actually promotes a type to ServiceInterface or ServiceImplementation:
-/// an attribute registration naming it, OR a name ending in "Service".
+/// a POLICY-DECLARED attribute registration naming it, OR a name ending in
+/// "Service".
 /// </summary>
 /// <remarks>
 /// The catalog records these kinds as the ones DI registration promotes. Until
@@ -18,7 +19,12 @@ using SymbolInfo = RazorGraph.Extractor.Roslyn.SymbolInfo;
 /// measured on ImageSelectorV2 that left 23 registered interfaces and 13
 /// registered implementations as plain Class. Classification now reads the
 /// registrations gathered ahead of the walk (SymbolClassifier
-/// .RegisteredServiceTypes) as well as the name.
+/// .RegisteredServiceTypes) as well as the name -- and a registration is only
+/// what AttributePolicy.Registrations says it is. The first cut counted ANY
+/// attribute naming a type, which on eShopOnWeb promoted six EF migrations
+/// and two DbContexts through [DbContext(typeof(...))]; the shape is the same,
+/// the meaning is per-codebase, so the fixture below declares its own
+/// attribute in a policy file and loads it through the real LoadFile path.
 /// <para>
 /// These fixtures are a PAIR chosen so the two rules disagree in opposite
 /// directions: one type is registered and unconventionally named, the other is
@@ -72,6 +78,32 @@ public class ServiceClassificationTests
         }
         """;
 
+    /// <summary>
+    /// The fixture's registration vocabulary, declared as data the way a real
+    /// codebase's override file would and loaded through the same LoadFile
+    /// path. The attribute name is the ORIGINAL DEFINITION display string of
+    /// the open generic, which is what the collector matches on.
+    /// </summary>
+    private static readonly AttributePolicy Policy = LoadFixturePolicy();
+
+    private static AttributePolicy LoadFixturePolicy()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"attribute-policy-service-classification-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, """
+            {
+              "registrations": {
+                "declarations": [
+                  {
+                    "attribute": "Fixture.RegisterDependencyAttribute<T>",
+                    "serviceTypeFrom": "typeArgument:0"
+                  }
+                ]
+              }
+            }
+            """);
+        return AttributePolicy.LoadFile(path);
+    }
+
     private static SymbolInfo Classify(string typeName)
     {
         var tree = CSharpSyntaxTree.ParseText(
@@ -91,10 +123,10 @@ public class ServiceClassificationTests
         // The real collector, not a hand-built set: a set written here would
         // prove nothing about what the pipeline actually gathers.
         var inScope = new HashSet<string> { "Fx" };
-        var registeredServices = SymbolClassifier.RegisteredServiceTypes(compilation, inScope);
+        var registeredServices = SymbolClassifier.RegisteredServiceTypes(compilation, inScope, Policy);
 
         return SymbolClassifier.ClassifySymbol(
-            symbol, "Fx", compilation, inScope, registeredServices, AttributePolicy.Default)
+            symbol, "Fx", compilation, inScope, registeredServices, Policy)
             ?? throw new InvalidOperationException($"ClassifySymbol returned null for {typeName}");
     }
 
@@ -131,8 +163,10 @@ public class ServiceClassificationTests
     /// two are unchanged, and are the executable statement that the name
     /// fallback survived: WidgetService is registered nowhere (asserted above),
     /// so only the name can be carrying it. Mutating RegisteredServiceTypes to
-    /// return an empty set fails the first two rows and leaves these two green,
-    /// which is the proof that the new rule and not the old one carries them.
+    /// return an empty set -- or classifying with AttributePolicy.Default,
+    /// which declares no registrations -- fails the first two rows and leaves
+    /// these two green, which is the proof that the new rule and not the old
+    /// one carries them.
     /// </remarks>
     [Theory]
     [InlineData("LoriImpl2", NodeType.ServiceImplementation, "registered by attribute, promoted")]

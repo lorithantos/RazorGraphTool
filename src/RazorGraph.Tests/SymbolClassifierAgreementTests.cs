@@ -145,7 +145,7 @@ public class SymbolClassifierAgreementTests
             ?? throw new InvalidOperationException($"Fixture type not found: {typeName}");
 
         var inScope = new HashSet<string> { "Fx" };
-        var registeredServices = SymbolClassifier.RegisteredServiceTypes(compilation, inScope);
+        var registeredServices = SymbolClassifier.RegisteredServiceTypes(compilation, inScope, AttributePolicy.Default);
 
         return SymbolClassifier.ClassifySymbol(
             symbol, "Fx", compilation, inScope, registeredServices, AttributePolicy.Default)
