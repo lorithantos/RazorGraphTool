@@ -50,7 +50,18 @@ internal static class SymbolClassifier
         // reach for while editing a branch is a type that routes down it. With
         // one initialiser a new field cannot be added to a subset -- there is no
         // subset to add it to. SymbolClassifierAgreementTests holds the line if
-        // this ever splits again.
+        // this ever splits again, and found three more gaps of the same shape on
+        // its first run: Properties absent from two branches, Methods from one,
+        // InjectedServices from two.
+        //
+        // That last was the expensive one, and not for the reason first given.
+        // AddInjectionEdges reads InjectedServices and nothing else, so a type on
+        // the service or view-model branch emitted no injection edge at all.
+        // Measured across the rotation on 2026-09-15, restoring it added 61 to
+        // RetirementCore's InjectedInto count and nothing to GameHub's, which has
+        // no type on either branch -- and all 61 came from view models. Its one
+        // service node contributed none. The service branch was the guess; the
+        // view-model branch was the finding.
         SymbolInfo Node(string idPrefix, NodeType type, List<MethodInfo>? methods = null) =>
             new()
             {

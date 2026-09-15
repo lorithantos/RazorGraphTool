@@ -22,6 +22,14 @@ using SymbolInfo = RazorGraph.Extractor.Roslyn.SymbolInfo;
 /// the divergence sits in the branches you did not look at. The only test that
 /// can see it is one that classifies all five at once and compares them to each
 /// other rather than to an expectation written per branch.
+/// <para>
+/// These fixtures are the only coverage four of the five branches can have here.
+/// Every type in this solution's own source reaches the fallback branch: its
+/// graph carries 197 Class nodes and not one PageModel, controller, service or
+/// view model, so none of the four can be exercised by graphing this repository
+/// against itself -- a fixture deleted from below is coverage nothing else in
+/// the suite replaces.
+/// </para>
 /// </remarks>
 public class SymbolClassifierAgreementTests
 {
