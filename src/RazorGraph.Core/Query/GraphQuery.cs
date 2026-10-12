@@ -266,25 +266,12 @@ public sealed class GraphQuery
     public LiteralPage FindLiterals(
         string? valueContains = null, string? project = null, int limit = 50, int offset = 0)
     {
-        var matches = new List<LiteralMention>();
-
-        foreach (var edge in _graph.Edges.Where(e => e.Type == EdgeType.Mentions))
-        {
-            if (_graph.GetNode(edge.ToId) is not { } literal) continue;
-            if (_graph.GetNode(edge.FromId) is not { } from) continue;
-
-            var value = literal.GetProperty<string>("value") ?? literal.Name;
-            if (valueContains != null
-                && !value.Contains(valueContains, StringComparison.OrdinalIgnoreCase)) continue;
-
-            if (project != null && !string.Equals(
-                    from.GetProperty<string>("project"), project, StringComparison.OrdinalIgnoreCase)) continue;
-
-            matches.Add(new LiteralMention(
-                value, from.Id, from.Name, from.FilePath,
-                edge.GetProperty<int>("line"),
-                edge.GetProperty<string>("provenance") ?? "literal"));
-        }
+        var matches = LiteralSites(value =>
+                valueContains == null || value.Contains(valueContains, StringComparison.OrdinalIgnoreCase))
+            .Where(s => project == null || string.Equals(
+                s.From.GetProperty<string>("project"), project, StringComparison.OrdinalIgnoreCase))
+            .Select(s => s.Mention)
+            .ToList();
 
         // A TOTAL order, because the result is paged by offset and an offset into a
         // partially ordered result silently repeats and skips rows — the same lesson
@@ -308,6 +295,30 @@ public sealed class GraphQuery
         var end = from0 + page.Count;
 
         return new LiteralPage(page, ordered.Count, end < ordered.Count ? end : null);
+    }
+
+    /// <summary>
+    /// Every literal occurrence whose value passes <paramref name="valueMatches"/>,
+    /// joined to the member that produces it, unordered. The one place a Mentions
+    /// edge becomes a site, so <see cref="FindLiterals"/> and the text search's graph
+    /// tier cannot disagree about where a string lives.
+    /// </summary>
+    internal IEnumerable<(GraphNode Literal, GraphNode From, LiteralMention Mention)> LiteralSites(
+        Func<string, bool> valueMatches)
+    {
+        foreach (var edge in _graph.Edges.Where(e => e.Type == EdgeType.Mentions))
+        {
+            if (_graph.GetNode(edge.ToId) is not { } literal) continue;
+            if (_graph.GetNode(edge.FromId) is not { } from) continue;
+
+            var value = literal.GetProperty<string>("value") ?? literal.Name;
+            if (!valueMatches(value)) continue;
+
+            yield return (literal, from, new LiteralMention(
+                value, from.Id, from.Name, from.FilePath,
+                edge.GetProperty<int>("line"),
+                edge.GetProperty<string>("provenance") ?? "literal"));
+        }
     }
 
     /// <summary>

@@ -136,7 +136,7 @@ public static class GraphOutput
     /// is a FILE pointing elsewhere, and treating that as "no repository" would silence the
     /// advice exactly where a stray artifact is least likely to be noticed.
     /// </remarks>
-    private static string? FindRepositoryRoot(string startDirectory)
+    internal static string? FindRepositoryRoot(string startDirectory)
     {
         var current = new DirectoryInfo(startDirectory);
 
