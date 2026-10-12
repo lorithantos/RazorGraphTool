@@ -322,6 +322,27 @@ public class GraphSerializerTests
     }
 
     [Fact]
+    public void RoundTrip_PreservesSource()
+    {
+        var graph = BuildGraph();
+        graph.Source = @"C:\repos\App\App.slnx";
+
+        var restored = GraphSerializer.FromJson(GraphSerializer.ToJson(graph));
+
+        Assert.Equal(graph.Source, restored.Source);
+    }
+
+    /// <summary>
+    /// A file written before the field existed has no origin to give, and must not
+    /// invent one: null is what tells the loader to name the file instead.
+    /// </summary>
+    [Fact]
+    public void Read_GraphWithoutSource_LeavesItNull()
+    {
+        Assert.Null(GraphSerializer.FromJson(GraphJson("3.0")).Source);
+    }
+
+    [Fact]
     public void Read_CurrentVersion_HasNoCaveat()
     {
         var result = GraphSerializer.Read(GraphSerializer.ToJson(BuildGraph()));

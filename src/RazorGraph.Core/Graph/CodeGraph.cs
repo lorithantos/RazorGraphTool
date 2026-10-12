@@ -42,6 +42,21 @@ public sealed class CodeGraph
     public DateTimeOffset? ExtractorBuiltAt { get; set; }
 
     /// <summary>
+    /// What this graph was extracted from -- the .sln, .slnx or .csproj, or the
+    /// Lua directory -- as a full path, or null when that is not known.
+    /// </summary>
+    /// <remarks>
+    /// Carried on the graph, as <see cref="BuiltAt"/> is, so that it survives a
+    /// save and a load. A host that carries graphs across a restart saves them to
+    /// a scratch file and loads them back; if the origin were only the path a
+    /// graph arrived from, every carried graph would claim that scratch file, and
+    /// a consumer asking "which graph covers this repository" would find none.
+    /// Null on a graph written before the field existed; whoever loads such a
+    /// graph decides what to call its origin, since the file holds no answer.
+    /// </remarks>
+    public string? Source { get; set; }
+
+    /// <summary>
     /// Format versions newer than this build's that data in this graph was read
     /// from. Empty for a graph built from source, or loaded from a file at or
     /// below this build's version.

@@ -145,6 +145,7 @@ public sealed class GraphBuilder : IAsyncDisposable
             ?? throw new ArgumentException("Invalid project path", nameof(projectPath));
 
         await _roslyn.LoadProjectAsync(projectPath, ct);
+        _graph.Source = Path.GetFullPath(projectPath);
         return BuildGraph(projectDir);
     }
 
@@ -157,6 +158,9 @@ public sealed class GraphBuilder : IAsyncDisposable
         var projectDir = Path.GetDirectoryName(Path.GetFullPath(projectFile))
             ?? throw new InvalidOperationException($"Invalid project file path: {projectFile}");
 
+        // The solution, not the project inside it: that is the path a caller
+        // rebuilds from, and the one build_graph has always reported.
+        _graph.Source = Path.GetFullPath(solutionPath);
         return BuildGraph(projectDir);
     }
 
@@ -172,6 +176,7 @@ public sealed class GraphBuilder : IAsyncDisposable
     public async Task<CodeGraph> BuildFromSolutionAllAsync(string solutionPath, CancellationToken ct = default)
     {
         await _roslyn.LoadAllProjectsAsync(solutionPath, ExcludeTestProjects, ct);
+        _graph.Source = Path.GetFullPath(solutionPath);
         return BuildSolutionGraph();
     }
 

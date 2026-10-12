@@ -36,6 +36,7 @@ public static class GraphSerializer
             // stamp existed writes null and reads back as "cannot tell".
             BuiltAt = graph.BuiltAt,
             ExtractorBuiltAt = graph.ExtractorBuiltAt,
+            Source = graph.Source,
             ForeignData = DescribeForeignData(graph),
             Nodes = graph.Nodes.Select(ToNodeDto).ToList(),
             Edges = graph.Edges.Select(e => new EdgeDto
@@ -127,7 +128,7 @@ public static class GraphSerializer
 
     private static CodeGraph ToGraph(GraphDto dto, GraphFormatAssessment assessment)
     {
-        var graph = new CodeGraph { BuiltAt = dto.BuiltAt, ExtractorBuiltAt = dto.ExtractorBuiltAt };
+        var graph = new CodeGraph { BuiltAt = dto.BuiltAt, ExtractorBuiltAt = dto.ExtractorBuiltAt, Source = dto.Source };
 
         // Provenance the elements cannot carry. A newer format can add a property
         // to a kind we do know, which leaves nothing locally strange to spot at
@@ -296,6 +297,10 @@ public static class GraphSerializer
         /// Null when the extractor could not tell, or on graphs written before
         /// the stamp existed; either reads back as "cannot tell".</summary>
         public DateTimeOffset? ExtractorBuiltAt { get; set; }
+
+        /// <summary>What the graph was extracted from. Null on graphs written
+        /// before the field existed, which leaves the loader to name an origin.</summary>
+        public string? Source { get; set; }
 
         // Second for the same reason, and omitted entirely when the graph holds
         // nothing foreign -- its presence is the signal.

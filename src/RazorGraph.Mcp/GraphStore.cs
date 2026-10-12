@@ -24,20 +24,33 @@ internal sealed class GraphStore
     private readonly object _currentGate = new();
     private string? _currentId;
 
-    internal sealed record GraphEntry(string Id, CodeGraph Graph, string Source, DateTimeOffset LoadedAt);
+    /// <param name="Source">What the graph was extracted from, which survives a save and a load.</param>
+    /// <param name="LoadedFrom">The file load_graph read it from; null for a graph built here.</param>
+    internal sealed record GraphEntry(string Id, CodeGraph Graph, string Source, DateTimeOffset LoadedAt, string? LoadedFrom = null);
 
     /// <summary>
     /// Register a graph and make it the default for calls that omit graphId.
     /// A requested id replaces any graph already under it — rebuilding after an
     /// edit should update in place rather than accumulate near-duplicates.
     /// </summary>
-    public GraphEntry Add(CodeGraph graph, string source, string? requestedId)
+    /// <remarks>
+    /// A graph that arrives without a <see cref="CodeGraph.Source"/> takes the one
+    /// it was added under, so the entry and the graph agree and a later
+    /// save_graph writes what list_graphs reports. That is what lets a graph
+    /// loaded from a file older than the field carry that file onward as its
+    /// origin, rather than forgetting it on the next save.
+    /// </remarks>
+    public GraphEntry Add(CodeGraph graph, string source, string? requestedId, string? loadedFrom = null)
     {
+        // Named after the file it came in through when there is one: load_graph
+        // has always defaulted the id to the file name, and a carried graph whose
+        // source is now its solution should not change id on that account.
         var id = string.IsNullOrWhiteSpace(requestedId)
-            ? NextAvailableId(DeriveId(source))
+            ? NextAvailableId(DeriveId(loadedFrom ?? source))
             : requestedId.Trim();
 
-        var entry = new GraphEntry(id, graph, source, DateTimeOffset.UtcNow);
+        graph.Source ??= source;
+        var entry = new GraphEntry(id, graph, source, DateTimeOffset.UtcNow, loadedFrom);
         _graphs[id] = entry;
 
         lock (_currentGate) _currentId = id;

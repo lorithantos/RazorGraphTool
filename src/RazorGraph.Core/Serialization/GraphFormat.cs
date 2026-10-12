@@ -88,7 +88,11 @@ internal static class GraphFormat
     /// key, and that is deliberate. Graphs are rebuilt in seconds rather than
     /// archived, no intermediate consumer exists, and an older major already
     /// reports a caveat on load -- so a 2.x graph simply has no
-    /// constructorDependencies, and Assess says why.
+    /// constructorDependencies, and Assess says why. 3.1 added the document-level
+    /// <c>source</c>, what the graph was extracted from, so a graph saved and
+    /// loaded back still names its solution rather than the file it passed
+    /// through. Additive, as 1.2's builtAt was: a 3.0 reader ignores the key, and
+    /// a 3.0 graph read here has no source and is named after its file.
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -129,7 +133,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(3, 0);
+    public static readonly GraphFormatVersion Current = new(3, 1);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

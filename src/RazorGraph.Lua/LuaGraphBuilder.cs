@@ -81,6 +81,7 @@ public sealed class LuaGraphBuilder
     public (CodeGraph Graph, LuaBuildReport Report) Build(string rootPath, ILuaHost? host = null, string? evidence = null)
     {
         var root = Path.GetFullPath(rootPath);
+        _graph.Source = root;
         if (host is null)
         {
             var detected = HostDetection.Detect(root);

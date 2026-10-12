@@ -89,6 +89,18 @@ public class GraphBuilderIntegrationTests : IAsyncLifetime
             $"Extractor stamp is in the future: {_graph.ExtractorBuiltAt}");
     }
 
+    /// <summary>
+    /// The builder names what it read, so a graph the CLI writes carries its
+    /// source into the file the same way one built inside the server does.
+    /// </summary>
+    [Fact]
+    public void Builds_Source_AsTheProjectItWasBuiltFrom()
+    {
+        var expected = Path.Combine(RepoRoot(), "tests", "fixtures", "SampleApp", "SampleApp.csproj");
+
+        Assert.Equal(expected, _graph!.Source);
+    }
+
     [Fact]
     public void Builds_RazorPageNode_WithRouteTemplate()
     {

@@ -154,7 +154,7 @@ internal sealed class GraphStoreTools(GraphStore store)
     }
 
     [McpServerTool(Name = "load_graph")]
-    [Description("Load a previously built graph from a JSON file (produced by save_graph or the RazorGraph CLI). Fast; adds it alongside any graphs already loaded.")]
+    [Description("Load a previously built graph from a JSON file (produced by save_graph or the RazorGraph CLI). Fast; adds it alongside any graphs already loaded. The graph keeps the source it was extracted from; the file is reported as loadedFrom.")]
     public async Task<string> LoadGraph(
         [Description("Path to a graph JSON file")] string path,
         [Description("Id to file the result under. Defaults to the file name.")] string? graphId = null,
@@ -164,7 +164,11 @@ internal sealed class GraphStoreTools(GraphStore store)
         if (!File.Exists(full)) throw new McpException($"File not found: {full}");
 
         var read = GraphSerializer.Read(await File.ReadAllTextAsync(full, ct));
-        return Summarize(store.Add(read.Graph, full, graphId), format: read.Format);
+
+        // The source the file records, so a graph carried through a save keeps
+        // naming its solution. A file written before that field has nothing to
+        // offer, and the file itself is the only origin there is to report.
+        return Summarize(store.Add(read.Graph, read.Graph.Source ?? full, graphId, loadedFrom: full), format: read.Format);
     }
 
     [McpServerTool(Name = "save_graph")]
@@ -192,13 +196,17 @@ internal sealed class GraphStoreTools(GraphStore store)
     }
 
     [McpServerTool(Name = "list_graphs")]
-    [Description("Every graph currently held by the server: id, source, when it was BUILT and when it was loaded, and its size. Cheap. The 'current' one is what tools use when graphId is omitted. builtAt is the one that matters for trusting an answer — loadedAt only says when it entered this server, so a graph loaded from a saved file a minute ago can have been built days before. builtAt is null on a graph saved before the stamp existed, which means \"cannot tell\", never \"fresh\". extractorBuiltAt is the other half: it says which extractor produced the graph rather than when extraction ran, so a graph rebuilt seconds ago can still carry answers from a binary older than the working tree. Null there means \"cannot tell\" too, never \"current\".")]
+    [Description("Every graph currently held by the server: id, source, when it was BUILT and when it was loaded, and its size. Cheap. The 'current' one is what tools use when graphId is omitted. builtAt is the one that matters for trusting an answer — loadedAt only says when it entered this server, so a graph loaded from a saved file a minute ago can have been built days before. builtAt is null on a graph saved before the stamp existed, which means \"cannot tell\", never \"fresh\". extractorBuiltAt is the other half: it says which extractor produced the graph rather than when extraction ran, so a graph rebuilt seconds ago can still carry answers from a binary older than the working tree. Null there means \"cannot tell\" too, never \"current\". source is what the graph was extracted from (its .sln, .slnx, .csproj or Lua directory) and survives save_graph and load_graph; loadedFrom is the file load_graph read it from, absent for a graph built here. A graph saved before source was recorded reports that file as both.")]
     public string ListGraphs()
     {
         var entries = store.List().Select(e => new
         {
             graphId = e.Id,
             source = e.Source,
+            // Separate from source on purpose: source is what the graph was
+            // extracted from, which is what a caller matches against a repository;
+            // this is only the file it passed through. Absent for a built graph.
+            loadedFrom = e.LoadedFrom,
             // Both, because they answer different questions and the obvious one
             // answers the wrong question: load_graph of a week-old saved graph
             // reports loadedAt as seconds ago, which reads as fresh.
@@ -250,6 +258,7 @@ internal sealed class GraphStoreTools(GraphStore store)
         {
             graphId = entry.Id,
             source = entry.Source,
+            loadedFrom = entry.LoadedFrom,
             // Both stamps, on every response that returns a summary: a build
             // response is the first thing a caller sees, and it must say which
             // extractor answered, not only that extraction just ran.

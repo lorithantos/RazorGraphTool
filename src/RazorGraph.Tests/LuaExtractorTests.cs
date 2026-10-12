@@ -237,6 +237,18 @@ public class LuaExtractorTests
     }
 
     [Fact]
+    public void Build_NamesTheDirectoryItReadAsSource()
+    {
+        // So a saved Lua graph, like a C# one, still says where it came from.
+        using var tree = new TempTree();
+        tree.Write("a.lua", "return {}");
+
+        var (graph, _) = new LuaGraphBuilder().Build(tree.Root);
+
+        Assert.Equal(Path.GetFullPath(tree.Root), graph.Source);
+    }
+
+    [Fact]
     public void Build_EmitsCoreKindsForFunctionsAndForeignForModules()
     {
         // The hybrid vocabulary: core where honest, foreign only where new.
