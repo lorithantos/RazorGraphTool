@@ -1,9 +1,11 @@
 namespace RazorGraph.Tests;
 
 using System.Diagnostics;
+using System.Text.Json;
 using RazorGraph.Core.Graph;
 using RazorGraph.Core.Query;
 using RazorGraph.Extractor;
+using RazorGraph.Mcp;
 using Xunit;
 
 /// <summary>
@@ -25,6 +27,8 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     private static IReadOnlyList<string>? _noTestsSkipped;
     private static CodeGraph? _noLiteralsGraph;
     private static CodeGraph? _x64Graph;
+    private static CodeGraph? _noTextGraph;
+    private static string? _noTextSummary;
 
     private static string RepoRoot()
     {
@@ -77,6 +81,13 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
             {
                 _noLiteralsGraph = await builder.BuildFromSolutionAllAsync(solutionPath);
             }
+
+            // And without the text-file index, through the MCP tool: the claim covers
+            // the build summary as well as the graph, and only the tool writes that.
+            var noTextStore = new GraphStore();
+            _noTextSummary = await new GraphStoreTools(noTextStore)
+                .BuildSolution(solutionPath, graphId: "no-text", excludeText: true);
+            _noTextGraph = noTextStore.Require("no-text").Graph;
 
             // And for a requested Platform. A real build rather than a stamp check,
             // because the claim is that the value reaches MSBuild, and only the
@@ -531,6 +542,34 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
             _solutionGraph!.Edges.Count(e => e.Type == EdgeType.Quotes),
             _noLiteralsGraph.Edges.Count(e => e.Type == EdgeType.Quotes));
         Assert.Contains(_noLiteralsGraph.Edges, e => e.Type == EdgeType.Quotes);
+    }
+
+    [Fact]
+    public void TextFiles_AreTheSolutionsNonCSharpText_RootedAtTheSolutionDirectory()
+    {
+        // The fixture's non-C# files are the .sln, three .csproj, two .xaml, one
+        // .cshtml and wwwroot/js/site.js. XAML and Razor are modelled as files already,
+        // and site.js is a JavaScriptFile node, so none of those may come back as text.
+        Assert.Equal(
+            [
+                "text:MultiProject.sln",
+                "text:SampleLib/SampleLib.csproj",
+                "text:SampleWeb.Tests/SampleWeb.Tests.csproj",
+                "text:SampleWeb/SampleWeb.csproj"
+            ],
+            _solutionGraph!.NodesOfType(NodeType.TextFile).Select(n => n.Id).OrderBy(id => id, StringComparer.Ordinal));
+        Assert.Contains(_solutionGraph.NodesOfType(NodeType.JavaScriptFile), n => n.Name == "site.js");
+    }
+
+    [Fact]
+    public void ExcludeText_LeavesNoTextFiles_AndTheBuildSummarySaysSo()
+    {
+        Assert.Empty(_noTextGraph!.NodesOfType(NodeType.TextFile));
+        Assert.NotEmpty(_solutionGraph!.NodesOfType(NodeType.TextFile));
+
+        using var summary = JsonDocument.Parse(_noTextSummary!);
+        Assert.True(summary.RootElement.GetProperty("textExcluded").GetBoolean());
+        Assert.False(summary.RootElement.TryGetProperty("skippedTextFiles", out _));
     }
 
     [Fact]

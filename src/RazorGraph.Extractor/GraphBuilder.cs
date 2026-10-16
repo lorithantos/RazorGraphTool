@@ -90,6 +90,7 @@ public sealed class GraphBuilder : IAsyncDisposable
     private readonly XamlLayerEmitter _xamlLayer;
     private readonly ProjectEmitter _projects;
     private readonly CoverageEmitter _coverage;
+    private readonly TextFileEmitter _textFiles;
 
     public GraphBuilder()
     {
@@ -101,6 +102,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         _xamlLayer = new XamlLayerEmitter(_graph);
         _projects = new ProjectEmitter(_graph);
         _coverage = new CoverageEmitter(_graph);
+        _textFiles = new TextFileEmitter(_graph);
     }
 
     /// <summary>
@@ -151,6 +153,20 @@ public sealed class GraphBuilder : IAsyncDisposable
     /// the same scan.
     /// </summary>
     public bool ExcludeLiterals { get; set; }
+
+    /// <summary>
+    /// Skip the TextFile population -- no node for any non-C# text file, so grep's
+    /// graph section answers for C# names and literals alone and every other line comes
+    /// from the disk. Off by default for the reason ExcludeLiterals is.
+    /// </summary>
+    public bool ExcludeText { get; set; }
+
+    /// <summary>
+    /// What the TextFile population left out -- binaries, files over 2 MB, unreadable
+    /// files, vendor and minified text -- one line per reason. Empty when nothing was
+    /// skipped, and always empty under ExcludeText, which skips them all and says so.
+    /// </summary>
+    public IReadOnlyList<string> TextFileSkips => _textFiles.SkipSummaries;
 
     /// <summary>
     /// The MSBuild Platform to build for, passed as a global property; null, the
@@ -241,7 +257,28 @@ public sealed class GraphBuilder : IAsyncDisposable
             _roslyn.ExtractViewCalls().ToList(),
             _roslyn.ExtractShapeNames().ToList(),
             _roslyn.ExtractActionMethods().ToList());
+        // A single-project graph, even one loaded from a solution, is rooted at the
+        // project: the rest of the solution's text is not this graph's to hold.
+        AddTextFiles(projectDir);
         return _graph;
+    }
+
+    /// <summary>
+    /// The TextFile population, last: it leaves out every file the graph already holds
+    /// as a JavaScriptFile or CssFile, so the client tier must exist first.
+    /// </summary>
+    private void AddTextFiles(string sourceRoot)
+    {
+        if (ExcludeText) return;
+
+        var alreadyFiles = new HashSet<string>(_clientAssets.SkippedAssetPaths, StringComparer.OrdinalIgnoreCase);
+        foreach (var node in _graph.Nodes)
+        {
+            if ((node.Type is NodeType.JavaScriptFile or NodeType.CssFile) && node.FilePath is { } path)
+                alreadyFiles.Add(Path.GetFullPath(path));
+        }
+
+        _textFiles.AddTextFiles(sourceRoot, alreadyFiles);
     }
 
     private CodeGraph BuildSolutionGraph()
@@ -277,6 +314,7 @@ public sealed class GraphBuilder : IAsyncDisposable
             _roslyn.ExtractActionMethods().ToList());
 
         _coverage.AddCoverageEdges();
+        AddTextFiles(Path.GetDirectoryName(_graph.Source!)!);
         return _graph;
     }
 

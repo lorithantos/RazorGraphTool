@@ -111,6 +111,12 @@ internal static class GraphFormat
     /// Additive, as 3.1's source was: a 3.3 reader ignores the keys, and a 3.3
     /// graph read here has no stamp, which reads as "cannot tell" -- never as
     /// "projectDefault".
+    /// 3.5 added the TextFile node kind: one node per non-C# text file in the
+    /// source tree, carrying its <c>lines</c>, <c>extension</c> and <c>sizeBytes</c>,
+    /// so grep's graph section answers for a .json or a .md and not only for C#.
+    /// Additive, as 1.6's XamlView was: a new KIND with no edges, which a 3.4 reader
+    /// keeps verbatim as foreign data, and a 3.4 graph read here has no text files,
+    /// which reads as "not indexed" -- grep's disk section still finds every line.
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -151,7 +157,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(3, 4);
+    public static readonly GraphFormatVersion Current = new(3, 5);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

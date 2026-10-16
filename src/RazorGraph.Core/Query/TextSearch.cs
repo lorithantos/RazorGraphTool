@@ -1,22 +1,24 @@
 namespace RazorGraph.Core.Query;
 
-using System.Diagnostics;
 using System.IO.Enumeration;
 using System.Text;
 using System.Text.RegularExpressions;
 using RazorGraph.Core.Graph;
 
 /// <summary>
-/// A regex search scoped to one folder, in two parts: the graph's names and literal
-/// values when a graph covers the folder, and the files on disk always, less the lines
-/// the graph already reported.
+/// A regex search scoped to one folder, in two parts: the graph's names, literal values
+/// and text-file lines when a graph covers the folder, and the files on disk always,
+/// less the lines the graph already reported.
 /// </summary>
 /// <remarks>
 /// Public because the MCP server is a different assembly; the server owns WHICH graph
 /// answers, since only it holds the loaded set, and everything that decides what a
-/// match is lives here. The graph sees declared names and literal values and nothing
-/// else -- no comments, no code text -- so a graph answer is never the whole answer,
-/// which is why the disk always runs as well.
+/// match is lives here. In C# the graph sees declared names and literal values and
+/// nothing else -- no comments, no code text -- so a graph answer is never the whole
+/// answer, which is why the disk always runs as well. A non-C# text file is different:
+/// its TextFile node carries every line as the build read it, so the graph answers for
+/// it whole -- unless the file has been written since, when those lines may no longer
+/// be true and the disk answers for it instead.
 /// </remarks>
 public static class TextSearch
 {
@@ -24,22 +26,10 @@ public static class TextSearch
     public const int TextCap = 200;
 
     /// <summary>Files larger than this are skipped rather than scanned; generated dumps are not what a text search is for.</summary>
-    public const long MaxFileBytes = 2 * 1024 * 1024;
-
-    // The probe git itself uses to call a file binary: a NUL in the first 8000-odd bytes.
-    private const int BinaryProbeBytes = 8 * 1024;
+    public const long MaxFileBytes = SourceFiles.MaxFileBytes;
 
     // A pathological pattern on one long line must cost a second, not the call.
     private static readonly TimeSpan MatchTimeout = TimeSpan.FromSeconds(1);
-
-    // Outside a git repository there is no ignore file to honour, so the same
-    // directory names ClientAssetExtractor treats as vendor or build output are
-    // skipped, plus .git. A copy rather than a reference: Core cannot see the
-    // extractor assembly, and the list is a convention, not a contract.
-    private static readonly HashSet<string> SkippedDirNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".git", "lib", "lib_npm", "node_modules", "bower_components", "vendor", "bin", "obj"
-    };
 
     /// <summary>
     /// The pattern as both tiers run it: culture-invariant, optionally case-blind, with
@@ -83,20 +73,29 @@ public static class TextSearch
         graph.Nodes.Any(n => IsUnder(n.FilePath, folder));
 
     /// <summary>
-    /// One graph-tier hit. <paramref name="MatchedOn"/> is "name", "qualifiedName" or
-    /// "literal". For a literal, the node is the Literal and <paramref name="FromId"/> is
-    /// the member whose code produces it -- the path and line are that member's, because a
-    /// Literal node is one per distinct value and has no file of its own.
+    /// One graph-tier hit. <paramref name="MatchedOn"/> is "name", "qualifiedName",
+    /// "literal" or "text". For a literal, the node is the Literal and
+    /// <paramref name="FromId"/> is the member whose code produces it -- the path and line
+    /// are that member's, because a Literal node is one per distinct value and has no file
+    /// of its own. For text, the node is a TextFile, the line is the matching line's, and
+    /// <paramref name="Text"/> is that line trimmed and capped as a disk hit's is.
     /// </summary>
     public sealed record GraphHit(
-        string NodeId, string NodeType, string Name, string MatchedOn, string Path, int? Line, string? FromId);
-
-    /// <summary>Every graph hit in a total order, and how many names timed out rather than answered.</summary>
-    public sealed record GraphResult(IReadOnlyList<GraphHit> Hits, int RegexTimeouts);
+        string NodeId, string NodeType, string Name, string MatchedOn, string Path, int? Line, string? FromId,
+        string? Text = null);
 
     /// <summary>
-    /// Nodes under the folder whose name or qualified name matches, and literal values
-    /// that match at a site under the folder.
+    /// Every graph hit in a total order, how many names timed out rather than answered,
+    /// and how many TextFile nodes under the folder were left to the disk because their
+    /// file has been written since the build.
+    /// </summary>
+    public sealed record GraphResult(IReadOnlyList<GraphHit> Hits, int RegexTimeouts, int StaleTextFiles = 0);
+
+    /// <summary>
+    /// Nodes under the folder whose name or qualified name matches, literal values that
+    /// match at a site under the folder, and matching lines of the text files the graph
+    /// holds -- except a text file written since the build, which is counted in
+    /// <see cref="GraphResult.StaleTextFiles"/> and left for the disk to answer.
     /// </summary>
     /// <param name="glob">Optional wildcard on the hit's file NAME, the same filter the disk applies.</param>
     public static GraphResult SearchGraph(CodeGraph graph, string folder, Regex regex, string? glob = null)
@@ -110,10 +109,24 @@ public static class TextSearch
         }
 
         var hits = new List<GraphHit>();
+        var freshness = new GraphFreshness(graph);
+        var staleTextFiles = 0;
 
         foreach (var node in graph.Nodes)
         {
             if (!IsUnder(node.FilePath, folder) || !GlobMatches(glob, node.FilePath!)) continue;
+
+            if (node.Type == NodeType.TextFile)
+            {
+                // The same probe behind get_node's fileWrittenSince. Anything but a
+                // definite "not written" falls to the disk: lines read at build time are
+                // only an answer while the file still holds them, and "cannot tell" is
+                // not that.
+                if (freshness.WrittenSinceBuild(node) != false) { staleTextFiles++; continue; }
+
+                if (!SearchTextLines(node, Path.GetRelativePath(folder, node.FilePath!), regex, hits)) timeouts++;
+                continue;
+            }
 
             var matchedOn = Matches(node.Name) ? "name"
                 : Matches(QualifiedName(node)) ? "qualifiedName"
@@ -144,8 +157,41 @@ public static class TextSearch
             .ThenBy(h => h.FromId, StringComparer.Ordinal)
             .ToList();
 
-        return new GraphResult(ordered, timeouts);
+        return new GraphResult(ordered, timeouts, staleTextFiles);
     }
+
+    /// <summary>
+    /// One hit per matching line of a TextFile node, numbered as the disk numbers them.
+    /// A TextFile is matched on its lines alone: its name is the file's name, which a
+    /// line search never reports, and find_nodes is where a file is found by name.
+    /// False when the pattern timed out, in which case the rest of the file is abandoned
+    /// as the disk abandons one: a timeout predicts the next on the same content.
+    /// </summary>
+    private static bool SearchTextLines(GraphNode node, string relativePath, Regex regex, List<GraphHit> hits)
+    {
+        if (node.GetProperty<List<string>>(TextFileLinesProperty) is not { } lines) return true;
+
+        for (var i = 0; i < lines.Count; i++)
+        {
+            try
+            {
+                if (!regex.IsMatch(lines[i])) continue;
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                return false;
+            }
+
+            hits.Add(new GraphHit(
+                node.Id, node.DisplayType, node.Name, "text", relativePath, i + 1, FromId: null,
+                Text: Cap(lines[i].Trim())));
+        }
+
+        return true;
+    }
+
+    /// <summary>The TextFile property holding the file's lines, one string per line, in order.</summary>
+    public const string TextFileLinesProperty = "lines";
 
     // fullName is what a type carries; a member carries its declaring type instead.
     private static string? QualifiedName(GraphNode node) =>
@@ -180,7 +226,7 @@ public static class TextSearch
     public static DiskResult SearchDisk(
         string folder, Regex regex, string? glob, int limit, int offset, IEnumerable<GraphHit>? alreadyFound = null)
     {
-        var (candidates, ignoreSource) = CandidateFiles(folder);
+        var (candidates, ignoreSource) = SourceFiles.List(folder);
 
         // Same case rule as IsUnder, and one separator, so a git path and a graph path agree.
         var found = new HashSet<string>(
@@ -199,7 +245,7 @@ public static class TextSearch
             if (!GlobMatches(glob, relative)) continue;
 
             var full = Path.Combine(folder, relative);
-            if (!IsScannable(full)) { skipped++; continue; }
+            if (SourceFiles.Probe(full) != SourceFiles.Verdict.Text) { skipped++; continue; }
 
             try
             {
@@ -245,116 +291,6 @@ public static class TextSearch
     private static bool GlobMatches(string? glob, string path) =>
         string.IsNullOrEmpty(glob)
         || FileSystemName.MatchesSimpleExpression(glob, Path.GetFileName(path), ignoreCase: true);
-
-    /// <summary>
-    /// A file is scanned when it exists, is no larger than <see cref="MaxFileBytes"/>,
-    /// and has no NUL byte in its first 8 KB.
-    /// </summary>
-    private static bool IsScannable(string path)
-    {
-        try
-        {
-            var info = new FileInfo(path);
-            if (!info.Exists || info.Length > MaxFileBytes) return false;
-
-            using var stream = info.OpenRead();
-            var buffer = new byte[BinaryProbeBytes];
-            var read = stream.Read(buffer, 0, buffer.Length);
-            return Array.IndexOf(buffer, (byte)0, 0, read) < 0;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Relative paths of every file worth reading under the folder, and what decided that.
-    /// Git's own answer when the folder is in a working tree, so .gitignore is honoured
-    /// exactly rather than approximately; a directory walk otherwise.
-    /// </summary>
-    private static (IReadOnlyList<string> Files, string IgnoreSource) CandidateFiles(string folder)
-    {
-        if (GraphOutput.FindRepositoryRoot(folder) is not null)
-        {
-            if (GitListFiles(folder) is { } tracked)
-                return (tracked, "git ls-files --cached --others --exclude-standard");
-
-            return (WalkFiles(folder),
-                "directory walk (git repository, but git ls-files failed): skipped .git, vendor and build-output directories");
-        }
-
-        return (WalkFiles(folder), "directory walk (not a git repository): skipped .git, vendor and build-output directories");
-    }
-
-    /// <summary>
-    /// Tracked plus untracked-but-not-ignored files under the folder, relative to it. Null
-    /// when git could not answer, so the caller walks instead of reporting an empty tree.
-    /// </summary>
-    private static List<string>? GitListFiles(string folder)
-    {
-        try
-        {
-            using var process = Process.Start(new ProcessStartInfo("git")
-            {
-                // Run IN the folder: ls-files then lists only what is beneath it, relative to it.
-                // -z: NUL-separated and unquoted, so no path needs unescaping.
-                ArgumentList = { "ls-files", "--cached", "--others", "--exclude-standard", "-z" },
-                WorkingDirectory = folder,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                StandardOutputEncoding = Encoding.UTF8,
-                UseShellExecute = false,
-            });
-
-            if (process is null) return null;
-
-            // Drain stderr concurrently: a full pipe on either stream blocks git forever.
-            var stderr = process.StandardError.ReadToEndAsync();
-            var output = process.StandardOutput.ReadToEnd();
-            if (!process.WaitForExit(10_000) || process.ExitCode != 0) return null;
-            _ = stderr.Result;
-
-            return output
-                .Split('\0', StringSplitOptions.RemoveEmptyEntries)
-                // An untracked nested repository is listed as "dir/"; it is not a file.
-                .Where(p => !p.EndsWith('/'))
-                .Select(p => p.Replace('/', Path.DirectorySeparatorChar))
-                .ToList();
-        }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
-        {
-            // git is not installed or not on PATH.
-            return null;
-        }
-    }
-
-    private static List<string> WalkFiles(string folder)
-    {
-        var options = new EnumerationOptions
-        {
-            IgnoreInaccessible = true,
-            // Junctions and symlinks can loop; hidden files are still text worth finding.
-            AttributesToSkip = FileAttributes.ReparsePoint,
-        };
-
-        var files = new List<string>();
-        var pending = new Stack<string>();
-        pending.Push(folder);
-
-        while (pending.Count > 0)
-        {
-            var dir = pending.Pop();
-            files.AddRange(Directory.EnumerateFiles(dir, "*", options).Select(f => Path.GetRelativePath(folder, f)));
-
-            foreach (var sub in Directory.EnumerateDirectories(dir, "*", options))
-            {
-                if (!SkippedDirNames.Contains(Path.GetFileName(sub))) pending.Push(sub);
-            }
-        }
-
-        return files;
-    }
 
     private static string Cap(string text) => text.Length <= TextCap ? text : text[..TextCap];
 }

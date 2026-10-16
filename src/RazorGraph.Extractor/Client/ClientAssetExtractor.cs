@@ -1,7 +1,9 @@
 namespace RazorGraph.Extractor.Client;
 
+using System.Collections.Frozen;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using RazorGraph.Core.Query;
 
 /// <summary>
 /// Extracts client-side assets (JavaScript and CSS under wwwroot) and the
@@ -83,21 +85,14 @@ internal sealed class ClientAssetExtractor
     private static readonly Regex JQueryUrlRegex = new(
         @"(?:url\s*:\s*|\$\.(?:get|post|getJSON)\s*\(\s*)(?:""|')(?<url>/[^""']+)", RegexOptions.Compiled);
 
-    // Directory names that mark everything beneath them as third-party. Matched
-    // as whole path segments, never substrings: the original substring rule
-    // ("\lib\") silently admitted nopCommerce's lib_npm — 102k LOC of moment
-    // locales and elfinder classified as first-party by one unmatched name.
-    private static readonly HashSet<string> VendorDirNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "lib", "lib_npm", "node_modules", "bower_components", "vendor"
-    };
+    // Directory names that mark everything beneath them as third-party, matched
+    // as whole path segments. Shared with grep's directory walk and the TextFile
+    // population through Core, so the three cannot disagree about what is vendor.
+    private static readonly FrozenSet<string> VendorDirNames = SourceFiles.VendorDirNames;
 
     // Build output is not source under either policy; includeVendor does not
     // resurrect it and it is not counted as a skipped asset.
-    private static readonly HashSet<string> BuildOutputDirNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "bin", "obj"
-    };
+    private static readonly FrozenSet<string> BuildOutputDirNames = SourceFiles.BuildOutputDirNames;
 
     /// <summary>One asset the vendor policy dropped, and why.</summary>
     internal sealed record SkippedAsset(string RelativePath, string Reason);

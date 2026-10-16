@@ -164,7 +164,20 @@ tell", not `projectDefault`.
 `PartialView`, `ViewComponent`, `Layout`, `Service`, `ServiceInterface`,
 `ServiceImplementation`, `ViewModel`, `Class`, `Method`, `Property`, `Field`,
 `ViewDataKey`, `Middleware`, `Route`, `HtmlElement`, `TagHelperInvocation`,
-`JavaScriptFile`, `CssFile`.
+`JavaScriptFile`, `CssFile`, `TextFile`.
+
+**Every other text file in the source tree is a `TextFile` node carrying its lines** —
+`.json`, `.md`, `.ps1`, `.bicep`, `.csproj`, `.yml` and the rest, one node per file, id
+`text:` plus its path relative to the solution's or project's directory. The files are the
+ones `grep`'s disk section reads, listed by the same code: `git ls-files` in a working
+tree, a walk skipping vendor and build output elsewhere, binaries and files over 2 MB
+turned away and named in the build summary. C#, Razor and XAML files, and any file that
+is already a `JavaScriptFile` or `CssFile`, never become one; nor does text under a vendor
+directory or a minified name. So `grep`'s graph section answers for those files too, with
+`matchedOn: "text"` and the line — except a file written since the build, whose lines may
+no longer be true: the disk section answers for it, and `staleTextFiles` says how many.
+`get_node` returns `lines` as a count unless `fields=lines` asks. `excludeText`
+(`--no-text`) skips them, and the build summary says it did. Lua graphs have none.
 
 **Edges** — structural (`Contains`, `Inherits`, `Implements`, `Overrides`, `DependsOn`, `References`
 — a page referencing a script or stylesheet), rendering

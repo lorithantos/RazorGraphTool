@@ -27,7 +27,7 @@ internal static class ToolArguments
         "Project, RazorPage, PageModel, ApiController, ControllerAction, PartialView, ViewComponent, Layout, " +
         "Service, ServiceInterface, ServiceImplementation, ViewModel, Class, Method, Property, Field, " +
         "ViewDataKey, NamedBinding, ConfigurationFile, ExternalType, Parameter, Literal, Middleware, Route, " +
-        "HtmlElement, TagHelperInvocation, JavaScriptFile, CssFile, XamlView";
+        "HtmlElement, TagHelperInvocation, JavaScriptFile, CssFile, XamlView, TextFile";
 
     internal const string GraphIdDescription =
         "Graph to query. Omit to use the most recently built or loaded graph.";

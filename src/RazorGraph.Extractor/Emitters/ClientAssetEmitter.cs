@@ -17,6 +17,14 @@ internal sealed class ClientAssetEmitter(CodeGraph graph)
     private readonly List<string> _assetSkipSummaries = new();
 
     /// <summary>
+    /// Full paths of the assets the vendor policy dropped, across every project. The
+    /// TextFile population leaves these out too: a drop that came back as a text file
+    /// would graph exactly what the policy decided not to.
+    /// </summary>
+    internal IReadOnlyCollection<string> SkippedAssetPaths => _skippedAssetPaths;
+    private readonly HashSet<string> _skippedAssetPaths = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Adds JavaScript/CSS nodes and the three edges that cross the server/client
     /// boundary: which page loads an asset, which server-rendered data-* keys a
     /// script reads back, and which API routes a script calls.
@@ -27,6 +35,8 @@ internal sealed class ClientAssetEmitter(CodeGraph graph)
         var extractor = new ClientAssetExtractor();
         var assets = extractor.ExtractAssets(projectDir, idScope, includeVendorAssets);
         ReportVendorSkips(extractor.LastSkipped, projectDir);
+        foreach (var skipped in extractor.LastSkipped)
+            _skippedAssetPaths.Add(Path.GetFullPath(Path.Combine(projectDir, skipped.RelativePath)));
 
         // Inline blocks are assets that happen to live in a .cshtml. Folding them
         // into the same list means every downstream step -- coupling edges,

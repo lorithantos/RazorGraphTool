@@ -45,6 +45,10 @@ public sealed record LuaCallReport(int Total, int InGraph, int External, int Std
 /// genuinely new concepts — a module, and a module reference — ride the foreign
 /// kind path, which is why a saved Lua graph declares itself as coming from an
 /// extractor extending the format.
+///
+/// A Lua graph holds no TextFile nodes. The text-file index is the C# builder's
+/// (TextFileEmitter in the extractor), so grep against a Lua tree finds its
+/// non-Lua text -- an Info.lua's neighbours, a README -- in the disk section only.
 /// </summary>
 public sealed class LuaGraphBuilder
 {

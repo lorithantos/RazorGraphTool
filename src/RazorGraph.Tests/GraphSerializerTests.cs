@@ -54,6 +54,30 @@ public class GraphSerializerTests
     }
 
     [Fact]
+    public void RoundTrip_KeepsATextFilesKindAndLines()
+    {
+        var graph = new CodeGraph { BuiltAt = DateTimeOffset.UtcNow };
+        var node = new GraphNode
+        {
+            Id = "text:docs/notes.md", Type = NodeType.TextFile, Name = "notes.md",
+            FilePath = @"C:\app\docs\notes.md", LineStart = 1, LineEnd = 3
+        };
+        node.SetProperty("extension", ".md");
+        node.SetProperty("sizeBytes", 31);
+        node.SetProperty("lines", new List<string> { "# Notes", "", "Deploy with main.bicep" });
+        graph.AddNode(node);
+
+        var restored = GraphSerializer.FromJson(GraphSerializer.ToJson(graph)).GetNode("text:docs/notes.md")!;
+
+        Assert.Equal(NodeType.TextFile, restored.Type);
+        Assert.Null(restored.ForeignType);
+        Assert.Equal(3, restored.LineEnd);
+        Assert.Equal(["# Notes", "", "Deploy with main.bicep"], restored.GetProperty<List<string>>("lines"));
+        Assert.Equal(".md", restored.GetProperty<string>("extension"));
+        Assert.Equal(31, restored.GetProperty<int>("sizeBytes"));
+    }
+
+    [Fact]
     public void RoundTrip_PreservesTypedPropertyAccess()
     {
         // Regression: deserialized properties were left as JsonElement, making

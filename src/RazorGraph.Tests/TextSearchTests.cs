@@ -405,6 +405,69 @@ public class TextSearchTests : IDisposable
         Assert.Equal([1], Lines(b.RootElement.GetProperty("disk")));
     }
 
+    // ---- text files: lines held by the graph ------------------------------------
+
+    /// <summary>
+    /// A graph holding one TextFile node for infra\main.bicep under the folder, with the
+    /// given lines, built at the given time.
+    /// </summary>
+    private CodeGraph TextFileGraph(DateTimeOffset builtAt, params string[] lines)
+    {
+        var graph = new CodeGraph { BuiltAt = builtAt };
+        var node = new GraphNode
+        {
+            Id = "text:infra/main.bicep", Type = NodeType.TextFile, Name = "main.bicep",
+            FilePath = Path.Combine(_dir, "infra", "main.bicep"), LineStart = 1, LineEnd = lines.Length
+        };
+        node.SetProperty(TextSearch.TextFileLinesProperty, lines.ToList());
+        graph.AddNode(node);
+        return graph;
+    }
+
+    [Fact]
+    public void Tool_GraphSection_AnswersATextFileLine_AndTheDiskCountsItInsteadOfRepeatingIt()
+    {
+        WriteFile(@"infra\main.bicep", "param location string\n\n  resource sa 'storage' = { location: location }\n");
+        // Built after the write, with room for a coarse file clock: the file is fresh.
+        var store = StoreOver(("g", TextFileGraph(DateTimeOffset.UtcNow.AddSeconds(5),
+            "param location string", "", "  resource sa 'storage' = { location: location }")));
+
+        using var doc = JsonDocument.Parse(new TextSearchTools(store).Grep("resource sa", _dir));
+        var graph = doc.RootElement.GetProperty("graph");
+        var disk = doc.RootElement.GetProperty("disk");
+
+        var hit = Assert.Single(graph.GetProperty("hits").EnumerateArray().ToList());
+        Assert.Equal("text:infra/main.bicep", hit.GetProperty("nodeId").GetString());
+        Assert.Equal("TextFile", hit.GetProperty("nodeType").GetString());
+        Assert.Equal("text", hit.GetProperty("matchedOn").GetString());
+        Assert.Equal(Path.Combine("infra", "main.bicep"), hit.GetProperty("path").GetString());
+        Assert.Equal(3, hit.GetProperty("line").GetInt32());
+        Assert.Equal("resource sa 'storage' = { location: location }", hit.GetProperty("text").GetString());
+        Assert.False(graph.TryGetProperty("staleTextFiles", out _));
+
+        Assert.Equal(0, disk.GetProperty("totalMatches").GetInt32());
+        Assert.Equal(1, disk.GetProperty("alreadyInGraph").GetInt32());
+    }
+
+    [Fact]
+    public void Tool_ATextFileWrittenSinceTheBuild_IsAnsweredByTheDisk_AndCountedAsStale()
+    {
+        // The graph holds the line as it was; the file now says something else.
+        WriteFile(@"infra\main.bicep", "param location string = 'westus'\n");
+        var store = StoreOver(("g", TextFileGraph(DateTimeOffset.UtcNow.AddMinutes(-5), "param location string = 'eastus'")));
+
+        using var doc = JsonDocument.Parse(new TextSearchTools(store).Grep("param location", _dir));
+        var graph = doc.RootElement.GetProperty("graph");
+        var disk = doc.RootElement.GetProperty("disk");
+
+        Assert.Equal(0, graph.GetProperty("totalMatches").GetInt32());
+        Assert.Equal(1, graph.GetProperty("staleTextFiles").GetInt32());
+
+        var hit = Assert.Single(disk.GetProperty("hits").EnumerateArray().ToList());
+        Assert.Equal("param location string = 'westus'", hit.GetProperty("text").GetString());
+        Assert.Equal(0, disk.GetProperty("alreadyInGraph").GetInt32());
+    }
+
     [Fact]
     public void Tool_RefusesAnInvalidRegex_SayingSo()
     {

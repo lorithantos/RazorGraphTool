@@ -25,6 +25,7 @@ internal sealed class GraphStoreTools(GraphStore store)
         [Description(ExcludeLiteralsDescription)] bool excludeLiterals = false,
         [Description("Absolute path to an attribute-policy JSON overriding the embedded default (classification name sets, argument-payload suppression, registration vocabulary). Sections the file omits are inherited.")] string? attributePolicy = null,
         [Description(PlatformDescription)] string? platform = null,
+        [Description(ExcludeTextDescription)] bool excludeText = false,
         CancellationToken ct = default)
     {
         var full = Path.GetFullPath(path);
@@ -40,6 +41,7 @@ internal sealed class GraphStoreTools(GraphStore store)
         {
             IncludeVendorAssets = includeVendor,
             ExcludeLiterals = excludeLiterals,
+            ExcludeText = excludeText,
             AttributePolicy = LoadPolicy(attributePolicy),
             Platform = platform
         };
@@ -49,7 +51,8 @@ internal sealed class GraphStoreTools(GraphStore store)
 
         return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries,
             unboundShapes: builder.UnboundShapes, unresolvedAttributes: builder.UnresolvedAttributes,
-            analyzerHostWarnings: builder.AnalyzerHostWarnings, literalsExcluded: excludeLiterals);
+            analyzerHostWarnings: builder.AnalyzerHostWarnings, literalsExcluded: excludeLiterals,
+            textExcluded: excludeText, textFileSkips: builder.TextFileSkips);
     }
 
     /// <summary>
@@ -61,6 +64,13 @@ internal sealed class GraphStoreTools(GraphStore store)
         "and \"where does this string appear\" is unanswerable against the result. Default false, so the " +
         "default graph answers every question. Quotes edges and quoted_symbols are unaffected either way — " +
         "they are a different question over the same scan. A build that used this says so in its summary.";
+
+    /// <summary>Shared between build_graph and build_solution, as ExcludeLiteralsDescription is.</summary>
+    private const string ExcludeTextDescription =
+        "Skip the text-file index: no TextFile nodes, so grep's graph section answers for C# names and " +
+        "literals alone and every line of a .json, .md, .ps1, .bicep, .csproj or other non-C# file comes " +
+        "from its disk section. Default false, so the default graph answers every question. A build that " +
+        "used this says so in its summary.";
 
     /// <summary>
     /// Shared for the same reason. Omitting it must stay the old behaviour, which
@@ -82,6 +92,7 @@ internal sealed class GraphStoreTools(GraphStore store)
         [Description(ExcludeLiteralsDescription)] bool excludeLiterals = false,
         [Description("Absolute path to an attribute-policy JSON overriding the embedded default (classification name sets, argument-payload suppression, registration vocabulary). Sections the file omits are inherited.")] string? attributePolicy = null,
         [Description(PlatformDescription)] string? platform = null,
+        [Description(ExcludeTextDescription)] bool excludeText = false,
         CancellationToken ct = default)
     {
         var full = Path.GetFullPath(path);
@@ -94,6 +105,7 @@ internal sealed class GraphStoreTools(GraphStore store)
             IncludeVendorAssets = includeVendor,
             ExcludeTestProjects = excludeTests,
             ExcludeLiterals = excludeLiterals,
+            ExcludeText = excludeText,
             AttributePolicy = LoadPolicy(attributePolicy),
             Platform = platform
         };
@@ -101,7 +113,8 @@ internal sealed class GraphStoreTools(GraphStore store)
 
         return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries, builder.SkippedTestProjects,
             builder.UnboundShapes, unresolvedAttributes: builder.UnresolvedAttributes,
-            analyzerHostWarnings: builder.AnalyzerHostWarnings, literalsExcluded: excludeLiterals);
+            analyzerHostWarnings: builder.AnalyzerHostWarnings, literalsExcluded: excludeLiterals,
+            textExcluded: excludeText, textFileSkips: builder.TextFileSkips);
     }
 
     /// <summary>
@@ -258,7 +271,9 @@ internal sealed class GraphStoreTools(GraphStore store)
         GraphFormatAssessment? format = null,
         IReadOnlyList<string>? unresolvedAttributes = null,
         IReadOnlyList<string>? analyzerHostWarnings = null,
-        bool literalsExcluded = false)
+        bool literalsExcluded = false,
+        bool textExcluded = false,
+        IReadOnlyList<string>? textFileSkips = null)
     {
         var graph = entry.Graph;
         // Grouped by display kind, so a foreign vocabulary is censused under its
@@ -307,6 +322,14 @@ internal sealed class GraphStoreTools(GraphStore store)
             // build's choice rather than a codebase with no strings in it -- which
             // is exactly the absence-as-finding trap the other two skips avoid.
             literalsExcluded = literalsExcluded ? true : (bool?)null,
+            // And for the text-file index, for the same reason: a graph built without
+            // it holds no TextFile node, and grep's graph section then has nothing to
+            // say about a .json or a .md that only the build's choice explains.
+            textExcluded = textExcluded ? true : (bool?)null,
+            // What the text-file index left out when it ran: binaries, files over
+            // 2 MB, vendor and minified text. A file absent without a word reads as
+            // a file with nothing in it.
+            skippedTextFiles = textFileSkips is { Count: > 0 } ? textFileSkips : null,
             // Shape names nothing binds. OrchardCore throws when a shape resolves
             // to no binding, so each is a runtime failure on whatever path
             // produces it -- a finding, and findings ride the build response

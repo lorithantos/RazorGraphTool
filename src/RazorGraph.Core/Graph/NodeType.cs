@@ -106,5 +106,18 @@ public enum NodeType
     /// </remarks>
     XamlView,
 
+    /// <summary>
+    /// A text file in the source tree that no other node kind models: Bicep, JSON,
+    /// Markdown, PowerShell, project files, YAML and the rest. It carries the file's
+    /// lines as the build read them, so grep's graph section answers for the file whole.
+    /// </summary>
+    /// <remarks>
+    /// Broad and shallow on purpose: one node per file, no edges in or out. A file the
+    /// graph already models as a file -- C#, Razor, XAML, a JavaScriptFile or CssFile --
+    /// never becomes one, so no line is held twice. The name is neutral rather than
+    /// Razor-flavoured because the kind has nothing to do with Razor.
+    /// </remarks>
+    TextFile,
+
     Unknown
 }
