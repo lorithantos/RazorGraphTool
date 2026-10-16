@@ -35,7 +35,7 @@ internal static class SymbolClassifier
         // AllInterfaces cannot say which of these the declaration itself names,
         // and that is the half a reader asks for first.
         var implemented = InterfaceImplementations(symbol);
-        var (filePath, lineStart, lineEnd, docsStart) = GetLines(symbol);
+        var (filePath, lineStart, lineEnd, docs) = GetLines(symbol);
 
         // The one place a type node is built. The classification below decides
         // only three things -- the id prefix, the kind, and (for a controller)
@@ -77,7 +77,8 @@ internal static class SymbolClassifier
                 FilePath = filePath,
                 LineStart = lineStart,
                 LineEnd = lineEnd,
-                DocsStart = docsStart,
+                DocsStart = docs?.Start,
+                DocsEnd = docs?.End,
                 BaseType = baseType,
                 ImplementedInterfaces = implemented,
                 Properties = ExtractProperties(symbol, policy),
@@ -171,45 +172,62 @@ internal static class SymbolClassifier
     /// .g.cs path honestly — the generated marker downstream tells a reader
     /// which kind they are looking at.
     /// </summary>
-    private static (string? FilePath, int? Start, int? End, int? DocsStart) GetLines(INamedTypeSymbol symbol)
+    private static (string? FilePath, int? Start, int? End, (int Start, int End)? Docs) GetLines(INamedTypeSymbol symbol)
     {
         var syntaxRef = symbol.DeclaringSyntaxReferences.FirstOrDefault();
         if (syntaxRef == null) return (symbol.Locations.FirstOrDefault()?.SourceTree?.FilePath, null, null, null);
         var span = DeclarationSpan(syntaxRef);
-        return (span.Path, span.StartLinePosition.Line + 1, span.EndLinePosition.Line + 1, DocumentationLine(syntaxRef));
+        return (span.Path, span.StartLinePosition.Line + 1, span.EndLinePosition.Line + 1, DocumentationLines(syntaxRef));
     }
 
     /// <summary>
-    /// First line of the declaration's XML documentation comment, or null when
-    /// it has none.
+    /// First and last line of the declaration's XML documentation comment, or
+    /// null when it has none.
     /// </summary>
     /// <remarks>
     /// This is what lets a reader take exactly the chunk it meant. A node used
     /// to say "line 91" and nothing else, so opening it meant guessing how far
     /// down the member ran and how far up its documentation started; with this
     /// and LineEnd, <c>docsStart ?? lineStart</c> through <c>lineEnd</c> is the
-    /// member and its documentation, exactly.
+    /// member and its documentation, exactly, and <c>docsStart</c> through
+    /// <c>docsEnd</c> is the documentation alone.
+    /// <para>
+    /// The end is reported rather than left to be inferred as lineStart - 1,
+    /// because that inference is wrong whenever anything sits between the
+    /// comment and the declaration -- an attribute list most often, and the
+    /// gamehub graph alone carries over a thousand DecoratedBy edges.
+    /// </para>
     /// <para>
     /// Read from the whole declaration's leading trivia, which sits above the
     /// attribute list — attributes are part of the declaration node, the doc
     /// comment is trivia in front of it. Ordinary <c>//</c> comments are
     /// deliberately not counted: a remark that happens to sit above a method is
     /// not that method's documentation, and treating it as such would drag in
-    /// whatever unrelated text preceded it.
+    /// whatever unrelated text preceded it. When several documentation blocks
+    /// precede one declaration, the span runs from the first to the last, so an
+    /// ordinary comment between two of them falls inside it.
     /// </para>
     /// </remarks>
-    private static int? DocumentationLine(SyntaxReference syntaxRef)
+    private static (int Start, int End)? DocumentationLines(SyntaxReference syntaxRef)
     {
-        var trivia = syntaxRef.GetSyntax().GetLeadingTrivia();
-        foreach (var t in trivia)
+        int? start = null, end = null;
+        foreach (var t in syntaxRef.GetSyntax().GetLeadingTrivia())
         {
-            if (t.RawKind is (int)SyntaxKind.SingleLineDocumentationCommentTrivia
-                          or (int)SyntaxKind.MultiLineDocumentationCommentTrivia)
-            {
-                return syntaxRef.SyntaxTree.GetMappedLineSpan(t.FullSpan).StartLinePosition.Line + 1;
-            }
+            if (t.RawKind is not ((int)SyntaxKind.SingleLineDocumentationCommentTrivia
+                               or (int)SyntaxKind.MultiLineDocumentationCommentTrivia))
+                continue;
+
+            var mapped = syntaxRef.SyntaxTree.GetMappedLineSpan(t.FullSpan);
+            start ??= mapped.StartLinePosition.Line + 1;
+            // A /// block's trivia owns the newline that ends its last line, so
+            // its span stops at column 0 of the line after. That line is not
+            // documentation; a /** */ block ends mid-line and needs no step back.
+            var last = mapped.EndLinePosition.Character == 0 && mapped.EndLinePosition.Line > mapped.StartLinePosition.Line
+                ? mapped.EndLinePosition.Line - 1
+                : mapped.EndLinePosition.Line;
+            end = last + 1;
         }
-        return null;
+        return start is { } s && end is { } e ? (s, e) : null;
     }
 
     /// <summary>
@@ -317,12 +335,14 @@ internal static class SymbolClassifier
             if (syntaxRef != null)
             {
                 var span = DeclarationSpan(syntaxRef);
+                var docs = DocumentationLines(syntaxRef);
                 detail = detail with
                 {
                     FilePath = span.Path,
                     LineStart = span.StartLinePosition.Line + 1,
                     LineEnd = span.EndLinePosition.Line + 1,
-                    DocsStart = DocumentationLine(syntaxRef)
+                    DocsStart = docs?.Start,
+                    DocsEnd = docs?.End
                 };
             }
             members.Add(detail);
@@ -492,6 +512,7 @@ internal static class SymbolClassifier
                 FileLinePositionSpan? mapped = syntaxRef == null
                     ? null
                     : DeclarationSpan(syntaxRef);
+                var docs = syntaxRef == null ? null : DocumentationLines(syntaxRef);
                 // The scope holding this method's body: an ordinary declaration,
                 // or the compilation unit when the method is the synthesized
                 // entry point of a top-level program. Deliberately not "whatever
@@ -550,7 +571,8 @@ internal static class SymbolClassifier
                     FilePath = mapped?.Path ?? m.Locations.FirstOrDefault()?.SourceTree?.FilePath,
                     LineStart = mapped?.StartLinePosition.Line + 1,
                     LineEnd = mapped?.EndLinePosition.Line + 1,
-                    DocsStart = syntaxRef == null ? null : DocumentationLine(syntaxRef),
+                    DocsStart = docs?.Start,
+                    DocsEnd = docs?.End,
                     Attributes = ExtractMethodAttributes(m, inScope),
                     Parameters = ExtractParameterNodes(m, inScope)
                 };

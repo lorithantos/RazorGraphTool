@@ -105,8 +105,10 @@ claims about itself.
 `lineEnd`, and `docsStart` — the first line of its XML documentation comment, absent when
 it has none. So `docsStart ?? lineStart` through `lineEnd` is the declaration and its
 documentation and nothing else, and a caller opens the exact chunk instead of a line
-number and a guess about how far down to go. Absent `docsStart` is a fact rather than a
-gap: that declaration is undocumented.
+number and a guess about how far down to go. `docsEnd` is the comment's last line, so
+`docsStart` through `docsEnd` is the documentation alone; it is stored rather than left
+as `lineStart - 1` because an attribute list often sits in between. Absent `docsStart` is
+a fact rather than a gap: that declaration is undocumented.
 
 One edge to know: attributes are part of the declaration node while the doc comment is
 leading trivia in front of it, and `lineStart` deliberately points at the declaration

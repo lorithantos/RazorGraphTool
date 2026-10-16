@@ -59,6 +59,7 @@ public static class GraphSerializer
         LineStart = n.LineStart,
         LineEnd = n.LineEnd,
         DocsStart = n.DocsStart,
+        DocsEnd = n.DocsEnd,
         Properties = n.Properties,
         Labels = n.Labels
     };
@@ -151,7 +152,8 @@ public static class GraphSerializer
                 FilePath = n.FilePath,
                 LineStart = n.LineStart,
                 LineEnd = n.LineEnd,
-                DocsStart = n.DocsStart ?? n.LegacyLineDocs
+                DocsStart = n.DocsStart ?? n.LegacyLineDocs,
+                DocsEnd = n.DocsEnd
             };
             foreach (var p in n.Properties) node.Properties[p.Key] = NormalizeValue(p.Value);
             foreach (var l in n.Labels) node.Labels.Add(l);
@@ -349,6 +351,13 @@ public static class GraphSerializer
         /// the graph was built.
         /// </summary>
         public int? DocsStart { get; set; }
+
+        /// <summary>
+        /// Null on any graph written before format 3.3, even where docsStart is
+        /// set. A reader holding a docsStart with no docsEnd should take the
+        /// documentation as running to "not known", not to lineStart - 1.
+        /// </summary>
+        public int? DocsEnd { get; set; }
 
         /// <summary>
         /// The 1.x spelling of <see cref="DocsStart"/>, read and never written.

@@ -55,6 +55,18 @@ public sealed class GraphNode
     public int? DocsStart { get; init; }
 
     /// <summary>
+    /// 1-based line where the XML doc comment ends, set exactly when
+    /// <see cref="DocsStart"/> is.
+    /// </summary>
+    /// <remarks>
+    /// <c>docsStart</c> through <c>docsEnd</c> is the documentation alone. It is
+    /// stored rather than inferred as LineStart - 1 because an attribute list
+    /// between the comment and the declaration makes that inference wrong, and
+    /// a null here means "no documentation", which no line number can say.
+    /// </remarks>
+    public int? DocsEnd { get; init; }
+
+    /// <summary>
     /// Type-agnostic properties. Keys are well-known per NodeType.
     /// </summary>
     public Dictionary<string, object> Properties { get; } = new();

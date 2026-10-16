@@ -1860,8 +1860,38 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         var node = Method(_solutionGraph!, "SampleLib.PriceCallers", "AskIsFree");
 
         Assert.Null(node.DocsStart);
+        Assert.Null(node.DocsEnd);
         Assert.NotNull(node.LineEnd);
         Assert.Contains("AskIsFree", LinesOf(node)[node.LineStart!.Value - 1], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DocsEnd_IsTheLastDocLine_EvenWithAnAttributeBetween()
+    {
+        // The case lineStart - 1 gets wrong, and the reason docsEnd is stored:
+        // documentation, then an attribute list, then the declaration.
+        var node = Method(_solutionGraph!, "SampleWeb.NameCoupling", "Attributed");
+        var lines = LinesOf(node);
+
+        Assert.NotNull(node.DocsEnd);
+        Assert.True(node.DocsEnd < node.LineStart - 1, "an attribute sits between the docs and the declaration");
+        for (var line = node.DocsStart!.Value; line <= node.DocsEnd!.Value; line++)
+            Assert.StartsWith("///", lines[line - 1].TrimStart(), StringComparison.Ordinal);
+        Assert.StartsWith("[", lines[node.DocsEnd.Value].TrimStart(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DocsEnd_OnAOneLineComment_IsTheSameLineAsDocsStart()
+    {
+        // A /// block's trivia owns the newline that ends it, so its raw span
+        // stops at column 0 of the declaration's own line. Reporting that line
+        // would make every one-line summary two lines long and put the
+        // declaration inside its own documentation.
+        var node = Method(_solutionGraph!, "SampleWeb.NameCoupling", "TypedName");
+
+        Assert.Equal(node.DocsStart, node.DocsEnd);
+        Assert.Equal(node.LineStart - 1, node.DocsEnd);
+        Assert.StartsWith("///", LinesOf(node)[node.DocsEnd!.Value - 1].TrimStart(), StringComparison.Ordinal);
     }
 
     [Fact]

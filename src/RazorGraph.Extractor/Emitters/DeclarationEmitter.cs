@@ -56,7 +56,8 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
             FilePath = sym.FilePath,
             LineStart = sym.LineStart,
             LineEnd = sym.LineEnd,
-            DocsStart = sym.DocsStart
+            DocsStart = sym.DocsStart,
+            DocsEnd = sym.DocsEnd
         };
 
         node.SetProperty("fullName", sym.FullName);
@@ -131,7 +132,8 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
                 FilePath = method.FilePath ?? sym.FilePath,
                 LineStart = method.LineStart,
                 LineEnd = method.LineEnd,
-                DocsStart = method.DocsStart
+                DocsStart = method.DocsStart,
+                DocsEnd = method.DocsEnd
             };
 
             node.SetProperty("signature", method.Signature);
@@ -222,7 +224,8 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
                 FilePath = member.FilePath ?? sym.FilePath,
                 LineStart = member.LineStart,
                 LineEnd = member.LineEnd,
-                DocsStart = member.DocsStart
+                DocsStart = member.DocsStart,
+                DocsEnd = member.DocsEnd
             };
 
             node.SetProperty("memberType", member.MemberType);

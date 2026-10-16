@@ -45,7 +45,8 @@ internal static class ToolResponses
     /// say what to read rather than only where to look: <c>docsStart ??
     /// lineStart</c> through <c>lineEnd</c> is the declaration and its
     /// documentation, so a caller opens the exact chunk instead of a line
-    /// number and a guess.
+    /// number and a guess. <c>docsEnd</c> is the comment's last line, so
+    /// <c>docsStart</c> through <c>docsEnd</c> is the documentation alone.
     /// </summary>
     /// <remarks>
     /// Scalar properties come back inline and list-valued ones come back as
@@ -92,6 +93,7 @@ internal static class ToolResponses
             name = n.Name,
             filePath = n.FilePath,
             docsStart = n.DocsStart,
+            docsEnd = n.DocsEnd,
             lineStart = n.LineStart,
             lineEnd = n.LineEnd,
             fileWrittenSince = Stale(n, freshness),

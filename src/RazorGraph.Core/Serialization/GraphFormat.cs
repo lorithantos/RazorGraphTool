@@ -99,6 +99,10 @@ internal static class GraphFormat
     /// edge as <c>closedType</c>. Additive in the 1.4 sense: no edge changed, but
     /// InjectedInto gained members, so a 3.1 reader absorbs more of an edge type
     /// it already knows and the caveat is what tells it the population moved.
+    /// 3.3 added <c>docsEnd</c>, the last line of a node's documentation, beside
+    /// docsStart. It cannot be derived as lineStart - 1 once an attribute list
+    /// sits between comment and declaration. Additive, unlike 2.0's rename: a
+    /// 3.2 graph read here has no docsEnd, which reads as "not known".
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -139,7 +143,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(3, 2);
+    public static readonly GraphFormatVersion Current = new(3, 3);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

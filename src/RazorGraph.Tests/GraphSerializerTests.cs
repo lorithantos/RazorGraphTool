@@ -431,6 +431,19 @@ public class GraphSerializerTests
     }
 
     [Fact]
+    public void RoundTrip_PreservesDocsEnd()
+    {
+        var graph = new CodeGraph();
+        graph.AddNode(new GraphNode { Id = "m:App.Go()", Type = NodeType.Method, Name = "Go", LineStart = 12, LineEnd = 20, DocsStart = 7, DocsEnd = 10 });
+
+        var json = GraphSerializer.ToJson(graph);
+        using (var doc = JsonDocument.Parse(json))
+            Assert.Equal(10, doc.RootElement.GetProperty("nodes")[0].GetProperty("docsEnd").GetInt32());
+
+        Assert.Equal(10, GraphSerializer.FromJson(json).GetNode("m:App.Go()")!.DocsEnd);
+    }
+
+    [Fact]
     public void Read_UnparseableVersion_Refuses()
     {
         // Disagreeing about the format of the format is worse evidence of drift
