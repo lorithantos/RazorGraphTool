@@ -24,6 +24,7 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     private static CodeGraph? _noTestsGraph;
     private static IReadOnlyList<string>? _noTestsSkipped;
     private static CodeGraph? _noLiteralsGraph;
+    private static CodeGraph? _x64Graph;
 
     private static string RepoRoot()
     {
@@ -76,6 +77,14 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
             {
                 _noLiteralsGraph = await builder.BuildFromSolutionAllAsync(solutionPath);
             }
+
+            // And for a requested Platform. A real build rather than a stamp check,
+            // because the claim is that the value reaches MSBuild, and only the
+            // compilation's own target can show that it did.
+            await using (var builder = new GraphBuilder { Platform = "x64" })
+            {
+                _x64Graph = await builder.BuildFromSolutionAllAsync(solutionPath);
+            }
         }
         finally
         {
@@ -115,6 +124,43 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         var projects = _solutionGraph!.NodesOfType(NodeType.Project).Select(p => p.Name).OrderBy(n => n).ToList();
 
         Assert.Equal(new[] { "SampleLib", "SampleWeb", "SampleWeb.Tests" }, projects);
+    }
+
+    [Fact]
+    public void Builds_ProjectNodes_CarryTheirPlatformTarget()
+    {
+        // Nothing in the fixture pins a target and the default build passes no
+        // Platform, so every project compiles for the SDK's default -- unless this
+        // process carries Platform in its environment, which MSBuild would read.
+        var expected = string.IsNullOrEmpty(Environment.GetEnvironmentVariable("Platform")) ? "anyCpu" : null;
+
+        foreach (var project in _solutionGraph!.NodesOfType(NodeType.Project))
+        {
+            var target = project.GetProperty<string>("platformTarget");
+            Assert.False(string.IsNullOrEmpty(target), $"{project.Name} has no platformTarget");
+            if (expected != null) Assert.Equal(expected, target);
+        }
+    }
+
+    [Fact]
+    public void Builds_RequestedPlatform_IsRecordedAsRequested()
+    {
+        Assert.Equal("x64", _x64Graph!.Platform);
+        Assert.Equal("requested", _x64Graph.PlatformFrom);
+        Assert.NotNull(_x64Graph.HostArchitecture);
+    }
+
+    /// <summary>
+    /// The stamp alone would pass with the workspace never told: it records the
+    /// request whether or not MSBuild saw it. The compilation's target is what
+    /// MSBuild made of the value, so this is the test that the request governs.
+    /// </summary>
+    [Fact]
+    public void Builds_RequestedPlatform_ReachesTheCompilation()
+    {
+        var lib = _x64Graph!.NodesOfType(NodeType.Project).Single(p => p.Name == "SampleLib");
+
+        Assert.Equal("x64", lib.GetProperty<string>("platformTarget"));
     }
 
     [Fact]

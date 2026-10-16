@@ -57,6 +57,43 @@ public sealed class CodeGraph
     public string? Source { get; set; }
 
     /// <summary>
+    /// The CPU architecture of the machine that extracted this graph, lowercased
+    /// ("x64", "arm64"), or null when not recorded.
+    /// </summary>
+    /// <remarks>
+    /// Recorded so two graphs of the same source built on different CPUs can be
+    /// compared knowing that they were, rather than discovering it from a diff.
+    /// Null on a graph written before the field existed, and on a Lua graph,
+    /// which no MSBuild evaluation shaped; either means "cannot tell".
+    /// </remarks>
+    public string? HostArchitecture { get; set; }
+
+    /// <summary>
+    /// The MSBuild <c>Platform</c> the workspace loaded the source with, or null
+    /// when none was set and each project fell back to its own default.
+    /// <see cref="PlatformFrom"/> says which of those this is.
+    /// </summary>
+    /// <remarks>
+    /// MSBuild reads Platform from the environment when no global property sets
+    /// it, so a graph built by a server launched from a shell carrying
+    /// Platform=x64 and one built after a restart without it put generated code
+    /// under obj\x64\Debug and obj\Debug respectively -- hundreds of filePaths
+    /// different between two builds of the same source, and nothing in either
+    /// graph said why. Carried on the graph so the reason travels with the answer.
+    /// </remarks>
+    public string? Platform { get; set; }
+
+    /// <summary>
+    /// Where <see cref="Platform"/> came from: "requested" when the build was
+    /// asked for one, "environment" when it was inherited from the process's
+    /// Platform variable, "projectDefault" when neither set it and
+    /// <see cref="Platform"/> is null. Null on a graph that predates the field,
+    /// which means "cannot tell" -- never "projectDefault", since such a graph
+    /// may well have been built with Platform in the environment.
+    /// </summary>
+    public string? PlatformFrom { get; set; }
+
+    /// <summary>
     /// Format versions newer than this build's that data in this graph was read
     /// from. Empty for a graph built from source, or loaded from a file at or
     /// below this build's version.

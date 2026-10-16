@@ -38,6 +38,11 @@ internal sealed class ProjectEmitter(CodeGraph graph)
 
             node.SetProperty("assemblyName", project.Compilation.AssemblyName ?? project.Name);
             node.SetProperty("nodeCount", nodeCounts.TryGetValue(project.Name, out var c) ? c : 0);
+            // What the compiler targeted, beside the Platform the graph records
+            // at document level: that one is what MSBuild was told, this is what
+            // each project made of it, and a project can pin its own.
+            node.SetProperty("platformTarget",
+                System.Text.Json.JsonNamingPolicy.CamelCase.ConvertName(project.Compilation.Options.Platform.ToString()));
             graph.AddNode(node);
         }
 

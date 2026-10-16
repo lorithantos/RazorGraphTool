@@ -517,6 +517,43 @@ public class GraphToolsTests
         Assert.Equal(graph.ExtractorBuiltAt, doc.RootElement.GetProperty("extractorBuiltAt").GetDateTimeOffset());
     }
 
+    [Fact]
+    public void ListGraphs_ReportsWhatEachGraphWasBuiltFor()
+    {
+        // Two graphs of one source that differ only here differ on hundreds of
+        // generated-code paths, so list_graphs is where the difference has to show.
+        var graph = MixedKindGraph();
+        graph.HostArchitecture = "arm64";
+        graph.Platform = "x64";
+        graph.PlatformFrom = "environment";
+        var tools = new GraphStoreTools(StoreOver(graph));
+
+        using var doc = JsonDocument.Parse(tools.ListGraphs());
+
+        var entry = Assert.Single(doc.RootElement.GetProperty("graphs").EnumerateArray());
+        Assert.Equal("arm64", entry.GetProperty("hostArchitecture").GetString());
+        Assert.Equal("x64", entry.GetProperty("platform").GetString());
+        Assert.Equal("environment", entry.GetProperty("platformFrom").GetString());
+    }
+
+    [Fact]
+    public void GraphSummary_ReportsWhatTheGraphWasBuiltFor()
+    {
+        // Summarize backs the build responses too, so a build says what it was
+        // built for on the first thing a caller sees.
+        var graph = MixedKindGraph();
+        graph.HostArchitecture = "x64";
+        graph.Platform = "ARM64";
+        graph.PlatformFrom = "requested";
+        var tools = new GraphStoreTools(StoreOver(graph));
+
+        using var doc = JsonDocument.Parse(tools.GraphSummary("g"));
+
+        Assert.Equal("x64", doc.RootElement.GetProperty("hostArchitecture").GetString());
+        Assert.Equal("ARM64", doc.RootElement.GetProperty("platform").GetString());
+        Assert.Equal("requested", doc.RootElement.GetProperty("platformFrom").GetString());
+    }
+
     private const string CoveredMethodId = "m:Web.Doctrine.Advance()";
 
     /// <summary>

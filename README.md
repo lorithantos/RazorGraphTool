@@ -132,6 +132,16 @@ carry two meanings: "this file is unchanged", which is evidence, and "nothing wa
 computed", which is silence. A reader cannot tell those apart from a node, so the graph
 states which kind of absence it is, once, per response.
 
+**A graph also says what it was built for.** `hostArchitecture` is the CPU of the machine
+that extracted it, `platform` is the MSBuild `Platform` the workspace loaded with, and
+`platformFrom` says why: `requested` (the build passed `platform` / `--platform`),
+`environment` (inherited from the process's `Platform` variable), or `projectDefault`
+(neither, and `platform` is absent). Generated-code paths follow it (`obj\x64\Debug` against
+`obj\Debug`), so two graphs of one source can differ on hundreds of nodes for that reason
+alone. Solution graphs also put `platformTarget` on each `Project` node, which is what the
+compiler targeted. A graph saved before format 3.4 has none of these, which means "cannot
+tell", not `projectDefault`.
+
 > The server runs from the published `.mcp-bin` copy, not live build output, so
 > ordinary `dotnet build` keeps working while a session is attached. Code changes reach
 > the tools after a re-publish and a restart of the HTTP server; sessions reconnect on

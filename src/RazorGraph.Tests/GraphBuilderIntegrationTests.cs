@@ -102,6 +102,36 @@ public class GraphBuilderIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void Builds_HostArchitecture_AsTheMachineThatRan()
+    {
+        var expected = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant();
+
+        Assert.Equal(expected, _graph!.HostArchitecture);
+    }
+
+    /// <summary>
+    /// A build that asked for no Platform records what it inherited. The test
+    /// cannot set the variable -- it is process-wide, and the parallel run shares
+    /// it -- so it asserts the rule against whatever this process carries.
+    /// </summary>
+    [Fact]
+    public void Builds_PlatformStamp_FromTheEnvironmentWhenNoneWasRequested()
+    {
+        var environment = Environment.GetEnvironmentVariable("Platform");
+
+        if (string.IsNullOrEmpty(environment))
+        {
+            Assert.Null(_graph!.Platform);
+            Assert.Equal("projectDefault", _graph.PlatformFrom);
+        }
+        else
+        {
+            Assert.Equal(environment, _graph!.Platform);
+            Assert.Equal("environment", _graph.PlatformFrom);
+        }
+    }
+
+    [Fact]
     public void Builds_RazorPageNode_WithRouteTemplate()
     {
         var page = _graph!.Nodes.SingleOrDefault(n => n.Type == NodeType.RazorPage && n.Name == "Index");

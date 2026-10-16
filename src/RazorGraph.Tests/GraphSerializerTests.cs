@@ -343,6 +343,44 @@ public class GraphSerializerTests
     }
 
     [Fact]
+    public void RoundTrip_PreservesWhatTheGraphWasBuiltFor()
+    {
+        var graph = BuildGraph();
+        graph.HostArchitecture = "arm64";
+        graph.Platform = "x64";
+        graph.PlatformFrom = "requested";
+
+        var json = GraphSerializer.ToJson(graph);
+        var restored = GraphSerializer.FromJson(json);
+
+        Assert.Equal("arm64", restored.HostArchitecture);
+        Assert.Equal("x64", restored.Platform);
+        Assert.Equal("requested", restored.PlatformFrom);
+
+        // Flat and top-level, beside builtAt and source, where a reader of the
+        // file looks for document stamps.
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("arm64", doc.RootElement.GetProperty("hostArchitecture").GetString());
+        Assert.Equal("x64", doc.RootElement.GetProperty("platform").GetString());
+        Assert.Equal("requested", doc.RootElement.GetProperty("platformFrom").GetString());
+    }
+
+    /// <summary>
+    /// A 3.3 file has no stamp, and that must read as "cannot tell". Filling in
+    /// projectDefault would claim the build saw no Platform, which is exactly what
+    /// a graph built under Platform=x64 in the environment could not say.
+    /// </summary>
+    [Fact]
+    public void Read_GraphWithoutPlatformStamp_LeavesAllThreeNull()
+    {
+        var graph = GraphSerializer.FromJson(GraphJson("3.3"));
+
+        Assert.Null(graph.HostArchitecture);
+        Assert.Null(graph.Platform);
+        Assert.Null(graph.PlatformFrom);
+    }
+
+    [Fact]
     public void Read_CurrentVersion_HasNoCaveat()
     {
         var result = GraphSerializer.Read(GraphSerializer.ToJson(BuildGraph()));

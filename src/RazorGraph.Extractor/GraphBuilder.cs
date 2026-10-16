@@ -17,8 +17,45 @@ public sealed class GraphBuilder : IAsyncDisposable
     // Stamped at construction rather than at return: extraction is the slow part,
     // and the baseline a consumer wants is the source as it stood when reading
     // began. Stamping afterwards would call a file edited mid-build fresh.
-    private readonly CodeGraph _graph = new() { BuiltAt = DateTimeOffset.UtcNow, ExtractorBuiltAt = ExtractorBuildTime() };
+    private readonly CodeGraph _graph = new()
+    {
+        BuiltAt = DateTimeOffset.UtcNow,
+        ExtractorBuiltAt = ExtractorBuildTime(),
+        HostArchitecture = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant()
+    };
     private readonly RoslynExtractor _roslyn = new();
+
+    internal const string PlatformRequested = "requested";
+    internal const string PlatformFromEnvironment = "environment";
+    internal const string PlatformProjectDefault = "projectDefault";
+
+    /// <summary>
+    /// What the workspace's Platform will be and why, by MSBuild's own order: a
+    /// global property wins, then an environment variable of that name, then the
+    /// project's default. The environment counts because MSBuild reads it, and the
+    /// out-of-proc build host MSBuildWorkspace evaluates in inherits ours.
+    /// </summary>
+    /// <remarks>
+    /// Pure, and the inputs are arguments, so the rule can be tested without
+    /// touching a process-wide variable the parallel test run shares.
+    /// </remarks>
+    internal static (string? Platform, string From) ResolvePlatform(string? requested, string? environment)
+    {
+        if (requested is not null) return (requested, PlatformRequested);
+        if (!string.IsNullOrEmpty(environment)) return (environment, PlatformFromEnvironment);
+        return (null, PlatformProjectDefault);
+    }
+
+    /// <summary>
+    /// Record the Platform this build loaded with. Called from every build entry
+    /// point beside Source, because a graph that does not say this cannot explain
+    /// why its generated-code paths differ from another build of the same source.
+    /// </summary>
+    private void StampPlatform()
+    {
+        (_graph.Platform, _graph.PlatformFrom) =
+            ResolvePlatform(_roslyn.Platform, Environment.GetEnvironmentVariable("Platform"));
+    }
 
     /// <summary>
     /// Last-write time of the assembly this extractor lives in -- the closest
@@ -116,6 +153,17 @@ public sealed class GraphBuilder : IAsyncDisposable
     public bool ExcludeLiterals { get; set; }
 
     /// <summary>
+    /// The MSBuild Platform to build for, passed as a global property; null, the
+    /// default, passes none and inherits whatever the environment says. Either
+    /// way the graph records the value used and where it came from.
+    /// </summary>
+    public string? Platform
+    {
+        get => _roslyn.Platform;
+        set => _roslyn.Platform = value;
+    }
+
+    /// <summary>
     /// Reasons the SDK's source generators may not have run for this build. A
     /// generator that fails to load takes its generated types with it in
     /// silence, so this list is the difference between a graph that is missing
@@ -146,6 +194,7 @@ public sealed class GraphBuilder : IAsyncDisposable
 
         await _roslyn.LoadProjectAsync(projectPath, ct);
         _graph.Source = Path.GetFullPath(projectPath);
+        StampPlatform();
         return BuildGraph(projectDir);
     }
 
@@ -161,6 +210,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         // The solution, not the project inside it: that is the path a caller
         // rebuilds from, and the one build_graph has always reported.
         _graph.Source = Path.GetFullPath(solutionPath);
+        StampPlatform();
         return BuildGraph(projectDir);
     }
 
@@ -177,6 +227,7 @@ public sealed class GraphBuilder : IAsyncDisposable
     {
         await _roslyn.LoadAllProjectsAsync(solutionPath, ExcludeTestProjects, ct);
         _graph.Source = Path.GetFullPath(solutionPath);
+        StampPlatform();
         return BuildSolutionGraph();
     }
 

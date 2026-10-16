@@ -37,6 +37,9 @@ public static class GraphSerializer
             BuiltAt = graph.BuiltAt,
             ExtractorBuiltAt = graph.ExtractorBuiltAt,
             Source = graph.Source,
+            HostArchitecture = graph.HostArchitecture,
+            Platform = graph.Platform,
+            PlatformFrom = graph.PlatformFrom,
             ForeignData = DescribeForeignData(graph),
             Nodes = graph.Nodes.Select(ToNodeDto).ToList(),
             Edges = graph.Edges.Select(e => new EdgeDto
@@ -129,7 +132,15 @@ public static class GraphSerializer
 
     private static CodeGraph ToGraph(GraphDto dto, GraphFormatAssessment assessment)
     {
-        var graph = new CodeGraph { BuiltAt = dto.BuiltAt, ExtractorBuiltAt = dto.ExtractorBuiltAt, Source = dto.Source };
+        var graph = new CodeGraph
+        {
+            BuiltAt = dto.BuiltAt,
+            ExtractorBuiltAt = dto.ExtractorBuiltAt,
+            Source = dto.Source,
+            HostArchitecture = dto.HostArchitecture,
+            Platform = dto.Platform,
+            PlatformFrom = dto.PlatformFrom
+        };
 
         // Provenance the elements cannot carry. A newer format can add a property
         // to a kind we do know, which leaves nothing locally strange to spot at
@@ -303,6 +314,19 @@ public static class GraphSerializer
         /// <summary>What the graph was extracted from. Null on graphs written
         /// before the field existed, which leaves the loader to name an origin.</summary>
         public string? Source { get; set; }
+
+        /// <summary>The CPU of the machine that extracted the graph. Null on graphs
+        /// written before the field existed.</summary>
+        public string? HostArchitecture { get; set; }
+
+        /// <summary>The MSBuild Platform the workspace loaded with; null when no
+        /// value was set, or on graphs written before the field existed --
+        /// <see cref="PlatformFrom"/> tells those apart.</summary>
+        public string? Platform { get; set; }
+
+        /// <summary>requested, environment or projectDefault. Null on graphs
+        /// written before the field existed, which reads as "cannot tell".</summary>
+        public string? PlatformFrom { get; set; }
 
         // Second for the same reason, and omitted entirely when the graph holds
         // nothing foreign -- its presence is the signal.

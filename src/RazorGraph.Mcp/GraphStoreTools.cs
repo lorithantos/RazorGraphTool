@@ -24,6 +24,7 @@ internal sealed class GraphStoreTools(GraphStore store)
         [Description("Also graph vendor/minified client assets (dropped by default). Their nodes carry vendor=true and a vendorReason; useful when the bug lives inside a shipped bundle.")] bool includeVendor = false,
         [Description(ExcludeLiteralsDescription)] bool excludeLiterals = false,
         [Description("Absolute path to an attribute-policy JSON overriding the embedded default (classification name sets, argument-payload suppression, registration vocabulary). Sections the file omits are inherited.")] string? attributePolicy = null,
+        [Description(PlatformDescription)] string? platform = null,
         CancellationToken ct = default)
     {
         var full = Path.GetFullPath(path);
@@ -39,7 +40,8 @@ internal sealed class GraphStoreTools(GraphStore store)
         {
             IncludeVendorAssets = includeVendor,
             ExcludeLiterals = excludeLiterals,
-            AttributePolicy = LoadPolicy(attributePolicy)
+            AttributePolicy = LoadPolicy(attributePolicy),
+            Platform = platform
         };
         var graph = isSolution
             ? await builder.BuildFromSolutionAsync(full, projectName!, ct)
@@ -60,6 +62,16 @@ internal sealed class GraphStoreTools(GraphStore store)
         "default graph answers every question. Quotes edges and quoted_symbols are unaffected either way — " +
         "they are a different question over the same scan. A build that used this says so in its summary.";
 
+    /// <summary>
+    /// Shared for the same reason. Omitting it must stay the old behaviour, which
+    /// is why the description says what omitting does rather than calling it a
+    /// default: the server's environment decides, and a restart can change that.
+    /// </summary>
+    private const string PlatformDescription =
+        "Passed to MSBuild as the Platform global property, e.g. x64, AnyCPU, ARM64. Omit it to inherit " +
+        "the server's environment, as builds always have; the graph records which happened as platform " +
+        "and platformFrom (requested, environment or projectDefault).";
+
     [McpServerTool(Name = "build_solution")]
     [Description("Build ONE graph spanning every project in a solution (.sln/.slnx). Unlike build_graph, calls and injections that cross project boundaries become real edges — this is what makes \"which tests cover this method\" and \"what breaks if I change this\" answerable. Adds Project nodes, per-node project attribution, and Covers edges from test methods to the code they exercise. Slower than build_graph: it compiles every project.")]
     public async Task<string> BuildSolution(
@@ -69,6 +81,7 @@ internal sealed class GraphStoreTools(GraphStore store)
         [Description("Skip test projects: no test Method nodes, no Covers edges — a leaner navigation graph. Coverage tools refuse to answer against it rather than reporting everything uncovered. Default false, so the default graph answers every question.")] bool excludeTests = false,
         [Description(ExcludeLiteralsDescription)] bool excludeLiterals = false,
         [Description("Absolute path to an attribute-policy JSON overriding the embedded default (classification name sets, argument-payload suppression, registration vocabulary). Sections the file omits are inherited.")] string? attributePolicy = null,
+        [Description(PlatformDescription)] string? platform = null,
         CancellationToken ct = default)
     {
         var full = Path.GetFullPath(path);
@@ -81,7 +94,8 @@ internal sealed class GraphStoreTools(GraphStore store)
             IncludeVendorAssets = includeVendor,
             ExcludeTestProjects = excludeTests,
             ExcludeLiterals = excludeLiterals,
-            AttributePolicy = LoadPolicy(attributePolicy)
+            AttributePolicy = LoadPolicy(attributePolicy),
+            Platform = platform
         };
         var graph = await builder.BuildFromSolutionAllAsync(full, ct);
 
@@ -196,7 +210,7 @@ internal sealed class GraphStoreTools(GraphStore store)
     }
 
     [McpServerTool(Name = "list_graphs")]
-    [Description("Every graph currently held by the server: id, source, when it was BUILT and when it was loaded, and its size. Cheap. The 'current' one is what tools use when graphId is omitted. builtAt is the one that matters for trusting an answer — loadedAt only says when it entered this server, so a graph loaded from a saved file a minute ago can have been built days before. builtAt is null on a graph saved before the stamp existed, which means \"cannot tell\", never \"fresh\". extractorBuiltAt is the other half: it says which extractor produced the graph rather than when extraction ran, so a graph rebuilt seconds ago can still carry answers from a binary older than the working tree. Null there means \"cannot tell\" too, never \"current\". source is what the graph was extracted from (its .sln, .slnx, .csproj or Lua directory) and survives save_graph and load_graph; loadedFrom is the file load_graph read it from, absent for a graph built here. A graph saved before source was recorded reports that file as both.")]
+    [Description("Every graph currently held by the server: id, source, when it was BUILT and when it was loaded, and its size. Cheap. The 'current' one is what tools use when graphId is omitted. builtAt is the one that matters for trusting an answer — loadedAt only says when it entered this server, so a graph loaded from a saved file a minute ago can have been built days before. builtAt is null on a graph saved before the stamp existed, which means \"cannot tell\", never \"fresh\". extractorBuiltAt is the other half: it says which extractor produced the graph rather than when extraction ran, so a graph rebuilt seconds ago can still carry answers from a binary older than the working tree. Null there means \"cannot tell\" too, never \"current\". source is what the graph was extracted from (its .sln, .slnx, .csproj or Lua directory) and survives save_graph and load_graph; loadedFrom is the file load_graph read it from, absent for a graph built here. A graph saved before source was recorded reports that file as both. hostArchitecture is the CPU that built the graph; platform is the MSBuild Platform it was built with and platformFrom says why -- requested, inherited from the server's environment, or projectDefault, where platform is absent. Generated-code paths depend on it, so compare those before reading a difference between two graphs as a code change. All three absent means a graph saved before they were recorded: \"cannot tell\", never projectDefault.")]
     public string ListGraphs()
     {
         var entries = store.List().Select(e => new
@@ -212,6 +226,11 @@ internal sealed class GraphStoreTools(GraphStore store)
             // reports loadedAt as seconds ago, which reads as fresh.
             builtAt = e.Graph.BuiltAt,
             extractorBuiltAt = e.Graph.ExtractorBuiltAt,
+            // What the graph was built for. Two graphs of one source can differ
+            // only in these, and a diff that cannot see them reads as a code change.
+            hostArchitecture = e.Graph.HostArchitecture,
+            platform = e.Graph.Platform,
+            platformFrom = e.Graph.PlatformFrom,
             loadedAt = e.LoadedAt,
             nodes = e.Graph.Nodes.Count,
             edges = e.Graph.Edges.Count,
@@ -227,7 +246,7 @@ internal sealed class GraphStoreTools(GraphStore store)
         ToolResponses.ToJson(new { dropped = store.Remove(graphId), graphId });
 
     [McpServerTool(Name = "graph_summary")]
-    [Description("Summary of one graph: source path, node/edge counts by type, and both build stamps. Cheap orientation call. builtAt is when extraction ran; extractorBuiltAt is when the extractor that ran it was itself built, so a graph rebuilt seconds ago can still carry answers from an older binary. Either is null when it cannot be told, which is never \"fresh\".")]
+    [Description("Summary of one graph: source path, node/edge counts by type, and both build stamps. Cheap orientation call. builtAt is when extraction ran; extractorBuiltAt is when the extractor that ran it was itself built, so a graph rebuilt seconds ago can still carry answers from an older binary. Either is null when it cannot be told, which is never \"fresh\". hostArchitecture, platform and platformFrom say what the graph was built for, as list_graphs describes.")]
     public string GraphSummary([Description(ToolArguments.GraphIdDescription)] string? graphId = null) =>
         Summarize(store.Require(graphId));
 
@@ -264,6 +283,9 @@ internal sealed class GraphStoreTools(GraphStore store)
             // extractor answered, not only that extraction just ran.
             builtAt = graph.BuiltAt,
             extractorBuiltAt = graph.ExtractorBuiltAt,
+            hostArchitecture = graph.HostArchitecture,
+            platform = graph.Platform,
+            platformFrom = graph.PlatformFrom,
             // Present on load responses: which format the file on disk carried.
             // A freshly built graph is this build's format by construction, so
             // only a load has something to report.

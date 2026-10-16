@@ -108,9 +108,33 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// <summary>File path of the loaded project, for locating its Razor files.</summary>
     public string? ProjectFilePath => _loaded.Count > 0 ? _loaded[0].FilePath : null;
 
+    /// <summary>
+    /// The MSBuild <c>Platform</c> to load with, passed to the workspace as a
+    /// global property -- x64, AnyCPU, ARM64. Null, the default, passes none, so
+    /// MSBuild takes Platform from this process's environment if it is set there
+    /// and from each project's default if not. Blank is null: an empty global
+    /// property would not mean "unset", it would override the environment with
+    /// nothing.
+    /// </summary>
+    public string? Platform
+    {
+        get => _platform;
+        set => _platform = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+    private string? _platform;
+
+    /// <summary>
+    /// The workspace every load opens. Without a requested Platform this is the
+    /// parameterless Create it has always been, so a build that asks for nothing
+    /// behaves exactly as before; the graph only records what it inherited.
+    /// </summary>
+    private MSBuildWorkspace CreateWorkspace() => Platform is { } platform
+        ? MSBuildWorkspace.Create(new Dictionary<string, string> { ["Platform"] = platform })
+        : MSBuildWorkspace.Create();
+
     public async Task<Compilation> LoadProjectAsync(string projectPath, CancellationToken ct = default)
     {
-        _workspace = MSBuildWorkspace.Create();
+        _workspace = CreateWorkspace();
         var project = await _workspace.OpenProjectAsync(projectPath, cancellationToken: ct);
         WatchAnalyzerHost(project);
         var compilation = await project.GetCompilationAsync(ct)
@@ -123,7 +147,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
 
     public async Task<Compilation> LoadSolutionAsync(string solutionPath, string projectName, CancellationToken ct = default)
     {
-        _workspace = MSBuildWorkspace.Create();
+        _workspace = CreateWorkspace();
         Solution = await _workspace.OpenSolutionAsync(solutionPath, cancellationToken: ct);
         var project = Solution.Projects.FirstOrDefault(p =>
             p.Name.Equals(projectName, StringComparison.OrdinalIgnoreCase))
@@ -146,7 +170,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
     public async Task<IReadOnlyList<LoadedProject>> LoadAllProjectsAsync(
         string solutionPath, bool excludeTestProjects = false, CancellationToken ct = default)
     {
-        _workspace = MSBuildWorkspace.Create();
+        _workspace = CreateWorkspace();
         Solution = await _workspace.OpenSolutionAsync(solutionPath, cancellationToken: ct);
 
         _loaded.Clear();

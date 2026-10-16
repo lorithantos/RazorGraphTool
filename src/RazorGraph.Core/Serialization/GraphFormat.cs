@@ -103,6 +103,14 @@ internal static class GraphFormat
     /// docsStart. It cannot be derived as lineStart - 1 once an attribute list
     /// sits between comment and declaration. Additive, unlike 2.0's rename: a
     /// 3.2 graph read here has no docsEnd, which reads as "not known".
+    /// 3.4 added the document-level <c>hostArchitecture</c>, <c>platform</c> and
+    /// <c>platformFrom</c>, and <c>platformTarget</c> on Project nodes, because
+    /// MSBuild takes Platform from the environment when nothing passes it, and two
+    /// builds of the same source either side of a server restart put generated
+    /// code under different obj paths with nothing in either graph to say why.
+    /// Additive, as 3.1's source was: a 3.3 reader ignores the keys, and a 3.3
+    /// graph read here has no stamp, which reads as "cannot tell" -- never as
+    /// "projectDefault".
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -143,7 +151,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(3, 3);
+    public static readonly GraphFormatVersion Current = new(3, 4);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

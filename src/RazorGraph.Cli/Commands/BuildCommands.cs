@@ -30,6 +30,7 @@ internal static class BuildCommands
         };
         var noLiteralsOpt = NoLiteralsOption();
         var policyOpt = AttributePolicyOption();
+        var platformOpt = PlatformOption();
 
         var cmd = new Command("build", "Build graph from a project or solution and output JSON");
         cmd.Add(pathArg);
@@ -38,6 +39,7 @@ internal static class BuildCommands
         cmd.Add(includeVendorOpt);
         cmd.Add(noLiteralsOpt);
         cmd.Add(policyOpt);
+        cmd.Add(platformOpt);
 
         cmd.SetAction((parseResult, ct) => RunBuildAsync(
             parseResult.GetValue(pathArg)!,
@@ -46,6 +48,7 @@ internal static class BuildCommands
             parseResult.GetValue(includeVendorOpt),
             parseResult.GetValue(noLiteralsOpt),
             parseResult.GetValue(policyOpt),
+            parseResult.GetValue(platformOpt),
             ct));
 
         return cmd;
@@ -60,6 +63,17 @@ internal static class BuildCommands
     {
         Description = "Skip the literal index: no Literal nodes, no Mentions edges, so 'query --literals' "
             + "returns nothing against the resulting graph. Quotes edges are unaffected."
+    };
+
+    /// <summary>
+    /// The CLI spelling of the MCP tools' platform, shared by both build commands.
+    /// Omitted, nothing is passed and MSBuild inherits Platform from the shell, as
+    /// it always has; the graph file records which of those happened.
+    /// </summary>
+    private static Option<string?> PlatformOption() => new("--platform")
+    {
+        Description = "Passed to MSBuild as the Platform global property, e.g. x64, AnyCPU, ARM64. Omit it to "
+            + "inherit this shell's environment; the graph records which happened as platform and platformFrom."
     };
 
     private static Option<FileInfo?> AttributePolicyOption() => new("--attribute-policy")
@@ -86,7 +100,7 @@ internal static class BuildCommands
 
     private static async Task<int> RunBuildAsync(
         FileInfo path, string outputPath, string? projectName, bool includeVendor, bool noLiterals,
-        FileInfo? policyFile, CancellationToken ct)
+        FileInfo? policyFile, string? platform, CancellationToken ct)
     {
         if (!path.Exists)
         {
@@ -111,7 +125,8 @@ internal static class BuildCommands
         {
             IncludeVendorAssets = includeVendor,
             ExcludeLiterals = noLiterals,
-            AttributePolicy = policy
+            AttributePolicy = policy,
+            Platform = platform
         };
         var graph = isSolution
             ? await builder.BuildFromSolutionAsync(path.FullName, projectName!, ct)
@@ -192,6 +207,7 @@ internal static class BuildCommands
         };
         var noLiteralsOpt = NoLiteralsOption();
         var policyOpt = AttributePolicyOption();
+        var platformOpt = PlatformOption();
 
         var cmd = new Command("build-solution",
             "Build ONE graph spanning every project in a solution, with edges that cross project boundaries");
@@ -201,6 +217,7 @@ internal static class BuildCommands
         cmd.Add(noTestsOpt);
         cmd.Add(noLiteralsOpt);
         cmd.Add(policyOpt);
+        cmd.Add(platformOpt);
 
         cmd.SetAction((parseResult, ct) => RunBuildSolutionAsync(
             parseResult.GetValue(pathArg)!,
@@ -209,6 +226,7 @@ internal static class BuildCommands
             parseResult.GetValue(noTestsOpt),
             parseResult.GetValue(noLiteralsOpt),
             parseResult.GetValue(policyOpt),
+            parseResult.GetValue(platformOpt),
             ct));
 
         return cmd;
@@ -216,7 +234,7 @@ internal static class BuildCommands
 
     private static async Task<int> RunBuildSolutionAsync(
         FileInfo path, string outputPath, bool includeVendor, bool noTests, bool noLiterals,
-        FileInfo? policyFile, CancellationToken ct)
+        FileInfo? policyFile, string? platform, CancellationToken ct)
     {
         if (!path.Exists)
         {
@@ -240,7 +258,8 @@ internal static class BuildCommands
             IncludeVendorAssets = includeVendor,
             ExcludeTestProjects = noTests,
             ExcludeLiterals = noLiterals,
-            AttributePolicy = policy
+            AttributePolicy = policy,
+            Platform = platform
         };
         var graph = await builder.BuildFromSolutionAllAsync(path.FullName, ct);
 
