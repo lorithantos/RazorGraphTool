@@ -50,6 +50,15 @@ for (int i = 0; i < args.Length; i++)
     }
 }
 
+// The environment a fresh sign-in would give this server, not the launching terminal's. First,
+// before anything reads configuration or registers MSBuild: MSBuild promotes environment
+// variables to global properties, so a Platform inherited from a developer prompt would shape
+// every graph this server builds, and MSBuild's build host inherits whatever is here.
+// RAZORGRAPH_* survives, so the server's own settings still arrive.
+// RAZORGRAPH_KEEP_ENVIRONMENT=1 keeps the inherited environment instead. Over HTTP only: a stdio
+// server belongs to its client, whose env block is deliberate. See ServerEnvironment.Apply.
+ServerEnvironment.Apply(resident: http);
+
 if (port == 0)
 {
     port = DefaultPort;

@@ -63,6 +63,17 @@ dotnet publish src/RazorGraph.Mcp -c Release -o .mcp-bin
 
 (`RazorGraph.Mcp.exe` with no flags speaks stdio instead, for clients that need it.)
 
+The server **does not keep the environment of the shell that started it**. On Windows it
+rebuilds the one a fresh sign-in would give it — machine and user variables from the
+registry, the per-logon ones, and any `RAZORGRAPH_*` — and drops the rest before anything
+else runs. MSBuild turns environment variables into global properties, so a server started
+from a Visual Studio x64 prompt would otherwise build every graph for `Platform=x64`. This
+applies to the HTTP server only: a stdio server belongs to the client that started it, and
+keeps whatever that client's config set. Set
+`RAZORGRAPH_KEEP_ENVIRONMENT=1` to keep the inherited environment on purpose. `server_info`
+reports what this did under `environment` (`applied`, `skippedBecause`, `dropped`,
+`changed`, `keptFromLauncher`), by variable name only — never values.
+
 Restart the session and 25 tools appear: `server_info`, `build_graph`, `build_solution`, `build_lua`,
 `load_graph`, `save_graph`, `list_graphs`, `drop_graph`, `graph_summary`, `find_nodes`, `get_node`,
 `render_tree`, `page_context`, `trace_data_flow`, `find_path`, `covering_tests`,

@@ -21,11 +21,26 @@ internal sealed class ServerTools(GraphStore store)
     [Description(
         "Which build of razorgraph-mcp is answering right now: version, the resolved build " +
         "directory behind the 'current' junction, process id, uptime, and how many graphs are " +
-        "loaded. Cheap. Use it after a rebuild to confirm the swap landed, and to tell a stale " +
+        "loaded, and what normalising its environment at startup did: 'environment' says whether " +
+        "it was applied (or why it was skipped) and which variables the launching shell had that " +
+        "were dropped, changed, or kept as RAZORGRAPH_* configuration. Variable NAMES only, never " +
+        "values. Cheap. Use it after a rebuild to confirm the swap landed, and to tell a stale " +
         "server from a stale graph when a query answers with something you did not expect.")]
-    public string ServerInfo()
+    public string ServerInfo() => ServerInfo(ServerEnvironment.Last);
+
+    /// <summary>server_info with the environment report passed in, so a test can supply one.</summary>
+    /// <remarks>
+    /// The real report comes from ServerEnvironment.Apply, which only the entry point may call: it
+    /// rewrites the process environment, and a test process shares one across every test.
+    /// </remarks>
+    internal string ServerInfo(EnvironmentReport? environment)
     {
         var process = Process.GetCurrentProcess();
+
+        // Null means Apply never ran in this process -- a host that is not Program, such as a
+        // test -- which is a different answer from "skipped", so it says so rather than going quiet.
+        var report = environment ?? new EnvironmentReport(
+            false, "not run: this process did not start through razorgraph-mcp's entry point", [], [], []);
 
         return ToolResponses.ToJson(new
         {
@@ -40,6 +55,17 @@ internal sealed class ServerTools(GraphStore store)
             processId = Environment.ProcessId,
             uptimeSeconds = (int)(DateTime.Now - process.StartTime).TotalSeconds,
             graphsLoaded = store.List().Count,
+
+            // Names only: a launcher's environment can hold tokens and connection strings, and
+            // this answer lands in transcripts. skippedBecause is absent when it was applied.
+            environment = new
+            {
+                applied = report.Applied,
+                skippedBecause = report.SkippedBecause,
+                dropped = report.Dropped,
+                changed = report.Changed,
+                keptFromLauncher = report.KeptFromLauncher,
+            },
         });
     }
 
