@@ -720,15 +720,32 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
             // changes no edge -- measured on two corpora before it went in.
             if (dependency.Kind is DependencyKind.Framework or DependencyKind.Value) continue;
 
+            // A constructed generic is looked up by its open definition only after
+            // the name as written misses, so every edge that resolved before still
+            // resolves the same way. The solution declares IRepository<T>, never
+            // IRepository<CatalogItem>, so without the second lookup the most-used
+            // seam in a generic-repository codebase emitted no edge at all.
             var serviceNode = FindServiceNode(dependency.TypeFullName);
+            var viaDefinition = false;
+            if (serviceNode == null && dependency.DefinitionFullName is { } definition)
+            {
+                serviceNode = FindServiceNode(definition);
+                viaDefinition = serviceNode != null;
+            }
             if (serviceNode != null)
             {
-                graph.AddEdge(new GraphEdge
+                var edge = new GraphEdge
                 {
                     FromId = serviceNode.Id,
                     ToId = sym.Id,
                     Type = EdgeType.InjectedInto
-                });
+                };
+                // closedType is the parameter type as written, carried only on an
+                // edge that reached its node through the definition. Three
+                // repositories of different entities are three edges into the same
+                // open node, and this is the only thing telling them apart.
+                if (viaDefinition) edge.Properties["closedType"] = dependency.TypeFullName;
+                graph.AddEdge(edge);
             }
         }
     }

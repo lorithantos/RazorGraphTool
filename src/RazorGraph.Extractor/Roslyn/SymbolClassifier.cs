@@ -1155,9 +1155,15 @@ internal static class SymbolClassifier
         var ctor = symbol.InstanceConstructors.FirstOrDefault(c => c.DeclaredAccessibility == Accessibility.Public);
         if (ctor == null) return new List<InjectedDependency>();
         return ctor.Parameters
-            .Select(p => new InjectedDependency(p.Type.ToDisplayString(), ClassifyDependency(p.Type, inScope)))
+            .Select(p => new InjectedDependency(p.Type.ToDisplayString(), ClassifyDependency(p.Type, inScope), DefinitionName(p.Type)))
             .ToList();
     }
+
+    private static string? DefinitionName(ITypeSymbol type) =>
+        type is INamedTypeSymbol { IsGenericType: true } named
+        && !SymbolEqualityComparer.Default.Equals(named, named.OriginalDefinition)
+            ? named.OriginalDefinition.ToDisplayString()
+            : null;
 
     private static DependencyKind ClassifyDependency(ITypeSymbol type, IReadOnlySet<string> inScope)
     {

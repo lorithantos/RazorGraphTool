@@ -133,7 +133,14 @@ internal enum DependencyKind
 /// The parameter type's display string, constructed type arguments included, so
 /// it is exactly the name AddInjectionEdges has always resolved edges by.
 /// </param>
-internal sealed record InjectedDependency(string TypeFullName, DependencyKind Kind);
+/// <param name="DefinitionFullName">
+/// The open generic definition's display string when the parameter type is a
+/// constructed generic -- <c>IRepository&lt;T&gt;</c> for a parameter typed
+/// <c>IRepository&lt;CatalogItem&gt;</c> -- and null otherwise. The solution
+/// declares the definition, never the construction, so this is the name its
+/// node carries.
+/// </param>
+internal sealed record InjectedDependency(string TypeFullName, DependencyKind Kind, string? DefinitionFullName = null);
 
 internal sealed class SymbolInfo
 {

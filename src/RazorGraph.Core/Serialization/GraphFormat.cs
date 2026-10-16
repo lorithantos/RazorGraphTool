@@ -93,6 +93,12 @@ internal static class GraphFormat
     /// loaded back still names its solution rather than the file it passed
     /// through. Additive, as 1.2's builtAt was: a 3.0 reader ignores the key, and
     /// a 3.0 graph read here has no source and is named after its file.
+    /// 3.2 resolves a constructor parameter typed as a constructed generic --
+    /// <c>IRepository&lt;CatalogItem&gt;</c> -- to the open definition's node when
+    /// the name as written matches nothing, and puts the written type on that
+    /// edge as <c>closedType</c>. Additive in the 1.4 sense: no edge changed, but
+    /// InjectedInto gained members, so a 3.1 reader absorbs more of an edge type
+    /// it already knows and the caveat is what tells it the population moved.
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -133,7 +139,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(3, 1);
+    public static readonly GraphFormatVersion Current = new(3, 2);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";
