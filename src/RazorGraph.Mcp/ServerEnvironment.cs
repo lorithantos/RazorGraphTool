@@ -186,21 +186,14 @@ internal static class ServerEnvironment
     /// server's entry point; everything it starts afterwards inherits the result. Never from a
     /// test: it rewrites the environment every test in the process shares.
     /// </summary>
-    /// <param name="resident">
-    /// True for the HTTP server, which outlives the shell that started it and is shared by every
-    /// session. False for stdio, where the MCP client owns the process for exactly its own life,
-    /// and anything in its config's env block -- DOTNET_ROOT, say -- was set there on purpose. A
-    /// stdio server keeps what it was given, and the report says so. janet-mcp does not make this
-    /// distinction yet; that is a gap there, not a choice to copy.
-    /// </param>
-    internal static EnvironmentReport Apply(bool resident = true)
+    /// <remarks>
+    /// Over stdio too, as janet-mcp does. A client's env block is as much an accident of where the
+    /// client was started as a terminal's is, and the point is that no launcher shapes a graph.
+    /// Whatever a build genuinely needs -- a platform -- is a parameter of the call that needs it.
+    /// </remarks>
+    internal static EnvironmentReport Apply()
     {
         IDictionary launcher = Environment.GetEnvironmentVariables();
-
-        if (!resident)
-        {
-            return Last = new EnvironmentReport(false, "stdio: the MCP client owns this process and its environment", [], [], []);
-        }
 
         if (launcher[OptOutVariable] is string optOut && (optOut == "1" || optOut.Equals("true", StringComparison.OrdinalIgnoreCase)))
         {

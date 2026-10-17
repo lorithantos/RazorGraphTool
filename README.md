@@ -68,8 +68,9 @@ rebuilds the one a fresh sign-in would give it — machine and user variables fr
 registry, the per-logon ones, and any `RAZORGRAPH_*` — and drops the rest before anything
 else runs. MSBuild turns environment variables into global properties, so a server started
 from a Visual Studio x64 prompt would otherwise build every graph for `Platform=x64`. This
-applies to the HTTP server only: a stdio server belongs to the client that started it, and
-keeps whatever that client's config set. Set
+applies over stdio too, so an MCP client's `env` block is dropped like a terminal's: a
+build that needs a particular platform passes `platform` to `build_graph` or
+`build_solution` instead. Set
 `RAZORGRAPH_KEEP_ENVIRONMENT=1` to keep the inherited environment on purpose. `server_info`
 reports what this did under `environment` (`applied`, `skippedBecause`, `dropped`,
 `changed`, `keptFromLauncher`), by variable name only — never values.

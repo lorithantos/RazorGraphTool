@@ -55,9 +55,10 @@ for (int i = 0; i < args.Length; i++)
 // variables to global properties, so a Platform inherited from a developer prompt would shape
 // every graph this server builds, and MSBuild's build host inherits whatever is here.
 // RAZORGRAPH_* survives, so the server's own settings still arrive.
-// RAZORGRAPH_KEEP_ENVIRONMENT=1 keeps the inherited environment instead. Over HTTP only: a stdio
-// server belongs to its client, whose env block is deliberate. See ServerEnvironment.Apply.
-ServerEnvironment.Apply(resident: http);
+// RAZORGRAPH_KEEP_ENVIRONMENT=1 keeps the inherited environment instead. Both transports: a
+// client's env block contaminates a graph as surely as a terminal's, and a build that needs a
+// particular platform asks for it as a parameter. See ServerEnvironment.Apply.
+ServerEnvironment.Apply();
 
 if (port == 0)
 {
