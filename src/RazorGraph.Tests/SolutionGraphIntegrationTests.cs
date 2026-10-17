@@ -1283,6 +1283,17 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void TypeNode_ListsPropertiesAndMethodsByName_NotByDeclarationOrder()
+    {
+        // Declared Zeta, Alpha, then Middle in a second partial file: neither source
+        // order nor file order, so only a sort produces this.
+        var node = _solutionGraph!.GetNode("type:SampleLib.SortedMembers");
+
+        Assert.Equal(["Alpha", "Middle", "Zeta"], node!.GetProperty<List<string>>("properties"));
+        Assert.Equal(["Close", "Open", "Run"], node.GetProperty<List<string>>("methods"));
+    }
+
+    [Fact]
     public void ContainingType_AdvertisesDeclaredMembers_NotLoweredAccessors()
     {
         // The dangerous half of the original defect: the type advertised

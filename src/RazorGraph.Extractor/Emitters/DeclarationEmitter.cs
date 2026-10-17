@@ -78,8 +78,13 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
         if (sym.BaseType != null) node.SetProperty("baseType", sym.BaseType);
         if (sym.GeneratedFrom != null) node.SetProperty("generatedFrom", sym.GeneratedFrom);
         StampGenerated(node);
-        if (sym.Properties.Count > 0) node.SetProperty("properties", sym.Properties.Select(p => p.Name).ToList());
-        if (sym.Methods.Count > 0) node.SetProperty("methods", sym.Methods.Select(m => m.Name).ToList());
+        // Sorted by name: members come from GetMembers(), whose order across partial
+        // declarations -- source-generated ones above all -- is not fixed from build to
+        // build, and a list that reorders itself makes two graphs of one source differ.
+        if (sym.Properties.Count > 0)
+            node.SetProperty("properties", sym.Properties.Select(p => p.Name).Order(StringComparer.Ordinal).ToList());
+        if (sym.Methods.Count > 0)
+            node.SetProperty("methods", sym.Methods.Select(m => m.Name).Order(StringComparer.Ordinal).ToList());
         // One object per constructor parameter, kind as its camelCase enum name.
         // Stored as List<object> of Dictionary<string, object> rather than as the
         // records themselves, because that is exactly the shape the serializer
