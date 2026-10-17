@@ -83,12 +83,74 @@ public class TextFileEmitterTests : IDisposable
         WriteFile(@"tools\vendor\pkg\package.json", "{}\n");
         WriteFile("App.csproj", "<Project />\n");
         RunGit("init", "--quiet");
+        RunGit("add", "--all");
 
         var (graph, emitter) = Emit();
 
         Assert.Equal(["text:App.csproj"], TextIds(graph));
         Assert.Contains(emitter.SkipSummaries, s => s.StartsWith("2 file(s) under vendor", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void Population_InAGitTree_LeavesOutUntrackedFiles_AndNamesThem()
+    {
+        // The case the rule is for: a local settings copy nobody committed. git does not
+        // ignore it, so grep's disk section reads it -- but the graph, which is saved and
+        // exported, must not carry its lines.
+        WriteFile("App.csproj", "<Project />\n");
+        WriteFile(@"config\settings.json", "{}\n");
+        RunGit("init", "--quiet");
+        RunGit("add", "App.csproj", "config/settings.json");
+        WriteFile(@"config\settings.mine.json", "{ \"conn\": \"Server=prod\" }\n");
+        WriteFile("scratch.md", "# notes\n");
+
+        var (graph, emitter) = Emit();
+
+        Assert.Equal(["text:App.csproj", "text:config/settings.json"], TextIds(graph));
+        var summary = Assert.Single(emitter.SkipSummaries);
+        Assert.StartsWith("2 untracked file(s) not graphed as text", summary, StringComparison.Ordinal);
+        Assert.Contains("config/settings.mine.json", summary, StringComparison.Ordinal);
+        Assert.Contains("scratch.md", summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Population_LeavesOutSecretStyleNames_EvenWhenTracked_AndNamesEveryOne()
+    {
+        WriteFile(".env", "KEY=1\n");
+        WriteFile(@"src\Api\secrets.json", "{}\n");
+        WriteFile(@"deploy\site.publishsettings", "<x />\n");
+        WriteFile(@"src\Api\appsettings.json", "{}\n");
+        RunGit("init", "--quiet");
+        RunGit("add", "--all");
+
+        var (graph, emitter) = Emit();
+
+        Assert.Equal(["text:src/Api/appsettings.json"], TextIds(graph));
+        var summary = Assert.Single(emitter.SkipSummaries);
+        Assert.StartsWith("3 file(s) with secret-style names", summary, StringComparison.Ordinal);
+        Assert.Contains(".env, deploy/site.publishsettings, src/Api/secrets.json", summary, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(".env", true)]
+    [InlineData(".ENV.Production", true)]
+    [InlineData(".envrc", true)]
+    [InlineData("prod.env", true)]
+    [InlineData("client_secret_123.json", true)]
+    [InlineData("appsettings.Secrets.json", true)]
+    [InlineData("credentials.xml", true)]
+    [InlineData("server.pem", true)]
+    [InlineData("tls.key", true)]
+    [InlineData("local.settings.json", true)]
+    [InlineData("id_ed25519", true)]
+    [InlineData(".git-credentials", true)]
+    [InlineData("appsettings.json", false)]
+    [InlineData("appsettings.Development.json", false)]
+    [InlineData("environment.md", false)]
+    [InlineData("keys.md", false)]
+    [InlineData("main.bicep", false)]
+    public void SecretStyleName_MatchesTheConventionalCredentialFiles_AndNothingNearby(string name, bool expected) =>
+        Assert.Equal(expected, TextFileEmitter.HasSecretStyleName(name));
 
     private void RunGit(params string[] args)
     {

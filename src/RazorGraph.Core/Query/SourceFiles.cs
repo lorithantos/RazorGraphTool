@@ -91,8 +91,8 @@ public static class SourceFiles
     {
         if (GraphOutput.FindRepositoryRoot(folder) is not null)
         {
-            if (GitListFiles(folder) is { } tracked)
-                return (tracked, "git ls-files --cached --others --exclude-standard");
+            if (GitListFiles(folder, "--cached", "--others", "--exclude-standard") is { } listed)
+                return (listed, "git ls-files --cached --others --exclude-standard");
 
             return (WalkFiles(folder),
                 "directory walk (git repository, but git ls-files failed): skipped .git, vendor and build-output directories");
@@ -102,25 +102,40 @@ public static class SourceFiles
     }
 
     /// <summary>
-    /// Tracked plus untracked-but-not-ignored files under the folder, relative to it. Null
-    /// when git could not answer, so the caller walks instead of reporting an empty tree.
+    /// The files under the folder that git tracks, relative to it and spelled the way
+    /// <see cref="List"/> spells them. Tracked is null when the folder is not in a working
+    /// tree, and also when it is but git could not answer; InGitTree tells the two apart,
+    /// because only the first means nothing here is untracked.
     /// </summary>
-    private static List<string>? GitListFiles(string folder)
+    public static (bool InGitTree, IReadOnlySet<string>? Tracked) TrackedFiles(string folder)
+    {
+        if (GraphOutput.FindRepositoryRoot(folder) is null) return (false, null);
+
+        return (true, GitListFiles(folder, "--cached")?.ToHashSet(StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// The files git lists under the folder in the given modes, relative to it. Null when
+    /// git could not answer, so the caller walks instead of reporting an empty tree.
+    /// </summary>
+    private static List<string>? GitListFiles(string folder, params string[] modes)
     {
         try
         {
-            using var process = Process.Start(new ProcessStartInfo("git")
+            var start = new ProcessStartInfo("git")
             {
                 // Run IN the folder: ls-files then lists only what is beneath it, relative to it.
-                // -z: NUL-separated and unquoted, so no path needs unescaping.
-                ArgumentList = { "ls-files", "--cached", "--others", "--exclude-standard", "-z" },
                 WorkingDirectory = folder,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 StandardOutputEncoding = Encoding.UTF8,
                 UseShellExecute = false,
-            });
+            };
 
+            // -z: NUL-separated and unquoted, so no path needs unescaping.
+            foreach (var argument in (string[])["ls-files", .. modes, "-z"]) start.ArgumentList.Add(argument);
+
+            using var process = Process.Start(start);
             if (process is null) return null;
 
             // Drain stderr concurrently: a full pipe on either stream blocks git forever.

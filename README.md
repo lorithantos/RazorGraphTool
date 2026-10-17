@@ -173,7 +173,13 @@ ones `grep`'s disk section reads, listed by the same code: `git ls-files` in a w
 tree, a walk skipping vendor and build output elsewhere, binaries and files over 2 MB
 turned away and named in the build summary. C#, Razor and XAML files, and any file that
 is already a `JavaScriptFile` or `CssFile`, never become one; nor does text under a vendor
-directory or a minified name. So `grep`'s graph section answers for those files too, with
+directory or a minified name. The lines travel with every saved graph and the `research`
+export, so the graph holds only what the repository already publishes: in a git tree an
+untracked file stays out, and anywhere a file with a secret-style name (`.env*`, `.envrc`,
+`*secret*`, `*credential*`, `*.pem`, `*.key`, `*.publishsettings`, `local.settings.json`,
+`.netrc`, `.pgpass`, `.git-credentials`, SSH private keys) stays out, each named in the build
+summary. Both are still searched by `grep`'s disk section, which reads them without storing
+them. In a git tree where `git ls-files` fails, no file is graphed as text. So `grep`'s graph section answers for those files too, with
 `matchedOn: "text"` and the line — except a file written since the build, whose lines may
 no longer be true: the disk section answers for it, and `staleTextFiles` says how many.
 `get_node` returns `lines` as a count unless `fields=lines` asks. `excludeText`
