@@ -1,3 +1,4 @@
+using Janet.Mcp.Security;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -25,6 +26,8 @@ const int DefaultPort = 7718;
 bool http = false;
 bool printUrl = false;
 int port = 0;
+BearerMode authMode = HttpAuth.DefaultMode;
+string? authTokenCommand = null;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -33,9 +36,19 @@ for (int i = 0; i < args.Length; i++)
         case "--port" when i + 1 < args.Length: port = int.Parse(args[++i]); break;
         case "--http": http = true; break;
         case "--print-url": printUrl = true; break;
+        case HttpAuth.ModeOption when i + 1 < args.Length:
+            if (!HttpAuth.TryParseMode(args[++i], out authMode))
+            {
+                Console.Error.WriteLine($"{HttpAuth.ModeOption} takes require, report or off, not '{args[i]}'.");
+                return 2;
+            }
+
+            break;
+        case HttpAuth.TokenCommandOption when i + 1 < args.Length: authTokenCommand = args[++i]; break;
         case "--help":
             Console.Error.WriteLine("""
-                razorgraph-mcp [--http [--port N]] [--print-url]
+                razorgraph-mcp [--http [--port N] [--auth require|report|off]
+                               [--auth-token-command "<command line>"]] [--print-url]
 
                   --http       Serve over HTTP instead of stdio, for the development loop:
                                an HTTP server survives being killed and rebuilt mid-session,
@@ -43,11 +56,28 @@ for (int i = 0; i < args.Length; i++)
                   --port       HTTP port. Defaults to 7718. Starting a second server on a port
                                already serving razorgraph is a no-op, not an error: sessions
                                share one HTTP server, and with it one warm graph registry.
+                  --auth       The bearer check over HTTP. require (the default) answers 401 to
+                               any request without the token; report lets every request through
+                               and counts what it carried; off checks nothing. /health is never
+                               checked, and shows the mode and the counts.
+                  --auth-token-command
+                               The command whose trimmed stdout is the token: an executable,
+                               found through PATH, then its arguments, run without a shell. Run
+                               at startup and again at most every 30 s when a request's token
+                               does not match, so a rotated token is picked up. Required with
+                               --auth require.
                   --print-url  Print the URL and exit, to write client config without starting
                                anything.
                 """);
             return 0;
     }
+}
+
+// Before anything else runs: a server that could only ever answer 401 is refused, not started.
+if (http && HttpAuth.StartupError(authMode, authTokenCommand) is string authError)
+{
+    Console.Error.WriteLine($"razorgraph-mcp will not start: {authError}");
+    return 2;
 }
 
 // The environment a fresh sign-in would give this server, not the launching terminal's. First,
@@ -86,8 +116,20 @@ if (http)
         return 0;
     }
 
-    // Services, the loopback guard, the MCP endpoint and /health: see HttpTransport.Build.
-    WebApplication app = HttpTransport.Build(port);
+    Func<string?> tokenProvider;
+    try
+    {
+        tokenProvider = HttpAuth.CreateProvider(authTokenCommand);
+    }
+    catch (FormatException ex)
+    {
+        Console.Error.WriteLine($"razorgraph-mcp will not start: {HttpAuth.TokenCommandOption}: {ex.Message}");
+        return 2;
+    }
+
+    // Services, the loopback guard, the bearer check, the MCP endpoint and /health: see
+    // HttpTransport.Build. Disposed on the way out, which stops the bearer check's consumer.
+    await using WebApplication app = HttpTransport.Build(port, authMode, tokenProvider);
 
     try
     {
@@ -117,6 +159,16 @@ if (http)
     // is the tool asserting something it has not established.
     // Loopback only: this transport is a local development loop, not a network service.
     Console.Error.WriteLine($"razorgraph-mcp listening on http://127.0.0.1:{port}/");
+
+    // The token command already ran once, while the authenticator was built. Say so now if it
+    // failed, rather than leaving it for the first 401 to reveal. The error carries the command's
+    // stderr, never its stdout.
+    BearerAuthSnapshot auth = app.Services.GetRequiredService<BearerAuthenticator>().Snapshot();
+    Console.Error.WriteLine(
+        $"Bearer check: {auth.Mode}" +
+        (authMode == BearerMode.Off ? "." : auth.TokenConfigured ? ", token configured." : ", NO token configured.") +
+        (auth.ProviderError is null ? string.Empty : $" Reading it failed: {auth.ProviderError}"));
+
     await app.WaitForShutdownAsync();
 
     return 0;

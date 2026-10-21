@@ -1,12 +1,20 @@
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
+using Janet.Mcp.Security;
 
 namespace RazorGraph.Mcp;
 
 /// <summary>What a razorgraph-mcp reports about itself at /health.</summary>
+/// <param name="Server">Always <see cref="Health.Name"/>.</param>
+/// <param name="Version">The server's assembly version.</param>
+/// <param name="Auth">
+/// The bearer check's mode, whether a token is configured, its counters and any provider error.
+/// Never the token. Null from a server older than the check.
+/// </param>
 public sealed record HealthReport(
     [property: JsonPropertyName("server")] string Server,
-    [property: JsonPropertyName("version")] string Version);
+    [property: JsonPropertyName("version")] string Version,
+    [property: JsonPropertyName("auth")] BearerAuthSnapshot? Auth = null);
 
 /// <summary>
 /// Decides whether starting an HTTP server on a port is necessary or redundant.

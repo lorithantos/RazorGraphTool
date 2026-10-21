@@ -58,12 +58,15 @@ killed and rebuilt while a session stays open:
 
 ```bash
 dotnet publish src/RazorGraph.Mcp -c Release -o .mcp-bin
-.mcp-bin/RazorGraph.Mcp.exe --http          # port 7718 unless --port says otherwise
+.mcp-bin/RazorGraph.Mcp.exe --http --auth-token-command "<command that prints the token>"
+                                            # port 7718 unless --port says otherwise; see below
 ```
 
 (`RazorGraph.Mcp.exe` with no flags speaks stdio instead, for clients that need it.)
 
 The HTTP transport refuses any request whose Host is not `127.0.0.1`, `localhost` or `[::1]` (400), any request carrying a non-loopback `Origin`, `null` included (403), and any POST that is not `application/json` (415), on every endpoint including `/health`, so a browser page cannot reach it by DNS rebinding or a cross-site POST.
+
+It also checks a bearer token, set by `--auth require|report|off`. `require`, the default, answers 401 to any request without `Authorization: Bearer <token>`; `report` lets every request through and counts what each carried, the step to take before requiring; `off` checks nothing. The server keeps no token of its own: `--auth-token-command` names a command, run without a shell (its first word found through PATH), whose trimmed stdout is the token, for example `--auth-token-command "janet mcp-token --print"`. It runs at startup and again at most every 30 seconds when a request's token does not match, so a rotated token is picked up; a non-zero exit or a 10-second timeout leaves the server with no token and the reason on `/health`. Under `--auth require` the server will not start without it. `/health` is never checked, and reports the mode, whether a token is configured and the counts, never the token. Claude Code clients supply the header through `headersHelper` on the server's entry in `.mcp.json`. The guard and the check come from the `Janet.Mcp.Security` package, built from [Janet.Shared](https://github.com/lorithantos/Janet.Shared) and, for now, restored from the local feed `..\.packages` that `nuget.config` names.
 
 The server **does not keep the environment of the shell that started it**. On Windows it
 rebuilds the one a fresh sign-in would give it — machine and user variables from the
