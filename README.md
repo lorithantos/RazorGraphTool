@@ -63,6 +63,8 @@ dotnet publish src/RazorGraph.Mcp -c Release -o .mcp-bin
 
 (`RazorGraph.Mcp.exe` with no flags speaks stdio instead, for clients that need it.)
 
+The HTTP transport refuses any request whose Host is not `127.0.0.1`, `localhost` or `[::1]` (400), any request carrying a non-loopback `Origin`, `null` included (403), and any POST that is not `application/json` (415), on every endpoint including `/health`, so a browser page cannot reach it by DNS rebinding or a cross-site POST.
+
 The server **does not keep the environment of the shell that started it**. On Windows it
 rebuilds the one a fresh sign-in would give it — machine and user variables from the
 registry, the per-logon ones, and any `RAZORGRAPH_*` — and drops the rest before anything

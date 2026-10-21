@@ -86,19 +86,8 @@ if (http)
         return 0;
     }
 
-    WebApplicationBuilder builder = WebApplication.CreateBuilder();
-    builder.Services.AddSingleton<GraphStore>();
-    builder.Services.AddMcpServer().WithHttpTransport().WithToolsFromAssembly();
-
-    WebApplication app = builder.Build();
-    app.MapMcp();
-
-    // Lets another instance tell "a razorgraph-mcp" from "someone else's port".
-    app.MapGet("/health", () => new HealthReport(
-        Health.Name,
-        typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0"));
-
-    app.Urls.Add($"http://127.0.0.1:{port}");
+    // Services, the loopback guard, the MCP endpoint and /health: see HttpTransport.Build.
+    WebApplication app = HttpTransport.Build(port);
 
     try
     {
