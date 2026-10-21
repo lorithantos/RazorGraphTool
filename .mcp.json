@@ -1,5 +1,5 @@
 {
   "mcpServers": {
-    "razorgraph": { "type": "http", "url": "http://127.0.0.1:7718/" }
+    "razorgraph": { "type": "http", "url": "http://127.0.0.1:7718/", "headersHelper": "janet mcp-headers" }
   }
 }
