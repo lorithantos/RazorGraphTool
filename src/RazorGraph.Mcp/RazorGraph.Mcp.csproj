@@ -24,7 +24,7 @@
       The loopback guard and the bearer check, shared with janet-mcp. From Janet.Shared
       (https://github.com/lorithantos/Janet.Shared), served from the local feed in nuget.config.
     -->
-    <PackageReference Include="Janet.Mcp.Security" Version="0.7.0" />
+    <PackageReference Include="Janet.Mcp.Security" Version="0.8.0" />
     <!--
       No Microsoft.Extensions.Hosting package reference: the ASP.NET Core shared framework
       already carries it, and NU1510 correctly calls the duplicate unnecessary.

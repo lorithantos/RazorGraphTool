@@ -30,6 +30,18 @@ public sealed class BearerPipelineTests
     }
 
     [Fact]
+    public async Task TheRefusalTellsTheClientToGetItsHeaderFromJanet()
+    {
+        await using RunningTransport server = await RunningTransport.StartAsync(BearerMode.Require, () => Token);
+
+        using HttpResponseMessage missing = await server.Client.SendAsync(server.InitializeRequest());
+        string body = await missing.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.Unauthorized, missing.StatusCode);
+        Assert.EndsWith(" Run `janet mcp-headers` to print the header to send.", body.TrimEnd());
+    }
+
+    [Fact]
     public async Task RequireStillAnswersHealthWithoutAToken()
     {
         await using RunningTransport server = await RunningTransport.StartAsync(BearerMode.Require, () => Token);

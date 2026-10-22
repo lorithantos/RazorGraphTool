@@ -10,6 +10,13 @@ namespace RazorGraph.Mcp;
 internal static class HttpTransport
 {
     /// <summary>
+    /// The sentence that ends every 401. Janet.Mcp.Security names no tool by default; this server's
+    /// clients get their header from janet, the one program that reads the per-machine token, so
+    /// the refusal says so.
+    /// </summary>
+    internal const string HeaderHint = "Run `janet mcp-headers` to print the header to send.";
+
+    /// <summary>
     /// Builds, but does not start, the HTTP server for a loopback port. Port 0 asks Kestrel for a
     /// free one, which is what the tests use; read app.Urls after StartAsync for the real port.
     /// </summary>
@@ -26,7 +33,7 @@ internal static class HttpTransport
 
         // Registered through a factory so the container owns it: disposing the app disposes the
         // authenticator, which stops its refresh consumer.
-        builder.Services.AddSingleton(_ => new BearerAuthenticator(mode, tokenProvider));
+        builder.Services.AddSingleton(_ => new BearerAuthenticator(mode, tokenProvider, headerHint: HeaderHint));
         builder.Services.AddMcpServer().WithHttpTransport().WithToolsFromAssembly();
 
         WebApplication app = builder.Build();
