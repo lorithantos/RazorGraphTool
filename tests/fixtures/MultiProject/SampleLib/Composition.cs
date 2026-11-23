@@ -145,6 +145,23 @@ public static class PartRegistry
     private static void Warm() { }
 }
 
+/// <summary>
+/// A type a test only ever BUILDS, whose static field initializer calls a method
+/// nothing else calls -- gamehub's GuardRetreatWorld.DrawnBoard shape. It declares
+/// no constructor and no instance initializer, so there is no constructor node to
+/// call: the Constructs edge is the only step from a test onto the type, and the
+/// type-sourced Calls edge the only step from the type to DrawBoard.
+/// </summary>
+public sealed class DrawnWorld
+{
+    private static readonly int Board = DrawBoard();
+
+    public int Size => Board;
+
+    /// <summary>Called only from the static field initializer.</summary>
+    private static int DrawBoard() => 3;
+}
+
 /// <summary>Built only inside a block-bodied property getter.</summary>
 public sealed class GetterPart
 {

@@ -35,6 +35,16 @@ internal sealed class CoverageEmitter(CodeGraph graph)
     /// through the interface is the ONLY way in. Conservative across multiple
     /// implementations, like reachability itself: any implementation the call
     /// could bind to is reached.
+    ///
+    /// The walk stands on properties and types as well as methods, because
+    /// Calls and Constructs edges start at both: an accessor body's calls start
+    /// at the property node, and a static initializer's at the type. A property
+    /// is reached when anything the walk stands on Reads or Writes it, and its
+    /// accessor bodies' edges are taken from there. A type is reached when the
+    /// walk reaches one of its members or constructs it, and its static
+    /// initialization's edges are taken from there -- touching a type runs its
+    /// static initializer. Covers edges still land on methods alone: a property
+    /// or a type is a place the walk passes through, not a thing a test covers.
     /// </summary>
     internal void AddCoverageEdges(int maxDepth = int.MaxValue)
     {
@@ -62,7 +72,7 @@ internal sealed class CoverageEmitter(CodeGraph graph)
             // them mid-enumeration.
             var reachedAtDepth = new Dictionary<string, (GraphNode Node, int Depth)>();
             foreach (var seed in seeds)
-                Reach(seed.Id, maxDepth, reachedAtDepth);
+                Reach(seed, maxDepth, reachedAtDepth);
 
             foreach (var (node, depth) in reachedAtDepth.Values)
             {
@@ -89,40 +99,81 @@ internal sealed class CoverageEmitter(CodeGraph graph)
     /// Breadth-first from one seed over the steps a call can take, recording the
     /// shallowest depth each node is reached at across every seed so far.
     /// </summary>
-    private void Reach(string seedId, int maxDepth, Dictionary<string, (GraphNode Node, int Depth)> reached)
+    /// <remarks>
+    /// A 0-1 breadth-first search rather than a plain one, because one step --
+    /// a member up to its type -- costs no depth: a free step goes to the front
+    /// of the frontier and a paid one to the back, so every node is still settled
+    /// at its shallowest depth. A node is expanded again only when a shorter path
+    /// to it turns up, and a queue entry left behind by the longer one is skipped.
+    /// </remarks>
+    private void Reach(GraphNode seed, int maxDepth, Dictionary<string, (GraphNode Node, int Depth)> reached)
     {
-        var visited = new HashSet<string>(StringComparer.Ordinal) { seedId };
-        var queue = new Queue<(string Id, int Depth)>();
-        queue.Enqueue((seedId, 0));
+        var settled = new Dictionary<string, int>(StringComparer.Ordinal) { [seed.Id] = 0 };
+        var frontier = new LinkedList<(GraphNode Node, int Depth)>();
+        frontier.AddLast((seed, 0));
 
-        while (queue.Count > 0)
+        while (frontier.First is { } first)
         {
-            var (id, depth) = queue.Dequeue();
-            if (depth >= maxDepth) continue;
+            frontier.RemoveFirst();
+            var (current, depth) = first.Value;
+            if (depth > settled[current.Id]) continue;
 
-            foreach (var nextId in Steps(id))
+            foreach (var (nextId, cost) in Steps(current))
             {
-                if (!visited.Add(nextId)) continue;
+                var nextDepth = depth + cost;
+                if (nextDepth > maxDepth) continue;
+                if (settled.TryGetValue(nextId, out var known) && known <= nextDepth) continue;
                 if (graph.GetNode(nextId) is not { } node) continue;
 
-                var nextDepth = depth + 1;
+                settled[nextId] = nextDepth;
                 if (!reached.TryGetValue(nextId, out var existing) || nextDepth < existing.Depth)
                     reached[nextId] = (node, nextDepth);
-                queue.Enqueue((nextId, nextDepth));
+
+                if (cost == 0) frontier.AddFirst((node, nextDepth));
+                else frontier.AddLast((node, nextDepth));
             }
         }
     }
 
     /// <summary>
-    /// Where a call from this method can land: what it calls, and -- when it is
-    /// a declaration something else dispatches to -- every body that might run
-    /// instead.
+    /// Where the walk can go from what it stands on, and what each step costs in
+    /// depth: what a member calls, builds, reads or writes; every body that might
+    /// run instead of a declaration something dispatches to; and, from a member,
+    /// the type that declares it.
     /// </summary>
     /// <remarks>
-    /// Both dispatch mechanisms, because a caller cannot tell them apart and
+    /// <para>
+    /// PROPERTIES. Reads and Writes are how code touches a property, and its
+    /// accessor bodies' Calls and Constructs start at the property node, so a
+    /// read or a write is the step onto it. Both accessors ride one node, so
+    /// either step reaches the edges of both -- conservative, like dispatch. A
+    /// read of an auto-property reaches a node with nowhere further to go, which
+    /// is why this does not mark data holders covered: Covers land on methods
+    /// alone, and only a body with a call in it leads to one.
+    /// </para>
+    /// <para>
+    /// TYPES. Static initialization's Calls and Constructs start at the type,
+    /// because a static constructor is not a node. Touching a type runs it, so
+    /// the type is reached from any of its members -- the declaring type is the
+    /// incoming Contains -- and by a Constructs edge. From a type only Calls and
+    /// Constructs are taken: its outgoing Contains would mark every member of a
+    /// class covered because a test reached one of them, and its incoming
+    /// type-level Implements is refused by <see cref="Dispatches"/>.
+    /// </para>
+    /// <para>
+    /// DEPTH. Every step costs one, as a call does, except a member up to its
+    /// type, which costs nothing: the graph's traversals already follow
+    /// containment without spending depth (GraphQuery.StructuralEdges), and here
+    /// it is the same access seen from the declaring side -- the static
+    /// initializer runs at the point the member is touched, so what it calls sits
+    /// one step below that point, as it does when a test builds the type.
+    /// </para>
+    /// <para>
+    /// DISPATCH. Both mechanisms, because a caller cannot tell them apart and
     /// neither can a test. Implements and Overrides edges both point body →
     /// declaration, so the dispatch step is an incoming edge read the other
     /// way; the same join EscapeEmitter.CallerEdges makes for interfaces.
+    /// </para>
     /// <para>
     /// Overrides was the missing half until 2026-09-05, and its absence was not
     /// a smaller answer but a wrong one: a test calling an abstract declaration
@@ -137,13 +188,21 @@ internal sealed class CoverageEmitter(CodeGraph graph)
     /// reachability cannot say which one the runtime picked.
     /// </para>
     /// </remarks>
-    private IEnumerable<string> Steps(string id)
+    private IEnumerable<(string Id, int Cost)> Steps(GraphNode node)
     {
-        foreach (var edge in graph.Outgoing(id))
-            if (edge.Type == EdgeType.Calls) yield return edge.ToId;
+        var isMember = node.Type is NodeType.Method or NodeType.Property or NodeType.Field;
 
-        foreach (var edge in graph.Incoming(id))
-            if ((edge.Type is EdgeType.Implements or EdgeType.Overrides) && Dispatches(edge)) yield return edge.FromId;
+        foreach (var edge in graph.Outgoing(node.Id))
+        {
+            if (edge.Type is EdgeType.Calls or EdgeType.Constructs) yield return (edge.ToId, 1);
+            else if (isMember && edge.Type is EdgeType.Reads or EdgeType.Writes) yield return (edge.ToId, 1);
+        }
+
+        foreach (var edge in graph.Incoming(node.Id))
+        {
+            if ((edge.Type is EdgeType.Implements or EdgeType.Overrides) && Dispatches(edge)) yield return (edge.FromId, 1);
+            else if (isMember && edge.Type == EdgeType.Contains) yield return (edge.FromId, 0);
+        }
     }
 
     /// <summary>
@@ -158,14 +217,13 @@ internal sealed class CoverageEmitter(CodeGraph graph)
     /// interface — a claim no test made, arrived at by absorbing an edge that
     /// was added for something else.
     /// <para>
-    /// DEFENSIVE, and worth being honest about: no walk reaches it today. Steps
-    /// descends along Calls, which run member → member, so a type id never enters
-    /// the walk and the type-level edge is unreachable here by construction. That
-    /// is a property of which edges Steps follows, not of the Implements edges
-    /// themselves — it holds by accident of the current walk, and the accident
-    /// ends the day anyone teaches Steps a new edge that lands on a type. Cheap
-    /// insurance against a silent widening that would mark a whole class covered
-    /// because a test reached its interface.
+    /// LOAD-BEARING since the walk began standing on types. It was written as
+    /// defensive, when Steps descended along Calls alone and a type id could
+    /// never enter the walk; the note it carried said the accident would end the
+    /// day Steps learned an edge that lands on a type, and the member-to-type
+    /// step is that edge. A test calling I.M now stands on the interface type,
+    /// and without this check every implementing type's static initialization
+    /// would be marked exercised because a test reached the interface.
     /// </para>
     /// </remarks>
     private bool Dispatches(GraphEdge edge) =>

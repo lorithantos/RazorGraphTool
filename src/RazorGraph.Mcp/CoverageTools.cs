@@ -14,7 +14,7 @@ using RazorGraph.Core.Query;
 internal sealed class CoverageTools(GraphStore store)
 {
     [McpServerTool(Name = "covering_tests")]
-    [Description("Test methods that exercise a given production method, nearest first — depth 1 means a test calls it directly. Reachability through Calls edges, widened through BOTH dispatch mechanisms: a test that calls I.M reaches every in-solution implementation, and a test that calls an abstract or virtual declaration reaches every in-solution override. Paged: a well-covered method has hundreds of tests and the count plus the nearest few is usually the whole answer, so read totalMatches and depthCounts before paging. Pass offset=nextOffset to continue; nextOffset is absent when there is no more. Requires a graph built with build_solution — coverage edges cross a project boundary and cannot exist in a single-project graph. An empty list carries a 'caveat' naming what the walk cannot follow, so zero is never mistaken for proof of absence.")]
+    [Description("Test methods that exercise a given production method, nearest first — depth 1 means a test calls it directly. Reachability through Calls edges, widened through BOTH dispatch mechanisms: a test that calls I.M reaches every in-solution implementation, and a test that calls an abstract or virtual declaration reaches every in-solution override. A property the chain reads or writes reaches what its accessors call, and a type it touches reaches what its static initialization calls. Paged: a well-covered method has hundreds of tests and the count plus the nearest few is usually the whole answer, so read totalMatches and depthCounts before paging. Pass offset=nextOffset to continue; nextOffset is absent when there is no more. Requires a graph built with build_solution — coverage edges cross a project boundary and cannot exist in a single-project graph. An empty list carries a 'caveat' naming what the walk cannot follow, so zero is never mistaken for proof of absence.")]
     public string CoveringTests(
         [Description("Id of a Method node in production code")] string methodId,
         [Description("Max tests to return (default 25). The count and the depth histogram describe the whole set whatever this is.")] int limit = 25,
@@ -70,11 +70,12 @@ internal sealed class CoverageTools(GraphStore store)
     /// and on MVVM code it was an argument for writing tests that already existed:
     /// the walk had stopped one dispatch step short. BOTH dispatch mechanisms are
     /// followed now — interface since 2026-09-04, class overrides since
-    /// 2026-09-05 — and the steps still not followed are named, so the reader can
-    /// ask the right question instead of trusting the empty one.
+    /// 2026-09-05 — and so are accessor bodies and static initialization, since
+    /// 2026-11-23. The steps still not followed are named, so the reader can ask
+    /// the right question instead of trusting the empty one.
     /// </summary>
     internal const string UnreachedCaveat =
-        "No test's call chain reaches this method through Calls edges, interface dispatch, or a base-class override. That is not proof it is untested: property accessor bodies (including source-generated setters), stored-and-forwarded delegates, and reflection are not followed. A Calls edge from a property node means a getter or setter calls this method; the graph has that edge, but the coverage walk does not step through a property to take it. Read the method body for those before treating this as a target for new tests.";
+        "No test's call chain reaches this method through Calls edges, interface dispatch, a base-class override, the accessor bodies of a property the chain reads or writes, or the static initialization of a type it touches. That is not proof it is untested: stored-and-forwarded delegates and reflection are not followed, and source-generated accessor bodies (e.g. [ObservableProperty] setters) are not confirmed to be walked. Read the method body for those before treating this as a target for new tests.";
 
     [McpServerTool(Name = "covered_methods")]
     [Description("Production methods a given test method exercises, nearest first. depth=1 means the test calls it directly. Paged: one test can reach hundreds of methods through the full call closure, so read totalMatches and depthCounts first, and pass offset=nextOffset to continue. nextOffset is absent when there is no more.")]
@@ -124,7 +125,7 @@ internal sealed class CoverageTools(GraphStore store)
     }
 
     [McpServerTool(Name = "uncovered_methods")]
-    [Description("Methods that no test reaches, ordered by id. Pass a project to scope the question to one assembly, which is almost always what you want. Paged: pass offset=nextOffset to continue, and nextOffset is absent when there is no more. This is reachability through the call graph, not runtime coverage — a method listed here is unreached by any test's call chain, including setup done in test-class lifecycle hooks, interface dispatch and base-class overrides. Steps the walk cannot follow (property accessor bodies, stored delegates, reflection) can list a method here that tests do exercise; the list is a set of candidates to read, not a verdict.")]
+    [Description("Methods that no test reaches, ordered by id. Pass a project to scope the question to one assembly, which is almost always what you want. Paged: pass offset=nextOffset to continue, and nextOffset is absent when there is no more. This is reachability through the call graph, not runtime coverage — a method listed here is unreached by any test's call chain, including setup done in test-class lifecycle hooks, interface dispatch, base-class overrides, the accessor bodies of properties the chain reads or writes, and the static initialization of types it touches. Steps the walk cannot follow (stored delegates, reflection) can list a method here that tests do exercise; the list is a set of candidates to read, not a verdict.")]
     public string UncoveredMethods(
         [Description("Project name to restrict to (e.g. the production assembly)")] string? project = null,
         [Description("Max nodes to return (default 50)")] int limit = 50,

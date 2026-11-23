@@ -142,6 +142,17 @@ internal static class GraphFormat
     /// parameter. A new SHAPE of a known kind plus a new property, in 1.5's sense:
     /// a 3.7 reader keeps both, but one assuming every InjectedInto edge ends at a
     /// type would be wrong against this graph, and the bump is what says so.
+    /// 3.9 widens the Covers walk onto properties and types: a test that reads or
+    /// writes a property reaches what its accessor bodies call and build, and a
+    /// test that reaches a member of a type, or builds it, reaches what the type's
+    /// static initialization calls and builds -- property- and type-sourced edges
+    /// the graph already held and the walk never took. Covers still
+    /// end at methods only, and the depth rule is unchanged except that a member up
+    /// to its type costs none. Additive in the 1.4 sense: no kind or property was
+    /// added, but Covers gained members, so a 3.8 reader absorbs more of an edge
+    /// type it already knows -- and a 3.8 graph read here answers coverage with the
+    /// narrower walk, which is the population change the bump exists to name.
+    /// Exception-escape propagation is unchanged and still stops at a property.
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -182,7 +193,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(3, 8);
+    public static readonly GraphFormatVersion Current = new(3, 9);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

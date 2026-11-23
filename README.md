@@ -400,9 +400,11 @@ Static initialization is the one shape whose edge starts at a **type** rather th
 a member. `private static readonly IFoo Default = new Foo();` runs in the static
 constructor, which is not a graph node — an implicit one has no syntax a reader
 could open, and minting one would put every static constructor in the solution
-into `uncovered_methods` as a confident untested claim, since nothing models
-"first access runs it". So the declaring type is the near end; responses carry the
-node kind, so the two shapes are told apart by reading rather than by guessing.
+into `uncovered_methods` as a confident untested claim. So the declaring type is the
+near end; responses carry the node kind, so the two shapes are told apart by reading
+rather than by guessing. Coverage models "first access runs it" from the type: a
+test that touches the type reaches what its static initialization calls (see
+*Coverage is reachability* below).
 
 `Implements` runs at both granularities, the way `Contains` does. Type → interface
 answers *which classes implement this*, carrying `depth`: 1 when the interface is
@@ -443,15 +445,24 @@ implementation of `I.M`, and a test that calls an abstract or virtual declaratio
 reaches every in-solution override of it, because the override is what runs.
 Method-level `Implements` and `Overrides` edges carry the two joins, and `Overrides`
 spans the whole chain, so a test reaching an abstract root also reaches a leaf two
-levels below it. Not followed: property accessor bodies (source-generated setters
-included), stored-and-forwarded delegates, and reflection — an empty `covering_tests`
-answer names these in its `caveat` rather than reading as proof. The graph *does* hold
-the calls an accessor body makes, as `Calls` edges from the property node (see
-*Properties and fields are nodes* below), but a test reaches a property through a
-`Reads` or `Writes` edge and the walk steps only along `Calls` between methods, so it
-never stands on the property to take them. A method called only from a getter has a
-caller in the graph and is still uncovered. Exception-escape propagation stops at the
-property for the same reason: an escape reaches the property node and goes no further.
+levels below it. **The walk stands on properties and types, not only methods**,
+because `Calls` and `Constructs` edges start at both. A property is reached when
+anything on the chain `Reads` or `Writes` it, and from there the walk takes what its
+accessor bodies call and build (see *Properties and fields are nodes* below) — so a
+method called only from a getter is covered by the tests that read the property, and
+a property nothing reads covers nothing. A type is reached when the chain reaches one
+of its members or builds it, and from there the walk takes what its static
+initialization calls and builds, because touching a type runs its static initializer;
+from a type it takes nothing else, so reaching one member never marks its siblings
+covered. Each `Reads`, `Writes` or `Constructs` step costs one depth, as a call does;
+a member up to its declaring type costs none, the way containment is followed
+elsewhere, so a static initializer's calls sit one step below the access that
+triggered it. `Covers` edges still end at methods only: a property or a type is a
+place the walk passes through, not something a test covers. Not followed:
+stored-and-forwarded delegates and reflection, and source-generated accessor bodies are
+not confirmed to be walked — an empty `covering_tests` answer names
+these in its `caveat` rather than reading as proof. Exception-escape propagation is
+narrower than coverage here: an escape reaches the property node and goes no further.
 
 > Class overrides were not widened until 2026-09-05, and the cost was not a smaller
 > answer but a wrong one: every override in a solution reported zero covering tests, so

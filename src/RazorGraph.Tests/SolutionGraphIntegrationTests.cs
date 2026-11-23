@@ -386,8 +386,8 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
             {
                 "Advance_ThroughARunnerThatHoldsTheBase", "Advance_ThroughTheBaseDeclaration",
                 "Cache_SeedsItself", "Cached_IsBuiltOnce", "Channel_ThroughTheInterface",
-                "Greet_ThroughTheInterface", "List_ReturnsSortedCatalogs",
-                "Preload_CountsCatalogs", "Warm_IsPositive"
+                "DrawnWorld_CanBeBuilt", "Greet_ThroughTheInterface", "List_ReturnsSortedCatalogs",
+                "Preload_CountsCatalogs", "Registry_HasAFallback", "Warm_IsPositive"
             },
             tests.OrderBy(t => t, StringComparer.Ordinal));
         // NotATest calls production code but carries no attribute, and
@@ -1803,14 +1803,16 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     [Fact]
     public void PropertyImplements_DoNotWidenCoverage_AndThatIsDeliberate()
     {
-        // Pinned as a LIMIT, not asserted as a success. Reading a property is a
-        // Reads edge and the Covers walk steps along Calls, so the property node
-        // is never reached and there is nothing to widen from — SinkTests binds
-        // to ISink.Channel and still covers no implementation.
+        // Pinned as a LIMIT, not asserted as a success. The walk does follow
+        // Reads now, so SinkTests reading ISink.Channel stands on the interface
+        // property and dispatches to every implementing one -- but Covers land
+        // on methods alone, so no property, implementation or not, has a
+        // covering test. What an implementing getter CALLS is covered; the
+        // property itself is a place the walk passes through.
         //
-        // Here so that whoever makes the walk follow Reads finds a failing test
-        // telling them what changed, rather than a silent shift in every
-        // coverage number in the repository.
+        // Here so that whoever starts emitting Covers to properties finds a
+        // failing test telling them what changed, rather than a silent shift in
+        // every coverage number in the repository.
         var query = new GraphQuery(_solutionGraph!);
 
         Assert.Empty(query.GetCoveringTests("prop:SampleLib.LedgerSink.Channel"));
@@ -2062,26 +2064,101 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
                  || n.Id.StartsWith("m:SampleLib.PartShelf.set_", StringComparison.Ordinal));
     }
 
+    // ---- Coverage through properties and types --------------------------------
+    //
+    // Calls and Constructs edges start at a property (accessor bodies) and at a
+    // type (static initialization), and the Covers walk used to stand on methods
+    // alone, so it could see those edges and never take them. Reading a property
+    // now steps onto it, and touching a type -- reaching a member, or building
+    // it -- steps onto the type. A Reads or a Constructs step costs one depth, as
+    // a call does; a member up to its declaring type costs none, the way the
+    // graph's traversals already follow containment.
+
+    /// <summary>The tests covering one production method, by test name.</summary>
+    private Dictionary<string, int> CoveringDepths(string declaringType, string method) =>
+        new GraphQuery(_solutionGraph!)
+            .GetCoveringTests(Method(_solutionGraph!, declaringType, method).Id)
+            .ToDictionary(t => t.Test.Name, t => t.Depth);
+
     [Fact]
-    public void PropertySourcedCalls_DoNotWidenCoverage_AndThatIsDeliberate()
+    public void ReadingAProperty_CoversWhatItsGetterCalls()
     {
-        // Pinned as a LIMIT, the twin of PropertyImplements_DoNotWidenCoverage.
-        // PartShelfTests reads Cached, whose getter calls Restock, and the Calls
-        // edge out of the property is in the graph -- but the test reaches the
-        // property by a Reads edge, and the Covers walk steps along Calls between
-        // methods, so it never stands on the property to take the edge. Whoever
-        // makes the walk step member-to-member finds this failing on purpose.
-        Assert.Contains(
-            _solutionGraph!.Nodes,
-            n => n.Id.StartsWith("m:SampleWeb.Tests.PartShelfTests.Cached_IsBuiltOnce", StringComparison.Ordinal)
-                 && n.GetProperty<bool>("isTest"));
+        // Was PropertySourcedCalls_DoNotWidenCoverage_AndThatIsDeliberate, which
+        // pinned the opposite on purpose until the walk learned to stand on a
+        // property: PartShelfTests reads Cached, whose getter calls Restock.
         Assert.Single(CallsInto("m:SampleLib.PartShelf.Restock("));
 
-        var query = new GraphQuery(_solutionGraph!);
-        var restock = _solutionGraph!.Nodes.Single(n =>
-            n.Id.StartsWith("m:SampleLib.PartShelf.Restock(", StringComparison.Ordinal));
+        var covering = CoveringDepths("SampleLib.PartShelf", "Restock");
 
-        Assert.Empty(query.GetCoveringTests(restock.Id));
+        Assert.Equal("Cached_IsBuiltOnce", Assert.Single(covering.Keys));
+    }
+
+    [Fact]
+    public void APropertyNothingReads_CoversNothingItCalls()
+    {
+        // Fresh and the indexer call Label and Check, and no test reads either.
+        // A property is reached by being read or written, not by existing -- the
+        // edges out of it are taken only from where the walk stands.
+        Assert.Empty(CoveringDepths("SampleLib.PartShelf", "Label"));
+        Assert.Empty(CoveringDepths("SampleLib.PartShelf", "Check"));
+
+        var uncovered = new GraphQuery(_solutionGraph!).FindUncoveredMethods("SampleLib").Select(m => m.Name).ToList();
+        Assert.Contains("Label", uncovered);
+        Assert.Contains("Check", uncovered);
+        Assert.DoesNotContain("Restock", uncovered);
+    }
+
+    [Fact]
+    public void ReadingAStaticMember_CoversWhatTheTypesStaticInitializationCalls()
+    {
+        // Registry_HasAFallback reads PartRegistry.Fallback and nothing else. The
+        // static field initializer calls ComputeSeed, and the explicit static
+        // constructor calls Warm; both edges start at the type.
+        Assert.Equal("Registry_HasAFallback", Assert.Single(CoveringDepths("SampleLib.PartRegistry", "ComputeSeed").Keys));
+        Assert.Equal("Registry_HasAFallback", Assert.Single(CoveringDepths("SampleLib.PartRegistry", "Warm").Keys));
+    }
+
+    [Fact]
+    public void BuildingAType_CoversWhatItsStaticInitializerCalls()
+    {
+        // The gamehub shape: DrawnWorld has no constructor node, so the test's
+        // only step onto it is the Constructs edge, and DrawBoard's only caller
+        // is the type's static field initializer.
+        Assert.Equal("DrawnWorld_CanBeBuilt", Assert.Single(CoveringDepths("SampleLib.DrawnWorld", "DrawBoard").Keys));
+
+        // Touching one type does not run another's static initializer.
+        Assert.DoesNotContain("DrawnWorld_CanBeBuilt", CoveringDepths("SampleLib.PartRegistry", "ComputeSeed").Keys);
+    }
+
+    [Fact]
+    public void PropertyAndTypeSteps_SpendDepthLikeCalls_AndContainmentSpendsNone()
+    {
+        // test -Reads-> Cached -Calls-> Restock: two steps, as a test calling a
+        // method that calls Restock would be.
+        Assert.Equal(2, CoveringDepths("SampleLib.PartShelf", "Restock")["Cached_IsBuiltOnce"]);
+
+        // test -Constructs-> DrawnWorld -Calls-> DrawBoard: two.
+        Assert.Equal(2, CoveringDepths("SampleLib.DrawnWorld", "DrawBoard")["DrawnWorld_CanBeBuilt"]);
+
+        // test -Reads-> Fallback, up to PartRegistry for free, -Calls-> ComputeSeed:
+        // two, not three. The member and its type are one access.
+        Assert.Equal(2, CoveringDepths("SampleLib.PartRegistry", "ComputeSeed")["Registry_HasAFallback"]);
+        Assert.Equal(2, CoveringDepths("SampleLib.PartRegistry", "Warm")["Registry_HasAFallback"]);
+    }
+
+    [Fact]
+    public void CoversEdges_StillLandOnMethodsAlone()
+    {
+        // The walk passes through properties and types; it does not report them
+        // as covered. A property or type end would put every data holder a test
+        // asserted on into the coverage answers.
+        var targets = _solutionGraph!.Edges
+            .Where(e => e.Type == EdgeType.Covers)
+            .Select(e => _solutionGraph.GetNode(e.ToId)!.Type)
+            .Distinct()
+            .ToList();
+
+        Assert.Equal(NodeType.Method, Assert.Single(targets));
     }
 
     /// <summary>

@@ -5,9 +5,9 @@ namespace SampleWeb.Tests;
 
 /// <summary>
 /// Fixture only — never executed. Reads a property whose getter calls a method,
-/// so the coverage walk has a property-sourced Calls edge within reach. It does
-/// not step through a property node, so PartShelf.Restock stays uncovered: the
-/// edge is in the graph for navigation, and coverage does not follow it yet.
+/// so the coverage walk has a property-sourced Calls edge within reach: reading
+/// Cached steps onto the property, and the getter's call covers PartShelf.Restock.
+/// Nothing reads Fresh or the indexer, so what those call stays uncovered.
 /// </summary>
 public class PartShelfTests
 {
