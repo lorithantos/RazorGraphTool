@@ -1,14 +1,27 @@
 # RazorGraphTool
 
-Builds a queryable code graph of an ASP.NET Core Razor Pages application, and serves it
-to an AI agent over MCP.
+Builds a queryable code graph of a .NET solution from the compiler's own model, and
+serves it to an AI agent over MCP. Razor Pages are one strength among several: the same
+graph covers C# libraries and APIs with no Razor in them, XAML views through their
+bindings, the JavaScript and CSS a web app ships, and, through a builder of its own, Lua.
+
+The name is historical. It started on Razor Pages and kept slicing; names are sticky.
 
 Text search cannot answer "which overload does this call bind to", "who actually
 implements this interface", or "what breaks if I change this signature" — and an agent
 without a semantic model will guess at exactly those questions, plausibly enough to
-survive review. This exposes the compiler's model instead: Roslyn for C# symbols and
-call resolution, the Razor syntax tree for pages, layouts, partials and tag helpers, and
-a scan of `wwwroot` plus inline `<script>` blocks for the client tier.
+survive review. This exposes the compiler's model instead.
+
+## What it indexes
+
+| Input | What it becomes | How |
+|---|---|---|
+| C# | Types, methods, constructors, properties and fields; calls, overrides, implementations, DI registrations, controllers and routes, test reachability, exception escapes | Roslyn, over an MSBuild workspace |
+| Razor (`.cshtml`) | Pages, page models, layouts, partials, view components, tag helpers, `ViewData` keys | The Razor syntax tree |
+| XAML | Views, and a `DataBinds` edge from each binding to the members it could name | XML parse, resolved against the C# nodes |
+| JavaScript and CSS | Files under `wwwroot` and inline `<script>` blocks; the element ids a script selects | File scan |
+| Lua | Modules, functions, `require` / `import` references | Loretta syntax trees, in `build_lua` / `build-lua`; no compile step |
+| Every other text file | One `TextFile` node per file, carrying its lines for `grep` | File read; tracked files only in a git tree |
 
 ## Quick start
 
@@ -80,11 +93,22 @@ build that needs a particular platform passes `platform` to `build_graph` or
 reports what this did under `environment` (`applied`, `skippedBecause`, `dropped`,
 `changed`, `keptFromLauncher`), by variable name only — never values.
 
-Restart the session and 25 tools appear: `server_info`, `build_graph`, `build_solution`, `build_lua`,
+Restart the session and the tools appear: `server_info`, `build_graph`, `build_solution`, `build_lua`,
 `load_graph`, `save_graph`, `list_graphs`, `drop_graph`, `graph_summary`, `find_nodes`, `get_node`,
-`render_tree`, `page_context`, `trace_data_flow`, `find_path`, `covering_tests`,
-`covered_methods`, `uncovered_methods`, `deep_methods`, `exception_escapes`, `excess_visibility`,
-`method_body_graph`, `method_body_diff`, `find_server_to_js_mismatches`, `research`.
+`grep`, `find_literals`, `quoted_symbols`, `render_tree`, `page_context`, `trace_data_flow`,
+`find_path`, `covering_tests`, `covered_methods`, `uncovered_methods`, `deep_methods`,
+`exception_escapes`, `excess_visibility`, `method_body_graph`, `method_body_diff`,
+`find_server_to_js_mismatches`, `research`.
+
+`build_lua` (CLI: `build-lua <dir> -o lua-graph.json`) graphs a directory of Lua rather
+than a solution. There is no compile step, so it is fast. The host is detected from the
+tree — `Info.lua` means Lightroom, a `.rockspec` means LuaRocks, anything else falls back to
+plain path conventions — and the response names the host and the evidence, because a
+misdetected host resolves references with the wrong function and yields a graph that is
+empty for no visible reason. Functions are ordinary `Method` nodes under `Contains`, so
+navigation works as it does for C#. Modules and their references are `luaModule` and
+`requires`. References are counted resolved, external (a host or standard-library module
+outside the tree, which is not a failure) and unresolved.
 
 The server holds **several graphs at once** in a keyed registry. Every tool takes an
 optional `graphId` and falls back to the most recently added, so a solution graph and a
@@ -471,8 +495,9 @@ e.g. when the bug lives inside a shipped bundle; included vendor nodes carry
 |---|---|
 | `src/RazorGraph.Core` | Graph model, traversal, and the query surface |
 | `src/RazorGraph.Extractor` | Roslyn, Razor, and client-asset extraction; `GraphBuilder` |
-| `src/RazorGraph.Cli` | `build`, `build-solution`, `query`, `body`, `body-diff`, `research` |
-| `src/RazorGraph.Mcp` | MCP stdio server over the graph |
+| `src/RazorGraph.Lua` | Lua extraction; references Core only, never the Roslyn pipeline |
+| `src/RazorGraph.Cli` | `build`, `build-solution`, `build-lua`, `query`, `body`, `body-diff`, `research` |
+| `src/RazorGraph.Mcp` | MCP server over the graph, HTTP or stdio |
 | `src/RazorGraph.Tests` | Unit and integration tests |
 | `tests/fixtures` | `SampleApp` (single project) and `MultiProject` (solution) |
 
