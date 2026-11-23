@@ -721,7 +721,7 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
         foreach (var dependency in sym.ConstructorDependencies)
         {
             // Framework and Value entries are skipped rather than looked up.
-            // FindServiceNode matches on the fullName of nodes this solution
+            // The lookup matches on the fullName of nodes this solution
             // declares; a Framework type is declared outside it, and a Value is
             // either out of scope too or an in-solution enum or struct that
             // nothing resolves. Neither could ever have matched, so the skip
@@ -733,18 +733,25 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
             // resolves the same way. The solution declares IRepository<T>, never
             // IRepository<CatalogItem>, so without the second lookup the most-used
             // seam in a generic-repository codebase emitted no edge at all.
-            var serviceNode = FindServiceNode(dependency.TypeFullName);
+            //
+            // A name with no node gets no edge. There used to be a fallback that
+            // stripped a leading "I" and took the first ServiceImplementation
+            // anywhere with the remainder as its short name: dead for any
+            // namespaced type, since the name looked up is a full name, and on
+            // the one shape it could match on (a global-namespace delegate) it
+            // joined the parameter to an unrelated class. InjectionLookupTests.
+            var serviceId = TypeIdFor(dependency.TypeFullName);
             var viaDefinition = false;
-            if (serviceNode == null && dependency.DefinitionFullName is { } definition)
+            if (serviceId == null && dependency.DefinitionFullName is { } definition)
             {
-                serviceNode = FindServiceNode(definition);
-                viaDefinition = serviceNode != null;
+                serviceId = TypeIdFor(definition);
+                viaDefinition = serviceId != null;
             }
-            if (serviceNode != null)
+            if (serviceId != null)
             {
                 var edge = new GraphEdge
                 {
-                    FromId = serviceNode.Id,
+                    FromId = serviceId,
                     ToId = sym.Id,
                     Type = EdgeType.InjectedInto
                 };
@@ -756,23 +763,5 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
                 graph.AddEdge(edge);
             }
         }
-    }
-
-    private GraphNode? FindServiceNode(string typeName)
-    {
-        // Try exact match
-        var exact = graph.Nodes.FirstOrDefault(n =>
-            n.GetProperty<string>("fullName") == typeName);
-        if (exact != null) return exact;
-
-        // Try interface name (IImageService → ImageService)
-        if (typeName.StartsWith("I") && typeName.Length > 1)
-        {
-            var implName = typeName[1..];
-            return graph.Nodes.FirstOrDefault(n =>
-                n.Type == NodeType.ServiceImplementation && n.Name == implName);
-        }
-
-        return null;
     }
 }
