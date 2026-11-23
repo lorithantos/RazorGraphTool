@@ -39,7 +39,75 @@ internal static class CallSiteScanner
         var fromId = isStaticCtor ? null : SymbolIds.MethodId(caller);
         var fromType = isStaticCtor ? caller.ContainingType.OriginalDefinition.ToDisplayString() : null;
 
-        foreach (var (site, target) in TopLevelProgram.BodyNodes(decl).SelectMany(b => CallTargetSites(b, model)))
+        foreach (var site in BodyCallSites(decl, TopLevelProgram.BodyNodes(decl), fromId, fromType, model, inScope))
+            yield return site;
+    }
+
+    /// <summary>
+    /// Call sites in one property's or indexer's accessor bodies and expression
+    /// body, attributed to the PROPERTY node.
+    /// </summary>
+    /// <remarks>
+    /// An accessor is not a BaseMethodDeclarationSyntax, so the method walk never
+    /// reached it, and a method called only from a getter read as uncalled:
+    /// <c>public IReadOnlyList&lt;string&gt; Kinds =&gt; DistinctKinds(...);</c> left
+    /// DistinctKinds with no caller at all. The near end is the property rather
+    /// than a get_X method because accessors are not graph nodes, the same answer
+    /// Reads and Writes give through SyntaxAttribution; minting get_X would name
+    /// a node nothing else carries. The initializer is NOT walked here — it runs
+    /// in the constructors and InitializerCallSites already attributes it there.
+    /// Event accessors are skipped: an event is not a node.
+    /// </remarks>
+    internal static IEnumerable<CallSiteInfo> PropertyCallSites(
+        BasePropertyDeclarationSyntax decl, SemanticModel model, IReadOnlySet<string> inScope)
+    {
+        var bodies = PropertyBodies(decl).ToList();
+        if (bodies.Count == 0) return [];
+        if (model.GetDeclaredSymbol(decl) is not IPropertySymbol property) return [];
+
+        return BodyCallSites(decl, bodies, SymbolIds.MemberId(property), fromType: null, model, inScope);
+    }
+
+    /// <summary>
+    /// The code a property or indexer runs when it is read or written: each
+    /// accessor's block or arrow, and the property-level arrow. Empty for an
+    /// auto-property, whose accessors have no body, and for an event, whose
+    /// accessors are walked by nobody because it has no node to attribute to.
+    /// </summary>
+    internal static IEnumerable<SyntaxNode> PropertyBodies(BasePropertyDeclarationSyntax decl)
+    {
+        if (decl is EventDeclarationSyntax) yield break;
+
+        if (decl.AccessorList is { } accessors)
+            foreach (var accessor in accessors.Accessors)
+            {
+                if (accessor.Body is { } body) yield return body;
+                if (accessor.ExpressionBody is { } arrow) yield return arrow;
+            }
+
+        var expressionBody = decl switch
+        {
+            PropertyDeclarationSyntax p => p.ExpressionBody,
+            IndexerDeclarationSyntax i => i.ExpressionBody,
+            _ => null
+        };
+        if (expressionBody is not null) yield return expressionBody;
+    }
+
+    /// <summary>
+    /// The call sites of one scope's body nodes, from one near end: explicit
+    /// invocations and new-expressions with their guards, method groups, and
+    /// implicit disposal. Shared by the method and property walks so the two
+    /// cannot come to disagree about what a call is.
+    /// </summary>
+    /// <param name="decl">The declaration the guards are read up to.</param>
+    private static IEnumerable<CallSiteInfo> BodyCallSites(
+        SyntaxNode decl, IEnumerable<SyntaxNode> bodies, string? fromId, string? fromType,
+        SemanticModel model, IReadOnlySet<string> inScope)
+    {
+        var bodyList = bodies as IReadOnlyList<SyntaxNode> ?? bodies.ToList();
+
+        foreach (var (site, target) in bodyList.SelectMany(b => CallTargetSites(b, model)))
         {
             if (SymbolIds.InScopeMethodId(target, inScope) is not { } toId) continue;
             if (toId == fromId) continue; // direct recursion adds no navigational value
@@ -51,7 +119,7 @@ internal static class CallSiteScanner
         // A method group handed somewhere is a call the future makes. The edge
         // carries no guards on purpose: a try around the registration site does
         // not catch what the delegate throws when it finally runs.
-        foreach (var (_, target) in TopLevelProgram.BodyNodes(decl).SelectMany(b => MethodGroupSites(b, model)))
+        foreach (var (_, target) in bodyList.SelectMany(b => MethodGroupSites(b, model)))
         {
             if (SymbolIds.InScopeMethodId(target, inScope) is not { } toId) continue;
             if (toId == fromId) continue;
@@ -60,7 +128,7 @@ internal static class CallSiteScanner
                 fromId, toId, Array.Empty<string>(), Array.Empty<string>(), IsDelegate: true, FromTypeFullName: fromType);
         }
 
-        foreach (var (resourceType, isAsync) in DisposedResources(decl, model))
+        foreach (var (resourceType, isAsync) in DisposedResources(bodyList, model))
         {
             if (ResolveDisposeMethod(resourceType, isAsync) is not { } dispose) continue;
             if (SymbolIds.InScopeMethodId(dispose, inScope) is not { } toId) continue;
@@ -117,9 +185,9 @@ internal static class CallSiteScanner
     /// Lambdas and local functions are ordinary descendants of the declaration
     /// rather than scopes of their own, so a factory lambda's new-expression is
     /// attributed to the method holding it — which is the method a reader would
-    /// go and open. Accessor bodies are NOT reached, because MethodScopes
-    /// enumerates BaseMethodDeclarationSyntax and an accessor is not one; that is
-    /// a pre-existing limit of the walk, shared with Calls edges.
+    /// go and open. Accessor bodies are not reached here, because MethodScopes
+    /// enumerates BaseMethodDeclarationSyntax and an accessor is not one; they
+    /// are walked by <see cref="PropertyConstructionSites"/> instead.
     /// </remarks>
     internal static IEnumerable<ConstructionSiteInfo> ConstructionSites(
         SyntaxNode decl, SemanticModel model, IReadOnlySet<string> inScope)
@@ -138,6 +206,26 @@ internal static class CallSiteScanner
         foreach (var (site, constructed) in TopLevelProgram.BodyNodes(decl)
                      .SelectMany(body => ConstructedTypes(body, model, inScope)))
             yield return new ConstructionSiteInfo(fromId, constructed.ToDisplayString(), LineOf(site), fromType);
+    }
+
+    /// <summary>
+    /// Construction sites in one property's or indexer's accessor bodies and
+    /// expression body, attributed to the PROPERTY node — the twin of
+    /// <see cref="PropertyCallSites"/>, and the case that mattered most: a
+    /// lazily built singleton or a list of rule objects behind a getter left the
+    /// types it builds with no incoming Constructs edge, reading as never built.
+    /// </summary>
+    internal static IEnumerable<ConstructionSiteInfo> PropertyConstructionSites(
+        BasePropertyDeclarationSyntax decl, SemanticModel model, IReadOnlySet<string> inScope)
+    {
+        var bodies = PropertyBodies(decl).ToList();
+        if (bodies.Count == 0) yield break;
+        if (model.GetDeclaredSymbol(decl) is not IPropertySymbol property) yield break;
+
+        var fromId = SymbolIds.MemberId(property);
+
+        foreach (var (site, constructed) in bodies.SelectMany(body => ConstructedTypes(body, model, inScope)))
+            yield return new ConstructionSiteInfo(fromId, constructed.ToDisplayString(), LineOf(site));
     }
 
     /// <summary>
@@ -396,9 +484,9 @@ internal static class CallSiteScanner
     /// the caller resolves DisposeAsync rather than Dispose.
     /// </summary>
     private static IEnumerable<DisposedResource> DisposedResources(
-        SyntaxNode decl, SemanticModel model)
+        IEnumerable<SyntaxNode> bodies, SemanticModel model)
     {
-        foreach (var node in TopLevelProgram.BodyNodes(decl).SelectMany(b => b.DescendantNodes()))
+        foreach (var node in bodies.SelectMany(b => b.DescendantNodes()))
         {
             switch (node)
             {

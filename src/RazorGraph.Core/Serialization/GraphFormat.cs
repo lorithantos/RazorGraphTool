@@ -125,6 +125,14 @@ internal static class GraphFormat
     /// restored. Additive, as 3.4's stamps were: a 3.5 reader ignores the key, and a
     /// 3.5 graph read here has none, which reads as "not recorded" -- never as "all
     /// restored".
+    /// 3.7 walks property and indexer accessor bodies and expression bodies, so
+    /// Calls and Constructs edges can now start at a Property node: a method called
+    /// only from a getter, or a type built only in one, had no incoming edge and
+    /// read as dead. A new SHAPE of two known kinds, in 1.5's sense -- no kind or
+    /// property was added, but a consumer assuming every Calls edge leaves a Method
+    /// would be wrong against this graph, and the bump is what tells a 3.6 reader
+    /// the population moved. Coverage and escape propagation do not step through a
+    /// property node, so Covers and Escapes are unchanged by it.
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -165,7 +173,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(3, 6);
+    public static readonly GraphFormatVersion Current = new(3, 7);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

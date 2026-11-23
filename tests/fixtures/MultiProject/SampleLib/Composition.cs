@@ -144,3 +144,71 @@ public static class PartRegistry
     /// <summary>Called only from the explicit static constructor body.</summary>
     private static void Warm() { }
 }
+
+/// <summary>Built only inside a block-bodied property getter.</summary>
+public sealed class GetterPart
+{
+    public int Value => 5;
+}
+
+/// <summary>Built only by an expression-bodied property.</summary>
+public sealed class ArrowPart
+{
+    public int Value => 6;
+}
+
+/// <summary>Built only inside an indexer's getter.</summary>
+public sealed class SlotPart
+{
+    public int Value => 7;
+}
+
+/// <summary>
+/// Accessor bodies as a composition root. An accessor is not a method
+/// declaration, so the method walk never reached one: every method below was
+/// called only from a property or an indexer and read as uncalled, and every
+/// type it builds read as never built. The edges start at the PROPERTY, because
+/// accessors are not graph nodes.
+/// </summary>
+public sealed class PartShelf
+{
+    private GetterPart? _cached;
+
+    /// <summary>A block-bodied getter that calls, under a guard, and constructs.</summary>
+    public GetterPart Cached
+    {
+        get
+        {
+            try
+            {
+                Restock();
+            }
+            catch (InvalidOperationException)
+            {
+            }
+            return _cached ??= new GetterPart();
+        }
+    }
+
+    /// <summary>An expression-bodied property that calls and constructs.</summary>
+    public ArrowPart Fresh => Label(new ArrowPart());
+
+    /// <summary>An indexer whose getter calls and constructs.</summary>
+    public SlotPart this[int slot]
+    {
+        get
+        {
+            Check(slot);
+            return new SlotPart();
+        }
+    }
+
+    /// <summary>Called only from <see cref="Cached"/>'s getter.</summary>
+    private static void Restock() { }
+
+    /// <summary>Called only from <see cref="Fresh"/>'s expression body.</summary>
+    private static ArrowPart Label(ArrowPart part) => part;
+
+    /// <summary>Called only from the indexer's getter.</summary>
+    private static void Check(int slot) { }
+}

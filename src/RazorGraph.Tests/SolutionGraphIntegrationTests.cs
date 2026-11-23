@@ -385,7 +385,7 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
             new[]
             {
                 "Advance_ThroughARunnerThatHoldsTheBase", "Advance_ThroughTheBaseDeclaration",
-                "Cache_SeedsItself", "Channel_ThroughTheInterface",
+                "Cache_SeedsItself", "Cached_IsBuiltOnce", "Channel_ThroughTheInterface",
                 "Greet_ThroughTheInterface", "List_ReturnsSortedCatalogs",
                 "Preload_CountsCatalogs", "Warm_IsPositive"
             },
@@ -1984,6 +1984,104 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         Assert.Equal(
             "type:SampleLib.PartRegistry",
             Assert.Single(CallsInto("m:SampleLib.PartRegistry.Warm(")).FromId);
+    }
+
+    // ---- Accessor bodies --------------------------------------------------------
+    //
+    // An accessor is not a method declaration, so the method walk never reached
+    // one, and a method called or a type built only inside a getter had no
+    // incoming edge and read as dead. The edges start at the PROPERTY node,
+    // because accessors are not nodes -- the same attribution Reads and Writes use.
+
+    private const string CachedProperty = "prop:SampleLib.PartShelf.Cached";
+    private const string FreshProperty = "prop:SampleLib.PartShelf.Fresh";
+    private const string ShelfIndexer = "prop:SampleLib.PartShelf.this[]";
+
+    /// <summary>
+    /// The 1-based line of the one line in a node's file holding the text, so a
+    /// line assertion proves it points at the site rather than matching a constant.
+    /// </summary>
+    private int LineHolding(string nodeId, string text)
+    {
+        var lines = LinesOf(_solutionGraph!.GetNode(nodeId)!);
+        return Array.FindIndex(lines, l => l.Contains(text, StringComparison.Ordinal)) + 1;
+    }
+
+    [Fact]
+    public void Calls_ReachAMethodCalledOnlyInsideAPropertyGetter_FromTheProperty()
+    {
+        var edge = Assert.Single(CallsInto("m:SampleLib.PartShelf.Restock("));
+
+        Assert.Equal(CachedProperty, edge.FromId);
+        Assert.Equal(NodeType.Property, _solutionGraph!.GetNode(edge.FromId)!.Type);
+
+        // The guard payload rides along as it does on a method's edge.
+        Assert.Contains("System.InvalidOperationException", edge.GetProperty<List<string>>("guardedBy")!);
+    }
+
+    [Fact]
+    public void Constructs_ReachATypeBuiltOnlyInsideAPropertyGetter_AtTheSiteLine()
+    {
+        var edge = Assert.Single(Constructs("type:SampleLib.GetterPart"));
+
+        Assert.Equal(CachedProperty, edge.FromId);
+        Assert.Equal(LineHolding(CachedProperty, "new GetterPart()"), edge.GetProperty<int>("line"));
+    }
+
+    [Fact]
+    public void ExpressionBodiedProperty_CallsAndConstructsFromTheProperty()
+    {
+        Assert.Equal(FreshProperty, Assert.Single(CallsInto("m:SampleLib.PartShelf.Label(")).FromId);
+
+        var built = Assert.Single(Constructs("type:SampleLib.ArrowPart"));
+        Assert.Equal(FreshProperty, built.FromId);
+        Assert.Equal(LineHolding(FreshProperty, "new ArrowPart()"), built.GetProperty<int>("line"));
+    }
+
+    [Fact]
+    public void Indexer_CallsAndConstructsFromItsPropertyNode()
+    {
+        // An indexer is a Property node named this[], and that node is the near end.
+        Assert.Equal(NodeType.Property, _solutionGraph!.GetNode(ShelfIndexer)!.Type);
+
+        Assert.Equal(ShelfIndexer, Assert.Single(CallsInto("m:SampleLib.PartShelf.Check(")).FromId);
+
+        var built = Assert.Single(Constructs("type:SampleLib.SlotPart"));
+        Assert.Equal(ShelfIndexer, built.FromId);
+        Assert.Equal(LineHolding(ShelfIndexer, "new SlotPart()"), built.GetProperty<int>("line"));
+    }
+
+    [Fact]
+    public void AccessorBodies_MintNoAccessorMethodNodes()
+    {
+        // The design decision, pinned: get_Cached would name a node nothing else
+        // carries, and every getter would arrive in uncovered_methods.
+        Assert.DoesNotContain(
+            _solutionGraph!.Nodes,
+            n => n.Id.StartsWith("m:SampleLib.PartShelf.get_", StringComparison.Ordinal)
+                 || n.Id.StartsWith("m:SampleLib.PartShelf.set_", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PropertySourcedCalls_DoNotWidenCoverage_AndThatIsDeliberate()
+    {
+        // Pinned as a LIMIT, the twin of PropertyImplements_DoNotWidenCoverage.
+        // PartShelfTests reads Cached, whose getter calls Restock, and the Calls
+        // edge out of the property is in the graph -- but the test reaches the
+        // property by a Reads edge, and the Covers walk steps along Calls between
+        // methods, so it never stands on the property to take the edge. Whoever
+        // makes the walk step member-to-member finds this failing on purpose.
+        Assert.Contains(
+            _solutionGraph!.Nodes,
+            n => n.Id.StartsWith("m:SampleWeb.Tests.PartShelfTests.Cached_IsBuiltOnce", StringComparison.Ordinal)
+                 && n.GetProperty<bool>("isTest"));
+        Assert.Single(CallsInto("m:SampleLib.PartShelf.Restock("));
+
+        var query = new GraphQuery(_solutionGraph!);
+        var restock = _solutionGraph!.Nodes.Single(n =>
+            n.Id.StartsWith("m:SampleLib.PartShelf.Restock(", StringComparison.Ordinal));
+
+        Assert.Empty(query.GetCoveringTests(restock.Id));
     }
 
     /// <summary>

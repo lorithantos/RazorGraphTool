@@ -430,7 +430,13 @@ Method-level `Implements` and `Overrides` edges carry the two joins, and `Overri
 spans the whole chain, so a test reaching an abstract root also reaches a leaf two
 levels below it. Not followed: property accessor bodies (source-generated setters
 included), stored-and-forwarded delegates, and reflection — an empty `covering_tests`
-answer names these in its `caveat` rather than reading as proof.
+answer names these in its `caveat` rather than reading as proof. The graph *does* hold
+the calls an accessor body makes, as `Calls` edges from the property node (see
+*Properties and fields are nodes* below), but a test reaches a property through a
+`Reads` or `Writes` edge and the walk steps only along `Calls` between methods, so it
+never stands on the property to take them. A method called only from a getter has a
+caller in the graph and is still uncovered. Exception-escape propagation stops at the
+property for the same reason: an escape reaches the property node and goes no further.
 
 > Class overrides were not widened until 2026-09-05, and the cost was not a smaller
 > answer but a wrong one: every override in a solution reported zero covering tests, so
@@ -504,7 +510,12 @@ ids) contained by its type, carrying the declared type and `isStatic` / `isConst
 them: methods and constructors; accessor and expression bodies attribute to the
 *property* node (a computed property reading its inputs is real data flow, and
 accessors are not Method nodes); member initializers attribute to the instance
-constructors, static initializers to nothing — static ctors are not nodes. Compound
+constructors, static initializers to nothing — static ctors are not nodes. Calls and
+constructions inside accessor and expression bodies, indexers included, attribute
+the same way: a getter that calls `DistinctKinds` or builds `new Rule()` is a `Calls`
+or `Constructs` edge from the *property* node, so a method or type used only there
+no longer reads as dead. An indexer is a `Property` node named `this[]`; event
+accessors are not walked, because an event is not a node. Compound
 assignment and `++` yield both a Reads and a Writes edge; an `out` argument writes,
 a `ref` argument does both. A member's declared type becomes a `References` edge to
 every in-solution type it mentions — through `List<>` and array wrappers — so "who
@@ -564,7 +575,9 @@ them. Everything is precomputed at build time: methods carry `throws` and
 (`guardedBy`, with `filteredBy` kept apart because a `when` filter may decline at
 runtime — it reports `conditional`, never handled), and a worklist sweep emits
 `Escapes` edges carrying the exception type, hop depth, and one representative path.
-Delegates are followed one hop: a method-group reference becomes an unguarded `Calls`
+A throw that reaches a property through a getter's `Calls` edge stops there: code
+reaches a property by `Reads`, not `Calls`, so the sweep has no caller to carry it to,
+and an escape through a getter is not reported. Delegates are followed one hop: a method-group reference becomes an unguarded `Calls`
 edge (`viaDelegate` — a try around the registration site does not catch the later
 invocation), and a method group or lambda handed to a framework marks its target (or
 the lambda's container) `callback`. Interface dispatch widens to in-solution

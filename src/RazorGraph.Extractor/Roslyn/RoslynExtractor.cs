@@ -675,11 +675,24 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// call to the resource's Dispose/DisposeAsync. Neither has invocation
     /// syntax at the site, and without the edges the methods read as unreached
     /// by the very code that guarantees they run.
+    ///
+    /// Property and indexer accessor bodies are walked too, with the PROPERTY as
+    /// the near end: accessors are not graph nodes. The edges exist in the graph
+    /// for navigation; coverage and escape propagation do not step through a
+    /// property node, so a method reached only through a getter is still
+    /// uncovered.
     /// </summary>
     internal static IEnumerable<CallSiteInfo> CallSitesIn(SyntaxNode root, SemanticModel model, IReadOnlySet<string> inScope)
     {
         foreach (var site in TopLevelProgram.MethodScopes(root)
             .SelectMany(scope => CallSiteScanner.MethodCallSites(scope, model, inScope)))
+        {
+            yield return site;
+        }
+
+        foreach (var site in root.DescendantNodes()
+            .OfType<BasePropertyDeclarationSyntax>()
+            .SelectMany(property => CallSiteScanner.PropertyCallSites(property, model, inScope)))
         {
             yield return site;
         }
@@ -714,6 +727,13 @@ public sealed class RoslynExtractor : IAsyncDisposable
     {
         foreach (var site in TopLevelProgram.MethodScopes(root)
             .SelectMany(scope => CallSiteScanner.ConstructionSites(scope, model, inScope)))
+        {
+            yield return site;
+        }
+
+        foreach (var site in root.DescendantNodes()
+            .OfType<BasePropertyDeclarationSyntax>()
+            .SelectMany(property => CallSiteScanner.PropertyConstructionSites(property, model, inScope)))
         {
             yield return site;
         }

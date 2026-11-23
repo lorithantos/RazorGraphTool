@@ -74,7 +74,7 @@ internal sealed class CoverageTools(GraphStore store)
     /// ask the right question instead of trusting the empty one.
     /// </summary>
     internal const string UnreachedCaveat =
-        "No test's call chain reaches this method through Calls edges, interface dispatch, or a base-class override. That is not proof it is untested: property accessor bodies (including source-generated setters), stored-and-forwarded delegates, and reflection are not followed. Read the method body for those before treating this as a target for new tests.";
+        "No test's call chain reaches this method through Calls edges, interface dispatch, or a base-class override. That is not proof it is untested: property accessor bodies (including source-generated setters), stored-and-forwarded delegates, and reflection are not followed. A Calls edge from a property node means a getter or setter calls this method; the graph has that edge, but the coverage walk does not step through a property to take it. Read the method body for those before treating this as a target for new tests.";
 
     [McpServerTool(Name = "covered_methods")]
     [Description("Production methods a given test method exercises, nearest first. depth=1 means the test calls it directly. Paged: one test can reach hundreds of methods through the full call closure, so read totalMatches and depthCounts first, and pass offset=nextOffset to continue. nextOffset is absent when there is no more.")]
