@@ -765,77 +765,97 @@ public sealed class RoslynExtractor : IAsyncDisposable
     }
 
     /// <summary>
-    /// The views each controller action renders, with the name worked out from
-    /// the semantic model; see ViewCallScanner. Names are not resolved to files
-    /// here — that needs the Razor layer, which is built later.
+    /// The views each controller action renders, the shape names display drivers
+    /// and shape factories produce, and every controller action with the name
+    /// routing knows it by, from one walk that asks each syntax tree for its
+    /// semantic model once and hands that model to all three scans; see
+    /// ViewCallScanner. View names are not resolved to files here -- that needs
+    /// the Razor layer, which is built later.
     /// </summary>
-    internal IEnumerable<ViewCall> ExtractViewCalls()
+    /// <remarks>
+    /// One model per tree for the reason <see cref="ExtractUsageSites"/> gives:
+    /// the three scans used to ask for a model each, so every declaration they
+    /// looked at was bound three times. The stakes are smaller here than there.
+    /// These scans bind a declaration's symbol and, in a controller, only its
+    /// View and PartialView calls -- not whole bodies -- so the three passes cost
+    /// 0.12-0.15 s on eShopOnWeb and 0.06 s on RazorGraphTool.slnx, and the one
+    /// walk 0.06-0.10 s and 0.07-0.09 s.
+    ///
+    /// A walk of its own rather than three more lists on UsageSitesOf, because
+    /// sharing the calls walk's model buys nothing: run there, on a model whose
+    /// bodies were already bound, the three scans still cost 0.10 s on eShopOnWeb
+    /// and 0.12 s on RazorGraphTool.slnx. Their only consumer is the binding pass
+    /// in the cross-project links phase, after the Razor layer exists; riding the
+    /// calls walk would charge view and action work to a phase named for calls and
+    /// literals, and hold three lists across the phases in between for nothing.
+    ///
+    /// Each list is in the order its own pass produced before the walks were
+    /// fused -- project, then tree, then declaration order within the tree -- so
+    /// the binding pass sees the sequences it always did.
+    /// </remarks>
+    internal ViewBindingSites ExtractViewBindingSites()
     {
         if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
 
-        foreach (var (root, model) in _loaded.SelectMany(
-                     l => l.Compilation.SyntaxTrees.Select(t => (t.GetRoot(), l.Compilation.GetSemanticModel(t)))))
-        {
-            foreach (var call in root.DescendantNodes()
-                .OfType<BaseMethodDeclarationSyntax>()
-                .SelectMany(decl => ViewCallScanner.ViewCalls(decl, model)))
-            {
-                yield return call;
-            }
-        }
+        // Decided once per project, not once per shape: a test fixture naming a
+        // shape is not a render path, and reporting it as one puts noise in the
+        // only stream the shape scan exists to produce. OrchardCore's whole
+        // solution surfaced exactly one such name (ContentZone, from
+        // DisplayDriverTestHelper) among four.
+        return ViewBindingSitesOf(_loaded.Select(l => (l.Compilation, IsTestProject(l.Project))));
     }
 
     /// <summary>
-    /// Shape names produced by display drivers and shape factories; see
-    /// ViewCallScanner. Empty on a solution with no such types, which is every
+    /// The walk behind <see cref="ExtractViewBindingSites"/>, over any
+    /// compilations, each with whether it is test code.
+    /// </summary>
+    internal static ViewBindingSites ViewBindingSitesOf(IEnumerable<(Compilation Compilation, bool InTestCode)> projects)
+    {
+        var sites = new ViewBindingSites([], [], []);
+
+        foreach (var (compilation, inTestCode) in projects)
+        {
+            foreach (var tree in compilation.SyntaxTrees)
+            {
+                var root = tree.GetRoot();
+                var model = compilation.GetSemanticModel(tree);
+
+                sites.ViewCalls.AddRange(ViewCallsIn(root, model));
+                sites.ShapeNames.AddRange(ShapeNamesIn(root, model, inTestCode));
+                sites.ActionMethods.AddRange(ActionMethodsIn(root, model));
+            }
+        }
+
+        return sites;
+    }
+
+    /// <summary>The views rendered by the methods in one tree; see ViewCallScanner.ViewCalls.</summary>
+    internal static IEnumerable<ViewCall> ViewCallsIn(SyntaxNode root, SemanticModel model) =>
+        root.DescendantNodes()
+            .OfType<BaseMethodDeclarationSyntax>()
+            .SelectMany(decl => ViewCallScanner.ViewCalls(decl, model));
+
+    /// <summary>
+    /// Shape names produced in one tree; see ViewCallScanner.ShapeNames. Empty on
+    /// a solution with no display drivers or shape factories, which is every
     /// solution that is not OrchardCore-shaped.
     /// </summary>
-    internal IEnumerable<ShapeReference> ExtractShapeNames()
-    {
-        if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
-
-        foreach (var loaded in _loaded)
-        {
-            // Decided once per project, not once per shape: a test fixture naming
-            // a shape is not a render path, and reporting it as one puts noise in
-            // the only stream this pass exists to produce. OrchardCore's whole
-            // solution surfaced exactly one such name (ContentZone, from
-            // DisplayDriverTestHelper) among four.
-            var inTestCode = IsTestProject(loaded.Project);
-
-            foreach (var (root, model) in loaded.Compilation.SyntaxTrees
-                         .Select(t => (t.GetRoot(), loaded.Compilation.GetSemanticModel(t))))
-            {
-                foreach (var shape in root.DescendantNodes()
-                    .OfType<BaseMethodDeclarationSyntax>()
-                    .SelectMany(decl => ViewCallScanner.ShapeNames(decl, model)))
-                {
-                    yield return inTestCode ? shape with { InTestCode = true } : shape;
-                }
-            }
-        }
-    }
+    internal static IEnumerable<ShapeReference> ShapeNamesIn(SyntaxNode root, SemanticModel model, bool inTestCode) =>
+        root.DescendantNodes()
+            .OfType<BaseMethodDeclarationSyntax>()
+            .SelectMany(decl => ViewCallScanner.ShapeNames(decl, model))
+            .Select(shape => inTestCode ? shape with { InTestCode = true } : shape);
 
     /// <summary>
-    /// Every controller action and the name routing knows it by; see
-    /// ViewCallScanner. Needed to attribute a helper's render to the action that
-    /// invoked it, which is the only thing that knows the view name.
+    /// The controller actions declared in one tree; see
+    /// ViewCallScanner.ActionMethodOf. Needed to attribute a helper's render to
+    /// the action that invoked it, which is the only thing that knows the view name.
     /// </summary>
-    internal IEnumerable<ActionMethod> ExtractActionMethods()
-    {
-        if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
-
-        foreach (var (root, model) in _loaded.SelectMany(
-                     l => l.Compilation.SyntaxTrees.Select(t => (t.GetRoot(), l.Compilation.GetSemanticModel(t)))))
-        {
-            foreach (var action in root.DescendantNodes()
-                .OfType<BaseMethodDeclarationSyntax>()
-                .Select(decl => ViewCallScanner.ActionMethodOf(decl, model)))
-            {
-                if (action is not null) yield return action;
-            }
-        }
-    }
+    internal static IEnumerable<ActionMethod> ActionMethodsIn(SyntaxNode root, SemanticModel model) =>
+        root.DescendantNodes()
+            .OfType<BaseMethodDeclarationSyntax>()
+            .Select(decl => ViewCallScanner.ActionMethodOf(decl, model))
+            .OfType<ActionMethod>();
 
     /// <summary>
     /// Methods in one tree that out-of-solution code can call back into; see

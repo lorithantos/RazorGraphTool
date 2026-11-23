@@ -50,6 +50,16 @@ internal sealed record ShapeReference(string MethodId, string Name, bool IsAlter
 /// </summary>
 internal sealed record ActionMethod(string MethodId, string ActionName);
 
+/// <summary>
+/// The view calls, shape names and controller actions of every loaded project,
+/// from the one walk that collects all three; see
+/// RoslynExtractor.ExtractViewBindingSites for why it is one walk.
+/// </summary>
+internal sealed record ViewBindingSites(
+    List<ViewCall> ViewCalls,
+    List<ShapeReference> ShapeNames,
+    List<ActionMethod> ActionMethods);
+
 /// <summary>Where a view name came from.</summary>
 public enum ViewNameSource
 {

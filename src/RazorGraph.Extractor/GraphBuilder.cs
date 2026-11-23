@@ -306,10 +306,8 @@ public sealed class GraphBuilder : IAsyncDisposable
         _clock?.Begin(BuildPhases.Links);
         _razorLayer.AddGeneratedClassLinks(_symbols);
         _razorLayer.AddInjectDirectiveEdges();
-        _razorLayer.AddBindingEdges(
-            _roslyn.ExtractViewCalls().ToList(),
-            _roslyn.ExtractShapeNames().ToList(),
-            _roslyn.ExtractActionMethods().ToList());
+        var viewSites = _roslyn.ExtractViewBindingSites();
+        _razorLayer.AddBindingEdges(viewSites.ViewCalls, viewSites.ShapeNames, viewSites.ActionMethods);
         // A single-project graph, even one loaded from a solution, is rooted at the
         // project: the rest of the solution's text is not this graph's to hold.
         _clock?.Begin(BuildPhases.TextFiles);
@@ -369,10 +367,8 @@ public sealed class GraphBuilder : IAsyncDisposable
         foreach (var (projectName, attributes) in _roslyn.ExtractAssemblyAttributes())
             _declarations.AddProjectAttributeEdges(ProjectEmitter.ProjectId(projectName), attributes);
 
-        _razorLayer.AddBindingEdges(
-            _roslyn.ExtractViewCalls().ToList(),
-            _roslyn.ExtractShapeNames().ToList(),
-            _roslyn.ExtractActionMethods().ToList());
+        var viewSites = _roslyn.ExtractViewBindingSites();
+        _razorLayer.AddBindingEdges(viewSites.ViewCalls, viewSites.ShapeNames, viewSites.ActionMethods);
 
         _clock?.Begin(BuildPhases.Coverage);
         _coverage.AddCoverageEdges();
