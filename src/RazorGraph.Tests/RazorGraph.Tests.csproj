@@ -21,6 +21,8 @@
     <ProjectReference Include="..\RazorGraph.Lua\RazorGraph.Lua.csproj" />
     <!-- The MCP server is an exe; referenced here so GraphStore's registry semantics are testable. -->
     <ProjectReference Include="..\RazorGraph.Mcp\RazorGraph.Mcp.csproj" />
+    <!-- The CLI is an exe too; referenced so the command tree's help is testable. -->
+    <ProjectReference Include="..\RazorGraph.Cli\RazorGraph.Cli.csproj" />
   </ItemGroup>
 
 </Project>

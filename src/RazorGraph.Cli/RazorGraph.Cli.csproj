@@ -26,4 +26,8 @@
     <ProjectReference Include="..\RazorGraph.Lua\RazorGraph.Lua.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="RazorGraph.Tests" />
+  </ItemGroup>
+
 </Project>
