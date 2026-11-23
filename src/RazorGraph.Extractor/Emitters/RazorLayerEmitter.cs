@@ -218,16 +218,34 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
     }
 
     /// <summary>
-    /// An InjectedInto edge for each <c>@inject</c> line, from the service's node
-    /// to the Razor node that declares it -- the direction constructor injection
-    /// already runs, service to consumer.
+    /// An InjectedInto edge for each service a Razor file receives through
+    /// <c>@inject</c>, from the service's node to the page, partial, layout or
+    /// component -- the direction constructor injection already runs, service to
+    /// consumer -- whether the directive is in the file itself or in a
+    /// _ViewImports.cshtml / _Imports.razor above it.
     ///
-    /// The type is taken from the compiled class rather than from the text. Razor
-    /// compiles every @inject into a property of the same name ([RazorInject] for
-    /// a .cshtml, [Inject] for a .razor), and that property's type is the one the
-    /// compiler resolved through @using, _ViewImports and _Imports. Reading the
-    /// text instead would mean re-implementing that lookup. The text is the
-    /// fallback only when the class or the property is not in the graph.
+    /// An imports file is a declaration site, not a consumer. Razor applies its
+    /// directives to every file in its folder and below, stacking up to the
+    /// project root, and the imports file never receives the service itself. So
+    /// it gets no edge, and each file under it does, with <c>declaredIn</c> naming
+    /// the file whose directive it was and <c>line</c> that file's line.
+    ///
+    /// The compiled class is the authority on what applies. Razor compiles every
+    /// @inject that reaches a file into one property of the same name
+    /// ([RazorInject] for a .cshtml, [Inject] for a .razor) with precedence
+    /// already applied: the file's own directive over an inherited one of the same
+    /// name, the nearest imports file over one further up, and within one file
+    /// the last directive of a name. The directives are walked in that same order
+    /// to say which one declared each property. A property no directive declares
+    /// is left out: every .cshtml class also carries [RazorInject] Html, Url,
+    /// Json, Component and ModelExpressionProvider, which Razor adds to every view
+    /// and nobody wrote.
+    ///
+    /// The type is taken from that property rather than from the text, being the
+    /// one the compiler resolved through @using, _ViewImports and _Imports.
+    /// Reading the text instead would mean re-implementing that lookup. The text
+    /// is the fallback only when the class is not in the graph, or for a file's
+    /// own directive whose property it does not carry.
     ///
     /// A type with no node -- declared outside the solution, like ILogger&lt;T&gt;,
     /// or naming nothing at all -- gets no edge, since there is nothing to point
@@ -244,11 +262,20 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
     /// <inheritdoc cref="AddInjectDirectiveEdges()"/>
     internal void AddInjectDirectiveEdges(IEnumerable<RazorPageInfo> infos)
     {
+        var all = infos.ToList();
+        var importsByFolder = new Dictionary<string, RazorPageInfo>(StringComparer.Ordinal);
+        foreach (var imports in all.Where(IsImportsFile))
+        {
+            var folder = Path.GetDirectoryName(Path.GetFullPath(imports.FilePath));
+            if (folder is not null) importsByFolder.TryAdd(ImportsKey(folder, imports.FilePath), imports);
+        }
+
         Dictionary<string, GraphNode>? typesByFullName = null;
 
-        foreach (var info in infos)
+        foreach (var info in all)
         {
-            if (info.InjectedServices.Count == 0) continue;
+            if (IsImportsFile(info)) continue;
+            var chain = DeclarationChain(info, importsByFolder);            if (chain.All(file => file.InjectedServices.Count == 0)) continue;
             var page = graph.GetNode(info.Id);
             if (page is null) continue;
 
@@ -257,12 +284,20 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
                 .Where(e => e.Type == EdgeType.References && e.GetProperty<bool>("compiledInto"))
                 .Select(e => e.ToId)
                 .FirstOrDefault();
+            var injected = generatedClass is null ? null : InjectedProperties(generatedClass);
 
             var unresolved = new List<object>();
-            foreach (var directive in info.InjectedServices)
+            foreach (var (declaredIn, directive) in EffectiveDirectives(chain))
             {
-                var property = generatedClass is null ? null : GeneratedProperty(generatedClass, directive.Name);
+                GraphNode? property = null;
+                if (injected is not null && !injected.TryGetValue(directive.Name, out property)
+                    && !ReferenceEquals(declaredIn, info))
+                {
+                    // The class says this inherited directive did not reach the file.
+                    continue;
+                }
                 var resolvedType = property?.GetProperty<string>("memberType");
+                var declaredInPath = declaredIn.RelativePath.Replace('\\', '/');
 
                 var (service, closedType) = resolvedType is not null
                     ? ResolveFullName(resolvedType, typesByFullName)
@@ -276,6 +311,7 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
                         ["name"] = directive.Name,
                         ["declaredType"] = directive.Type,
                         ["line"] = directive.Line,
+                        ["declaredIn"] = declaredInPath,
                         ["typeFrom"] = typeFrom
                     };
                     if (resolvedType is not null) entry["resolvedType"] = resolvedType;
@@ -288,6 +324,7 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
                 edge.Properties["name"] = directive.Name;
                 edge.Properties["declaredType"] = directive.Type;
                 edge.Properties["line"] = directive.Line;
+                edge.Properties["declaredIn"] = declaredInPath;
                 edge.Properties["typeFrom"] = typeFrom;
                 // As on a constructor edge: the written type, carried only when the
                 // edge reached an open generic's node through its definition.
@@ -301,14 +338,101 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
         }
     }
 
-    /// <summary>The property the compiled class declares for one @inject name.</summary>
-    private GraphNode? GeneratedProperty(string classId, string name) =>
-        name.Length == 0
-            ? null
-            : graph.Outgoing(classId)
-                .Where(e => e.Type == EdgeType.Contains)
-                .Select(e => graph.GetNode(e.ToId))
-                .FirstOrDefault(n => n is { Type: NodeType.Property } && n.Name == name);
+    /// <summary>
+    /// The attributes Razor puts on the property it compiles an @inject into:
+    /// [RazorInject] in a .cshtml class, [Inject] in a component.
+    /// </summary>
+    private static readonly HashSet<string> InjectAttributeIds = new(StringComparer.Ordinal)
+    {
+        "ext:Microsoft.AspNetCore.Mvc.Razor.Internal.RazorInjectAttribute",
+        "ext:Microsoft.AspNetCore.Components.InjectAttribute"
+    };
+
+    /// <summary>
+    /// Every property the compiled class carries an inject attribute on, by name
+    /// -- one per @inject that reached the file, plus a .cshtml's five defaults.
+    /// </summary>
+    private Dictionary<string, GraphNode> InjectedProperties(string classId)
+    {
+        var properties = new Dictionary<string, GraphNode>(StringComparer.Ordinal);
+        foreach (var contains in graph.Outgoing(classId).Where(e => e.Type == EdgeType.Contains))
+        {
+            if (graph.GetNode(contains.ToId) is not { Type: NodeType.Property } property) continue;
+            if (graph.Outgoing(property.Id).Any(e => e.Type == EdgeType.DecoratedBy && InjectAttributeIds.Contains(e.ToId)))
+                properties.TryAdd(property.Name, property);
+        }
+        return properties;
+    }
+
+    /// <summary>
+    /// A _ViewImports.cshtml or _Imports.razor: the file whose directives Razor
+    /// applies to every .cshtml or .razor file in its folder and below.
+    /// </summary>
+    private static bool IsImportsFile(RazorPageInfo info) =>
+        Path.GetFileName(info.FilePath) is var name
+        && (name.Equals("_ViewImports.cshtml", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("_Imports.razor", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// A folder and a file kind: a _ViewImports.cshtml applies only to .cshtml
+    /// files and an _Imports.razor only to .razor ones.
+    /// </summary>
+    private static string ImportsKey(string folder, string filePath) =>
+        NormalizeFullPath(folder) + "|" + Path.GetExtension(filePath).ToLowerInvariant();
+
+    /// <summary>
+    /// The files whose @inject lines can reach <paramref name="info"/>, in
+    /// precedence order: the file itself, then the imports file of its own
+    /// folder, then each one further up, stopping at the project root.
+    /// </summary>
+    private static List<RazorPageInfo> DeclarationChain(
+        RazorPageInfo info, Dictionary<string, RazorPageInfo> importsByFolder)
+    {
+        var chain = new List<RazorPageInfo> { info };
+        var fullPath = Path.GetFullPath(info.FilePath);
+        var root = ProjectRoot(fullPath, info.RelativePath) is { } r ? NormalizeFullPath(r) : null;
+
+        for (var folder = Path.GetDirectoryName(fullPath); folder is not null; folder = Path.GetDirectoryName(folder))
+        {
+            if (importsByFolder.TryGetValue(ImportsKey(folder, fullPath), out var imports)) chain.Add(imports);
+            // A file with no known root has only its own folder: walking on could
+            // reach another project's imports file.
+            if (root is null || NormalizeFullPath(folder) == root) break;
+        }
+        return chain;
+    }
+
+    /// <summary>
+    /// The project folder a Razor file's relative path was taken against, or
+    /// null when the file lay outside it and the path is not relative.
+    /// </summary>
+    private static string? ProjectRoot(string fullPath, string relativePath)
+    {
+        if (relativePath.Length == 0 || Path.IsPathRooted(relativePath)
+            || !fullPath.EndsWith(relativePath, StringComparison.OrdinalIgnoreCase))
+            return null;
+        return fullPath[..^relativePath.Length].TrimEnd('\\', '/');
+    }
+
+    /// <summary>
+    /// One directive per name, the one that wins under Razor's precedence --
+    /// first in the chain, and the last of that name within a file -- with the
+    /// file that declared it, ordered by file then line.
+    /// </summary>
+    private static IEnumerable<(RazorPageInfo DeclaredIn, InjectDirective Directive)> EffectiveDirectives(
+        List<RazorPageInfo> chain)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var winners = new List<(int Index, RazorPageInfo File, InjectDirective Directive)>();
+        for (var i = 0; i < chain.Count; i++)
+        {
+            foreach (var directive in Enumerable.Reverse(chain[i].InjectedServices))
+            {
+                if (seen.Add(directive.Name)) winners.Add((i, chain[i], directive));
+            }
+        }
+        return winners.OrderBy(w => w.Index).ThenBy(w => w.Directive.Line).Select(w => (w.File, w.Directive));
+    }
 
     /// <summary>
     /// Every node the solution declares a type for, by full name. ExternalType

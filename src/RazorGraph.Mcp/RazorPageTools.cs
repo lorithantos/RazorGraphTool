@@ -33,7 +33,7 @@ internal sealed class RazorPageTools(GraphStore store)
     }
 
     [McpServerTool(Name = "page_context")]
-    [Description("Backing infrastructure of a Razor page: its PageModel, ViewModel, and injected services. Only valid for RazorPage nodes. Each injectedServices entry says how it arrived in 'via': 'constructor' (a PageModel constructor parameter) or '@inject' (a directive in the .cshtml or .razor file, with its 'property' and 'directiveLine'). An @inject whose type has no node in the graph -- a framework service such as ILogger<T>, or a name nothing matches -- is listed in 'unresolvedInjections' instead. For a Blazor component (.razor) a 'caveat' says that its child components are not modelled and pageModel and viewModel do not apply.")]
+    [Description("Backing infrastructure of a Razor page: its PageModel, ViewModel, and injected services. Only valid for RazorPage nodes. Each injectedServices entry says how it arrived in 'via': 'constructor' (a PageModel constructor parameter) or '@inject' (a directive in the .cshtml or .razor file, or inherited from a _ViewImports.cshtml or _Imports.razor above it, with its 'property', 'declaredIn' -- the project-relative path of the file whose directive it was -- and 'directiveLine' in that file). An @inject whose type has no node in the graph -- a framework service such as ILogger<T>, or a name nothing matches -- is listed in 'unresolvedInjections' instead. For a Blazor component (.razor) a 'caveat' says that its child components are not modelled and pageModel and viewModel do not apply.")]
     public string PageContext(
         [Description("Id of a RazorPage node")] string pageId,
         [Description(ToolArguments.GraphIdDescription)] string? graphId = null)
@@ -58,6 +58,7 @@ internal sealed class RazorPageTools(GraphStore store)
                     declaredType = u.DeclaredType,
                     resolvedType = u.ResolvedType,
                     line = u.Line,
+                    declaredIn = u.DeclaredIn,
                     via = "@inject"
                 }).ToList()
                 : null,
@@ -67,14 +68,17 @@ internal sealed class RazorPageTools(GraphStore store)
 
     /// <summary>
     /// A service's node summary plus how it reached the page. For an @inject,
-    /// <c>property</c> and <c>directiveLine</c> say which line declared it;
-    /// <c>name</c> and <c>line</c> stay the service's own, as everywhere else.
+    /// <c>property</c>, <c>declaredIn</c> and <c>directiveLine</c> say which line
+    /// of which file declared it -- the page's own, or an imports file it
+    /// inherits from; <c>name</c> and <c>line</c> stay the service's own, as
+    /// everywhere else.
     /// </summary>
     private static JsonObject InjectedService(PageInjection injection)
     {
         var summary = JsonSerializer.SerializeToNode(ToolResponses.NodeSummary(injection.Service), ToolResponses.Json)!.AsObject();
         summary["via"] = injection.Via;
         if (injection.Name is not null) summary["property"] = injection.Name;
+        if (injection.DeclaredIn is not null) summary["declaredIn"] = injection.DeclaredIn;
         if (injection.Line is not null) summary["directiveLine"] = injection.Line;
         return summary;
     }

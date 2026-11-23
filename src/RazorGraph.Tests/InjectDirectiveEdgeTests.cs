@@ -49,28 +49,122 @@ public class InjectDirectiveEdgeTests
         // An attribute minted outside the solution; never an injection target.
         graph.AddNode(TypeNode("ext:Microsoft.Extensions.Logging.ILogger<TCategoryName>", NodeType.ExternalType,
             "Microsoft.Extensions.Logging.ILogger<TCategoryName>"));
+        graph.AddNode(TypeNode(RazorInjectId, NodeType.ExternalType, RazorInjectId["ext:".Length..]));
 
         if (!withGeneratedClass) return graph;
 
-        graph.AddNode(TypeNode(ClassId, NodeType.Class, "App.Pages.Pages_Shop"));
-        graph.AddEdge(new GraphEdge { FromId = PageId, ToId = ClassId, Type = EdgeType.References, Properties = { ["compiledInto"] = true } });
-        AddProperty(graph, "Cart", "App.Services.ICartService");
-        AddProperty(graph, "Items", "App.Data.IRepository<App.Models.Item>");
-        AddProperty(graph, "Logger", "Microsoft.Extensions.Logging.ILogger<App.Pages.Pages_Shop>");
+        AddClass(graph, PageId, ClassId,
+            ("Cart", "App.Services.ICartService"),
+            ("Items", "App.Data.IRepository<App.Models.Item>"),
+            ("Logger", "Microsoft.Extensions.Logging.ILogger<App.Pages.Pages_Shop>"));
         return graph;
     }
 
-    private static void AddProperty(CodeGraph graph, string name, string memberType)
+    private const string RazorInjectId = "ext:Microsoft.AspNetCore.Mvc.Razor.Internal.RazorInjectAttribute";
+
+    /// <summary>
+    /// The class a page compiles into, with one [RazorInject] property per
+    /// injection -- the DecoratedBy edge is what marks a property as one.
+    /// </summary>
+    private static void AddClass(CodeGraph graph, string pageId, string classId, params (string Name, string MemberType)[] properties)
     {
-        var id = $"prop:App.Pages.Pages_Shop.{name}";
-        var node = new GraphNode { Id = id, Type = NodeType.Property, Name = name };
-        node.SetProperty("memberType", memberType);
-        graph.AddNode(node);
-        graph.AddEdge(new GraphEdge { FromId = ClassId, ToId = id, Type = EdgeType.Contains });
+        graph.AddNode(TypeNode(classId, NodeType.Class, classId["type:".Length..]));
+        graph.AddEdge(new GraphEdge { FromId = pageId, ToId = classId, Type = EdgeType.References, Properties = { ["compiledInto"] = true } });
+        foreach (var (name, memberType) in properties)
+        {
+            var id = $"prop:{classId["type:".Length..]}.{name}";
+            var node = new GraphNode { Id = id, Type = NodeType.Property, Name = name };
+            node.SetProperty("memberType", memberType);
+            graph.AddNode(node);
+            graph.AddEdge(new GraphEdge { FromId = classId, ToId = id, Type = EdgeType.Contains });
+            graph.AddEdge(new GraphEdge { FromId = id, ToId = RazorInjectId, Type = EdgeType.DecoratedBy });
+        }
     }
 
-    private static void Emit(CodeGraph graph, RazorPageInfo info) =>
-        new RazorLayerEmitter(graph, new ClientAssetEmitter(graph)).AddInjectDirectiveEdges([info]);
+    private static void Emit(CodeGraph graph, params RazorPageInfo[] infos) =>
+        new RazorLayerEmitter(graph, new ClientAssetEmitter(graph)).AddInjectDirectiveEdges(infos);
+
+    /// <summary>A .cshtml under C:\app, and its node.</summary>
+    private static RazorPageInfo RazorFile(CodeGraph graph, string relativePath, params InjectDirective[] injects)
+    {
+        var info = new RazorPageInfo
+        {
+            Id = "page:" + relativePath,
+            FilePath = @"C:\app\" + relativePath.Replace('/', '\\'),
+            RelativePath = relativePath.Replace('/', '\\'),
+            InjectedServices = injects.ToList()
+        };
+        graph.AddNode(new GraphNode { Id = info.Id, Type = NodeType.PartialView, Name = Path.GetFileNameWithoutExtension(relativePath), FilePath = info.FilePath });
+        return info;
+    }
+
+    /// <summary>
+    /// The nearest _ViewImports.cshtml beats one further up, and an imports file
+    /// reaches only its own folder and below. Pages/_ViewImports.cshtml injects
+    /// App's ICartService as Cart, Pages/Admin/_ViewImports.cshtml Legacy's under
+    /// the same name: Admin/Users gets Legacy's, declared in the Admin file, and
+    /// Public/Home -- in a sibling folder of Admin -- gets App's, declared in the
+    /// Pages file, and nothing from Admin's. Each compiled class carries the one
+    /// property the compiler kept, so the type agrees with the declaring file.
+    /// </summary>
+    [Fact]
+    public void NearestImportsFileWins_AndASiblingFolderGetsNothingFromIt()
+    {
+        var graph = Graph(withGeneratedClass: false);
+        var pagesImports = RazorFile(graph, "Pages/_ViewImports.cshtml", new InjectDirective("App.Services.ICartService", "Cart", 2));
+        var adminImports = RazorFile(graph, "Pages/Admin/_ViewImports.cshtml", new InjectDirective("Legacy.ICartService", "Cart", 1));
+        var users = RazorFile(graph, "Pages/Admin/Users.cshtml");
+        var home = RazorFile(graph, "Pages/Public/Home.cshtml");
+        AddClass(graph, users.Id, "type:App.Pages.Admin.Users", ("Cart", "Legacy.ICartService"), ("Html", "Microsoft.AspNetCore.Mvc.Rendering.IHtmlHelper<dynamic>"));
+        AddClass(graph, home.Id, "type:App.Pages.Public.Home", ("Cart", "App.Services.ICartService"), ("Html", "Microsoft.AspNetCore.Mvc.Rendering.IHtmlHelper<dynamic>"));
+
+        Emit(graph, pagesImports, adminImports, users, home);
+
+        var usersEdge = Assert.Single(graph.Incoming(users.Id), e => e.Type == EdgeType.InjectedInto);
+        Assert.Equal("svc:Legacy.ICartService", usersEdge.FromId);
+        Assert.Equal("Pages/Admin/_ViewImports.cshtml", usersEdge.GetProperty<string>("declaredIn"));
+        Assert.Equal(1, usersEdge.GetProperty<int>("line"));
+        Assert.Equal("Legacy.ICartService", usersEdge.GetProperty<string>("declaredType"));
+
+        var homeEdge = Assert.Single(graph.Incoming(home.Id), e => e.Type == EdgeType.InjectedInto);
+        Assert.Equal("svc:App.Services.ICartService", homeEdge.FromId);
+        Assert.Equal("Pages/_ViewImports.cshtml", homeEdge.GetProperty<string>("declaredIn"));
+        Assert.Equal(2, homeEdge.GetProperty<int>("line"));
+
+        // The [RazorInject] Html no directive declares is not an injection, and
+        // the imports files receive nothing.
+        Assert.Null(graph.GetNode(users.Id)!.GetProperty<List<object>>("unresolvedInjections"));
+        Assert.Null(graph.GetNode(home.Id)!.GetProperty<List<object>>("unresolvedInjections"));
+        Assert.DoesNotContain(graph.Incoming(pagesImports.Id), e => e.Type == EdgeType.InjectedInto);
+        Assert.DoesNotContain(graph.Incoming(adminImports.Id), e => e.Type == EdgeType.InjectedInto);
+    }
+
+    /// <summary>
+    /// With no compiled class to ask, the chain is walked from the text alone,
+    /// with the same precedence: the page's own line, then the last line of a
+    /// name in the nearest imports file.
+    /// </summary>
+    [Fact]
+    public void WithoutAGeneratedClass_InheritedDirectivesFollowTheSamePrecedence()
+    {
+        var graph = Graph(withGeneratedClass: false);
+        var imports = RazorFile(graph, "Pages/_ViewImports.cshtml",
+            new InjectDirective("Legacy.ICartService", "Cart", 2),
+            new InjectDirective("App.Services.ICartService", "Cart", 3),
+            new InjectDirective("Legacy.ICartService", "Old", 4));
+        var page = RazorFile(graph, "Pages/Basket.cshtml", new InjectDirective("App.Services.ICartService", "Old", 7));
+
+        Emit(graph, imports, page);
+
+        var edges = graph.Incoming(page.Id).Where(e => e.Type == EdgeType.InjectedInto)
+            .ToDictionary(e => e.GetProperty<string>("name")!);
+        Assert.Equal(["Cart", "Old"], edges.Keys.Order().ToArray());
+        Assert.Equal(("svc:App.Services.ICartService", "Pages/_ViewImports.cshtml", 3),
+            (edges["Cart"].FromId, edges["Cart"].GetProperty<string>("declaredIn")!, edges["Cart"].GetProperty<int>("line")));
+        Assert.Equal(("svc:App.Services.ICartService", "Pages/Basket.cshtml", 7),
+            (edges["Old"].FromId, edges["Old"].GetProperty<string>("declaredIn")!, edges["Old"].GetProperty<int>("line")));
+        Assert.All(edges.Values, e => Assert.Equal("directiveText", e.GetProperty<string>("typeFrom")));
+    }
 
     [Fact]
     public void Directive_IsAnEdgeFromTheServiceToThePage_CarryingWhatItSays()
@@ -124,8 +218,8 @@ public class InjectDirectiveEdgeTests
         Assert.Equal(
             new[]
             {
-                new UnresolvedInjection("Logger", "ILogger<Shop>", "Microsoft.Extensions.Logging.ILogger<App.Pages.Pages_Shop>", 6),
-                new UnresolvedInjection("Missing", "IDoesNotExist", null, 7)
+                new UnresolvedInjection("Logger", "ILogger<Shop>", "Microsoft.Extensions.Logging.ILogger<App.Pages.Pages_Shop>", 6, "Pages/Shop.cshtml"),
+                new UnresolvedInjection("Missing", "IDoesNotExist", null, 7, "Pages/Shop.cshtml")
             },
             context.UnresolvedInjections);
     }

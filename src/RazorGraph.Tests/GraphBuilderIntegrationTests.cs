@@ -237,6 +237,7 @@ public class GraphBuilderIntegrationTests : IAsyncLifetime
         Assert.Equal("Greeter", edge.GetProperty<string>("name"));
         Assert.Equal("IGreetingService", edge.GetProperty<string>("declaredType"));
         Assert.Equal(3, edge.GetProperty<int>("line"));
+        Assert.Equal("Pages/Index.cshtml", edge.GetProperty<string>("declaredIn"));
         Assert.Equal("generatedProperty", edge.GetProperty<string>("typeFrom"));
 
         // Nothing points the other way: the page is the consumer.
@@ -260,13 +261,181 @@ public class GraphBuilderIntegrationTests : IAsyncLifetime
         Assert.Equal("svc:SampleApp.Services.IGreetingService", edge.FromId);
         Assert.Equal("Greetings", edge.GetProperty<string>("name"));
         Assert.Equal(3, edge.GetProperty<int>("line"));
+        Assert.Equal("Components/GreetingPanel.razor", edge.GetProperty<string>("declaredIn"));
         Assert.Equal("generatedProperty", edge.GetProperty<string>("typeFrom"));
 
         var unresolved = Assert.Single(new GraphQuery(_graph).GetPageContext(component.Id)!.UnresolvedInjections!);
         Assert.Equal(new UnresolvedInjection(
                 "Logger", "ILogger<GreetingPanel>",
-                "Microsoft.Extensions.Logging.ILogger<SampleApp.Components.GreetingPanel>", 4),
+                "Microsoft.Extensions.Logging.ILogger<SampleApp.Components.GreetingPanel>", 4,
+                "Components/GreetingPanel.razor"),
             unresolved);
+    }
+
+    // ---- @inject inherited from an imports file ------------------------------
+    //
+    // The fixture: Pages/_ViewImports.cshtml line 5 injects IGreetingService
+    // Greeter, which Index.cshtml redeclares on its own line 3;
+    // Pages/Shared/_ViewImports.cshtml line 1 injects SharedGreeter; and
+    // Components/_Imports.razor line 2 injects Greetings, which GreetingPanel
+    // redeclares on its line 3.
+
+    /// <summary>The @inject edges ending at a Razor file, by property name.</summary>
+    private static Dictionary<string, GraphEdge> InjectsInto(string relativePath)
+    {
+        var node = _graph!.Nodes.Single(n => n.Type is NodeType.RazorPage or NodeType.PartialView or NodeType.Layout
+            && n.FilePath is { } p
+            && p.Replace('\\', '/').EndsWith("/SampleApp/" + relativePath, StringComparison.OrdinalIgnoreCase));
+        return _graph.Incoming(node.Id)
+            .Where(e => e.Type == EdgeType.InjectedInto && e.GetProperty<string>("via") == "@inject")
+            .ToDictionary(e => e.GetProperty<string>("name")!);
+    }
+
+    /// <summary>
+    /// An @inject in Pages/_ViewImports.cshtml reaches every .cshtml in Pages
+    /// and below that does not redeclare it -- _ViewStart, and the partial and
+    /// layout in Shared -- each edge naming the imports file and ITS line, with
+    /// the type read from the [RazorInject] property the compiled class carries.
+    /// Pages/Shared/_ViewImports.cshtml stacks on top for the files under it.
+    /// </summary>
+    [Fact]
+    public void InheritedInject_ReachesEveryFileUnderTheImportsFile_NamingItAndItsLine()
+    {
+        foreach (var path in new[] { "Pages/_ViewStart.cshtml", "Pages/Shared/_Card.cshtml", "Pages/Shared/_Layout.cshtml" })
+        {
+            var edge = InjectsInto(path)["Greeter"];
+            Assert.Equal("svc:SampleApp.Services.IGreetingService", edge.FromId);
+            Assert.Equal("Pages/_ViewImports.cshtml", edge.GetProperty<string>("declaredIn"));
+            Assert.Equal(5, edge.GetProperty<int>("line"));
+            Assert.Equal("IGreetingService", edge.GetProperty<string>("declaredType"));
+            Assert.Equal("generatedProperty", edge.GetProperty<string>("typeFrom"));
+        }
+
+        foreach (var path in new[] { "Pages/Shared/_Card.cshtml", "Pages/Shared/_Layout.cshtml" })
+        {
+            var injects = InjectsInto(path);
+            Assert.Equal(["Greeter", "SharedGreeter"], injects.Keys.Order().ToArray());
+            Assert.Equal("Pages/Shared/_ViewImports.cshtml", injects["SharedGreeter"].GetProperty<string>("declaredIn"));
+            Assert.Equal(1, injects["SharedGreeter"].GetProperty<int>("line"));
+        }
+    }
+
+    /// <summary>
+    /// A file's own @inject beats an inherited one of the same name, as the
+    /// compiler applies it: Index gets one Greeter, declared by itself.
+    /// </summary>
+    [Fact]
+    public void OwnInject_OverridesAnInheritedOneOfTheSameName()
+    {
+        var edge = Assert.Single(InjectsInto("Pages/Index.cshtml").Values);
+        Assert.Equal("Pages/Index.cshtml", edge.GetProperty<string>("declaredIn"));
+        Assert.Equal(3, edge.GetProperty<int>("line"));
+
+        var context = new GraphQuery(_graph!).GetPageContext(edge.ToId)!;
+        var injection = Assert.Single(context.Injections, i => i.Via == GraphQuery.ViaInjectDirective);
+        Assert.Equal("Greeter", injection.Name);
+        Assert.Equal("Pages/Index.cshtml", injection.DeclaredIn);
+        Assert.Equal(3, injection.Line);
+    }
+
+    /// <summary>
+    /// An imports file reaches only its own folder and below: Index and
+    /// _ViewStart sit beside Pages/Shared rather than in it and get no
+    /// SharedGreeter, and the components, in a sibling of Pages, get nothing
+    /// from either _ViewImports.cshtml.
+    /// </summary>
+    [Fact]
+    public void FilesNotUnderAnImportsFile_GetNothingFromIt()
+    {
+        Assert.DoesNotContain("SharedGreeter", InjectsInto("Pages/Index.cshtml").Keys);
+        Assert.DoesNotContain("SharedGreeter", InjectsInto("Pages/_ViewStart.cshtml").Keys);
+
+        foreach (var path in new[] { "Components/GreetingPanel.razor", "Components/GreetingBadge.razor" })
+        {
+            Assert.All(InjectsInto(path).Values,
+                e => Assert.StartsWith("Components/", e.GetProperty<string>("declaredIn")));
+            Assert.DoesNotContain("Greeter", InjectsInto(path).Keys);
+            Assert.DoesNotContain("SharedGreeter", InjectsInto(path).Keys);
+        }
+    }
+
+    /// <summary>
+    /// Every .cshtml class also carries [RazorInject] Html, Url, Json, Component
+    /// and ModelExpressionProvider, which Razor adds and no directive declares.
+    /// None of them is an edge or an unresolved entry anywhere -- while the
+    /// class does carry them, so the absence is the exclusion and not an
+    /// empty class.
+    /// </summary>
+    [Fact]
+    public void DefaultRazorInjectProperties_AreNotListedAsInjections()
+    {
+        string[] plumbing = ["Html", "Url", "Json", "Component", "ModelExpressionProvider"];
+
+        var indexClass = _graph!.GetNode("type:SampleApp.Pages.Pages_Index")!;
+        var carried = _graph.Outgoing(indexClass.Id)
+            .Where(e => e.Type == EdgeType.Contains)
+            .Select(e => _graph.GetNode(e.ToId)!)
+            .Where(p => p.Type == NodeType.Property && _graph.Outgoing(p.Id).Any(d =>
+                d.Type == EdgeType.DecoratedBy && d.ToId == "ext:Microsoft.AspNetCore.Mvc.Razor.Internal.RazorInjectAttribute"))
+            .Select(p => p.Name)
+            .ToList();
+        Assert.All(plumbing, name => Assert.Contains(name, carried));
+
+        var razorNodes = _graph.Nodes.Where(n => n.Type is NodeType.RazorPage or NodeType.PartialView or NodeType.Layout).ToList();
+        Assert.NotEmpty(razorNodes);
+        foreach (var node in razorNodes)
+        {
+            var names = _graph.Incoming(node.Id)
+                .Where(e => e.Type == EdgeType.InjectedInto)
+                .Select(e => e.GetProperty<string>("name"))
+                .Concat(GraphQuery.UnresolvedInjections(node).Select(u => u.Name));
+            Assert.DoesNotContain(names, n => n is not null && plumbing.Contains(n));
+        }
+    }
+
+    /// <summary>
+    /// An imports file declares services and receives none: no InjectedInto
+    /// edge ends at a _ViewImports.cshtml or _Imports.razor node, and none
+    /// carries unresolvedInjections -- while each has an @inject of its own.
+    /// </summary>
+    [Fact]
+    public void ImportsFiles_ReceiveNoInjection()
+    {
+        var imports = _graph!.Nodes
+            .Where(n => n.Type is NodeType.RazorPage or NodeType.PartialView or NodeType.Layout)
+            .Where(n => Path.GetFileName(n.FilePath) is "_ViewImports.cshtml" or "_Imports.razor")
+            .ToList();
+        Assert.Equal(3, imports.Count);
+
+        foreach (var node in imports)
+        {
+            Assert.DoesNotContain(_graph.Incoming(node.Id), e => e.Type == EdgeType.InjectedInto);
+            Assert.Null(node.GetProperty<List<object>>("unresolvedInjections"));
+        }
+    }
+
+    /// <summary>
+    /// The same for components: Components/_Imports.razor's Greetings reaches
+    /// GreetingBadge, naming the imports file and its line, and GreetingPanel's
+    /// own @inject of that name wins over it. GreetingBadge's type is read from
+    /// the directive text, because its compiled class is not joined to it: the
+    /// class holds no code from the badge's own file, so the #line vote that
+    /// joins a component to its class finds only _Imports.razor's lines.
+    /// </summary>
+    [Fact]
+    public void InheritedInject_FromImportsRazor_ReachesComponentsUnderIt()
+    {
+        var badge = InjectsInto("Components/GreetingBadge.razor");
+        var edge = Assert.Single(badge.Values);
+        Assert.Equal("Greetings", edge.GetProperty<string>("name"));
+        Assert.Equal("svc:SampleApp.Services.IGreetingService", edge.FromId);
+        Assert.Equal("Components/_Imports.razor", edge.GetProperty<string>("declaredIn"));
+        Assert.Equal(2, edge.GetProperty<int>("line"));
+        Assert.Equal("directiveText", edge.GetProperty<string>("typeFrom"));
+
+        var panel = Assert.Single(InjectsInto("Components/GreetingPanel.razor").Values);
+        Assert.Equal("Components/GreetingPanel.razor", panel.GetProperty<string>("declaredIn"));
+        Assert.Equal(3, panel.GetProperty<int>("line"));
     }
 
     /// <summary>

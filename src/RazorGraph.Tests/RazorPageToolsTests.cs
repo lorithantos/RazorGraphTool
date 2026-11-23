@@ -161,6 +161,55 @@ public class RazorPageToolsTests
         Assert.Equal(1, root.GetProperty("returned").GetInt32());
     }
 
+    /// <summary>
+    /// A service a page inherits from a _ViewImports.cshtml says so: its
+    /// declaredIn is the imports file and its directiveLine is that file's line,
+    /// for an in-solution service and an unresolved one alike, while the page's
+    /// own @inject names the page.
+    /// </summary>
+    [Fact]
+    public void PageContext_OnAnInheritedInject_SaysWhichFileDeclaredIt()
+    {
+        var graph = new CodeGraph();
+        var page = new GraphNode { Id = "page:Pages/Index.cshtml", Type = NodeType.RazorPage, Name = "Index", FilePath = @"C:\app\Pages\Index.cshtml" };
+        page.SetProperty("unresolvedInjections", new List<object>
+        {
+            new Dictionary<string, object>
+            {
+                ["name"] = "Logs", ["declaredType"] = "ILoggerFactory", ["line"] = 6,
+                ["declaredIn"] = "Pages/_ViewImports.cshtml", ["typeFrom"] = "generatedProperty"
+            }
+        });
+        graph.AddNode(page);
+        graph.AddNode(new GraphNode { Id = "svc:App.IGreetingService", Type = NodeType.ServiceInterface, Name = "IGreetingService" });
+        graph.AddNode(new GraphNode { Id = "svc:App.IClock", Type = NodeType.ServiceInterface, Name = "IClock" });
+        graph.AddEdge(new GraphEdge
+        {
+            FromId = "svc:App.IGreetingService", ToId = page.Id, Type = EdgeType.InjectedInto,
+            Properties = { ["via"] = "@inject", ["name"] = "Greeter", ["declaredType"] = "IGreetingService", ["line"] = 5, ["declaredIn"] = "Pages/_ViewImports.cshtml", ["typeFrom"] = "generatedProperty" }
+        });
+        graph.AddEdge(new GraphEdge
+        {
+            FromId = "svc:App.IClock", ToId = page.Id, Type = EdgeType.InjectedInto,
+            Properties = { ["via"] = "@inject", ["name"] = "Clock", ["declaredType"] = "IClock", ["line"] = 3, ["declaredIn"] = "Pages/Index.cshtml", ["typeFrom"] = "generatedProperty" }
+        });
+        var store = new GraphStore();
+        store.Add(graph, source: "test://hand-built", requestedId: "g");
+
+        using var doc = JsonDocument.Parse(new RazorPageTools(store).PageContext(page.Id));
+        var root = doc.RootElement;
+
+        var services = root.GetProperty("injectedServices").EnumerateArray()
+            .Select(s => (s.GetProperty("property").GetString()!, s.GetProperty("declaredIn").GetString()!, s.GetProperty("directiveLine").GetInt32()))
+            .OrderBy(s => s.Item1)
+            .ToArray();
+        Assert.Equal(new[] { ("Clock", "Pages/Index.cshtml", 3), ("Greeter", "Pages/_ViewImports.cshtml", 5) }, services);
+
+        var unresolved = Assert.Single(root.GetProperty("unresolvedInjections").EnumerateArray());
+        Assert.Equal("Pages/_ViewImports.cshtml", unresolved.GetProperty("declaredIn").GetString());
+        Assert.Equal(6, unresolved.GetProperty("line").GetInt32());
+    }
+
     [Fact]
     public void PageContext_OnANonPageThatIsNotAComponent_KeepsItsRefusal()
     {

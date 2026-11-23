@@ -711,7 +711,8 @@ public sealed class GraphQuery
 
         // InjectedInto edges point service -> consumer, so services are
         // predecessors: of the PageModel for constructor injection, and of the
-        // page itself for its @inject lines (the only edges that end at a page).
+        // page itself for its @inject lines, its own and those inherited from an
+        // imports file (the only edges that end at a page).
         var injections = new List<PageInjection>();
         if (model != null)
             injections.AddRange(GetPredecessors(model.Id, EdgeType.InjectedInto)
@@ -719,7 +720,8 @@ public sealed class GraphQuery
         injections.AddRange(GetPredecessors(pageId, EdgeType.InjectedInto)
             .Select(p => new PageInjection(p.Source, ViaInjectDirective,
                 p.Edge.GetProperty<string>("name"),
-                p.Edge.Properties.TryGetValue("line", out var line) && line is int l ? l : null)));
+                p.Edge.Properties.TryGetValue("line", out var line) && line is int l ? l : null,
+                p.Edge.GetProperty<string>("declaredIn"))));
 
         var viewModel = page.GetProperty<string>("modelType");
         GraphNode? vmNode = null;
@@ -744,7 +746,8 @@ public sealed class GraphQuery
                 d.TryGetValue("name", out var name) ? name as string ?? "" : "",
                 d.TryGetValue("declaredType", out var declared) ? declared as string ?? "" : "",
                 d.TryGetValue("resolvedType", out var resolved) ? resolved as string : null,
-                d.TryGetValue("line", out var line) && line is int l ? l : null))
+                d.TryGetValue("line", out var line) && line is int l ? l : null,
+                d.TryGetValue("declaredIn", out var declaredIn) ? declaredIn as string : null))
             .ToList();
 
     /// <summary>
@@ -800,8 +803,13 @@ public sealed record PageContext(
 /// <summary>One in-solution service a page receives.</summary>
 /// <param name="Via"><see cref="GraphQuery.ViaConstructor"/> or <see cref="GraphQuery.ViaInjectDirective"/>.</param>
 /// <param name="Name">The property name an @inject declares; null for a constructor parameter.</param>
-/// <param name="Line">The @inject line in the Razor file; null for a constructor parameter.</param>
-public sealed record PageInjection(GraphNode Service, string Via, string? Name = null, int? Line = null);
+/// <param name="Line">The @inject line in the file that declared it; null for a constructor parameter.</param>
+/// <param name="DeclaredIn">
+/// The project-relative path of the file whose @inject declared it: the page
+/// itself, or the _ViewImports.cshtml / _Imports.razor it inherited the line
+/// from. Null for a constructor parameter, and for a graph older than 3.10.
+/// </param>
+public sealed record PageInjection(GraphNode Service, string Via, string? Name = null, int? Line = null, string? DeclaredIn = null);
 
 /// <summary>
 /// An @inject line whose type has no node in the graph.
@@ -811,4 +819,8 @@ public sealed record PageInjection(GraphNode Service, string Via, string? Name =
 /// The type the compiler resolved it to, read from the compiled class's
 /// property; null when the class was not in the graph to ask.
 /// </param>
-public sealed record UnresolvedInjection(string Name, string DeclaredType, string? ResolvedType, int? Line);
+/// <param name="DeclaredIn">
+/// The project-relative path of the file whose @inject declared it, as on
+/// <see cref="PageInjection.DeclaredIn"/>; <paramref name="Line"/> is that file's.
+/// </param>
+public sealed record UnresolvedInjection(string Name, string DeclaredType, string? ResolvedType, int? Line, string? DeclaredIn = null);

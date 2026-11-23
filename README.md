@@ -346,19 +346,27 @@ no longer be true: the disk section answers for it, and `staleTextFiles` says ho
 `Extends` — an extension method pointing at the in-solution type it extends.
 
 `InjectedInto` has two sources, both running service → consumer. A constructor
-parameter points the service at the type that takes it. An `@inject` line in a `.cshtml`
-or `.razor` file points the service at the page, partial, layout or component node that
-declares it, carrying `via: "@inject"`, the property `name`, the `declaredType` as
-written, the `line`, and `typeFrom` — `generatedProperty` when the type was read from the
+parameter points the service at the type that takes it. An `@inject` line points the
+service at each page, partial, layout or component node it reaches: the file it is
+written in, or, for a line in a `_ViewImports.cshtml` or `_Imports.razor`, every `.cshtml`
+or `.razor` file in that folder and below — as Razor applies it, with a file's own
+`@inject` beating an inherited one of the same name and the nearest imports file beating
+one further up. The imports file itself receives nothing; it is where the service is
+declared, not a consumer. The edge carries `via: "@inject"`, the property `name`, the
+`declaredType` as written, `declaredIn` — the project-relative path of the file whose
+directive it was, the page itself or the imports file — the `line` in that file, and
+`typeFrom` — `generatedProperty` when the type was read from the
 property Razor compiles the directive into (the class the page's `compiledInto`
 `References` edge names), `directiveText` when that class was not in the graph and the
 text had to be matched. An `@inject` whose type has no node — a framework service such as
 `ILogger<T>` or `NavigationManager`, or a name nothing matches — gets no edge and is
 recorded on the page as `unresolvedInjections`. `page_context` lists both kinds of
-service under `injectedServices`, each with `via` (`constructor` or `@inject`), and the
-unresolved ones under `unresolvedInjections`. `@inject` lines inherited from
-`_ViewImports.cshtml` or `_Imports.razor` are attributed to that file, not to each page
-under it.
+service under `injectedServices`, each with `via` (`constructor` or `@inject`, the latter
+with its `declaredIn`), and the unresolved ones under `unresolvedInjections`. Which
+`@inject` lines reach a file is read from the class Razor compiled it into, which carries
+one injected property per line that applies; the `Html`, `Url`, `Json`, `Component` and
+`ModelExpressionProvider` properties Razor adds to every `.cshtml` class have no `@inject`
+behind them and are not listed.
 
 `DataBinds` runs from a XAML view to every member one of its bindings could name,
 carrying the path as written, the line, and how many candidates the name resolved

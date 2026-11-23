@@ -153,6 +153,20 @@ internal static class GraphFormat
     /// type it already knows -- and a 3.8 graph read here answers coverage with the
     /// narrower walk, which is the population change the bump exists to name.
     /// Exception-escape propagation is unchanged and still stops at a property.
+    /// 3.10 attributes an @inject in a _ViewImports.cshtml or _Imports.razor to
+    /// every file it reaches rather than to the imports file. Razor applies those
+    /// directives to each .cshtml or .razor file in the folder and below, so each
+    /// of them now has the InjectedInto edge, or the unresolvedInjections entry,
+    /// for the service it inherits; and InjectedInto edges onto _ViewImports and
+    /// _Imports nodes no longer exist, an imports file being where a service is
+    /// declared and never what receives it. Every @inject edge and entry gains
+    /// <c>declaredIn</c>, the project-relative path of the file whose directive
+    /// it was -- the page itself, or the imports file -- and <c>line</c> is that
+    /// file's. Additive in the 3.8 sense: a new property, and more edges of a
+    /// kind and shape a 3.9 reader already knows, which it absorbs silently; but
+    /// some edges moved rather than appeared, so a 3.9 graph read here still has
+    /// its imports-file edges and no inherited ones, which is the population
+    /// change the bump exists to name.
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -193,7 +207,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(3, 9);
+    public static readonly GraphFormatVersion Current = new(3, 10);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";
