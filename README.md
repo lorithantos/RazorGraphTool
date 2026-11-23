@@ -12,6 +12,20 @@ implements this interface", or "what breaks if I change this signature" — and 
 without a semantic model will guess at exactly those questions, plausibly enough to
 survive review. This exposes the compiler's model instead.
 
+## Should you use it?
+
+Use it or don't. But give your agent something reliable to read your code with. A model
+works much better from a semantic understanding of a codebase than from a superficial one,
+and text search is the superficial one.
+
+As far as I know of the language servers available today, this covers more: one graph
+across C#, Razor, XAML, the client tier and the rest of the repository, plus test
+reachability and exception escapes. It replaces grep as well. `grep` takes a regular
+expression and answers in one call from both the graph (names and string literals) and the
+files on disk (every other line), with no line reported twice, so an agent needs no
+separate text search. That makes it the more comprehensive model to hand an agent. If you
+find something better, use that. Either way, your agent's output will be better.
+
 ## What it indexes
 
 | Input | What it becomes | How |
