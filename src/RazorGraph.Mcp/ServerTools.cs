@@ -19,8 +19,10 @@ internal sealed class ServerTools(GraphStore store)
 {
     [McpServerTool(Name = "server_info")]
     [Description(
-        "Which build of razorgraph-mcp is answering right now: version, the resolved build " +
-        "directory behind the 'current' junction, process id, uptime, and how many graphs are " +
+        "Which build of razorgraph-mcp is answering right now: version, 'build' (the directory " +
+        "this process is running from, resolved through the 'current' junction once at startup), " +
+        "'currentNow' (present only when the junction has since moved to another build, as it " +
+        "does mid-rotation), process id, uptime, and how many graphs are " +
         "loaded, and what normalising its environment at startup did: 'environment' says whether " +
         "it was applied (or why it was skipped) and which variables the launching shell had that " +
         "were dropped, changed, or kept as RAZORGRAPH_* configuration. Variable NAMES only, never " +
@@ -33,7 +35,10 @@ internal sealed class ServerTools(GraphStore store)
     /// The real report comes from ServerEnvironment.Apply, which only the entry point may call: it
     /// rewrites the process environment, and a test process shares one across every test.
     /// </remarks>
-    internal string ServerInfo(EnvironmentReport? environment)
+    internal string ServerInfo(EnvironmentReport? environment) => ServerInfo(environment, BuildLocation.Running);
+
+    /// <summary>server_info with the build location passed in too, so a test can move a junction under one.</summary>
+    internal string ServerInfo(EnvironmentReport? environment, BuildLocation location)
     {
         var process = Process.GetCurrentProcess();
 
@@ -49,8 +54,11 @@ internal sealed class ServerTools(GraphStore store)
 
             // Resolved, not as-launched. A process started through the junction reports the LINK
             // as its path, so the as-launched value is the one thing that is identical across
-            // every build and therefore useless for telling them apart.
-            build = ResolvedBuildDirectory(),
+            // every build and therefore useless for telling them apart. Resolved at startup, not
+            // now: mid-rotation the junction already names the next build while this process
+            // still answers, and currentNow (absent otherwise) is where that reading goes.
+            build = location.Build,
+            currentNow = location.CurrentNow(),
 
             processId = Environment.ProcessId,
             uptimeSeconds = (int)(DateTime.Now - process.StartTime).TotalSeconds,
@@ -67,26 +75,5 @@ internal sealed class ServerTools(GraphStore store)
                 keptFromLauncher = report.KeptFromLauncher,
             },
         });
-    }
-
-    /// <summary>The real directory this build lives in, following 'current' if it is a junction.</summary>
-    /// <remarks>
-    /// ResolveLinkTarget returns null for an ordinary directory, which is the answer when the
-    /// server was started directly out of a build output rather than through the rotation -- so
-    /// falling back to the base directory is correct rather than a failure case.
-    /// </remarks>
-    private static string ResolvedBuildDirectory()
-    {
-        var baseDirectory = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
-
-        try
-        {
-            return new DirectoryInfo(baseDirectory).ResolveLinkTarget(returnFinalTarget: true)?.FullName
-                ?? baseDirectory;
-        }
-        catch (IOException)
-        {
-            return baseDirectory;
-        }
     }
 }

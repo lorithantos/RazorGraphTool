@@ -23,6 +23,11 @@ using RazorGraph.Mcp;
 // no such identity to hash. One well-known port, overridable, is the honest version of that.
 const int DefaultPort = 7718;
 
+// Which build this process is, read through the 'current' junction before anything else can
+// happen: a rotation repoints the junction while the old process is still answering, and
+// server_info must name the build this process loaded, not the one the junction names later.
+BuildLocation.Capture();
+
 bool http = false;
 bool printUrl = false;
 int port = 0;
