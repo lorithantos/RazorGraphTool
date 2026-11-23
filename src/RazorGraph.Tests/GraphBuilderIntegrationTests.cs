@@ -2,6 +2,7 @@ namespace RazorGraph.Tests;
 
 using System.Diagnostics;
 using RazorGraph.Core.Graph;
+using RazorGraph.Core.Query;
 using RazorGraph.Extractor;
 using Xunit;
 
@@ -179,6 +180,37 @@ public class GraphBuilderIntegrationTests : IAsyncLifetime
             .ToList();
 
         Assert.Contains("_Card", partials);
+    }
+
+    // ---- Blazor components --------------------------------------------------
+
+    /// <summary>
+    /// What the graph holds for a Blazor component, pinned so a change to it is
+    /// a decision rather than a drift: GreetingPanel.razor (@page, two @inject,
+    /// one child component) becomes a RazorPage carrying no injection or child
+    /// edge, and the honest answer for it is a caveat, never a bare empty list.
+    /// The Razor Pages page beside it carries no caveat.
+    /// </summary>
+    [Fact]
+    public void Builds_AComponentPage_WhoseContextAndRenderTreeCarryACaveat()
+    {
+        var component = _graph!.Nodes.Single(n => n.Type == NodeType.RazorPage && n.Name == "GreetingPanel");
+        var query = new GraphQuery(_graph);
+
+        var context = query.GetPageContext(component.Id)!;
+        Assert.Empty(context.InjectedServices);
+        Assert.Equal(GraphQuery.ComponentInjectionsCaveat, context.Caveat);
+
+        Assert.Empty(query.GetRenderTree(component.Id));
+        Assert.Equal(GraphQuery.ComponentChildrenCaveat, query.GetRenderTreeCaveat(component.Id));
+
+        // A component without @page is a PartialView, and still a component.
+        var child = _graph.Nodes.Single(n => n.Type == NodeType.PartialView && n.Name == "GreetingBadge");
+        Assert.Equal(GraphQuery.ComponentChildrenCaveat, query.GetRenderTreeCaveat(child.Id));
+
+        var page = _graph.Nodes.Single(n => n.Type == NodeType.RazorPage && n.Name == "Index");
+        Assert.Null(query.GetPageContext(page.Id)!.Caveat);
+        Assert.Null(query.GetRenderTreeCaveat(page.Id));
     }
 
     [Fact]

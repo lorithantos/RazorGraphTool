@@ -667,6 +667,31 @@ public sealed class GraphQuery
     }
 
     /// <summary>
+    /// What a render tree cannot show for this node, or null when it can show
+    /// everything it claims to. A Blazor component's children (&lt;Child /&gt;)
+    /// have no RendersComponent edge, so an empty tree for one would read as
+    /// "renders nothing" when the truth is "not modelled".
+    /// </summary>
+    public string? GetRenderTreeCaveat(string pageId) =>
+        _graph.GetNode(pageId) is { } node && IsBlazorComponent(node) ? ComponentChildrenCaveat : null;
+
+    /// <summary>
+    /// A .razor file. The Razor layer parses it with the MVC rules it uses for
+    /// .cshtml, so it becomes a RazorPage (with @page) or a PartialView
+    /// (without) and nothing marks it as a component; the extension is the only
+    /// tell, and the file path is checked first because a solution-scoped id
+    /// carries a project prefix.
+    /// </summary>
+    public static bool IsBlazorComponent(GraphNode node) =>
+        (node.FilePath ?? node.Id).EndsWith(".razor", StringComparison.OrdinalIgnoreCase);
+
+    internal const string ComponentChildrenCaveat =
+        "This is a Blazor component (.razor). The child components it renders (<ChildComponent />) are not modelled, so none of them appear in items: an empty or short list is not evidence that it renders nothing. Read the component's markup for them.";
+
+    internal const string ComponentInjectionsCaveat =
+        "This is a Blazor component (.razor). Its @inject directives are not modelled, so injectedServices does not list what it injects: an empty list is not evidence that it injects nothing. Read the @inject lines in the file, or the [Inject] properties of the class it compiles into (the References edge with compiledInto=true, where the graph has one). pageModel and viewModel do not apply to a component.";
+
+    /// <summary>
     /// Find the PageModel, Services, and ViewModel for a given Razor page.
     /// </summary>
     public PageContext? GetPageContext(string pageId)
@@ -689,7 +714,8 @@ public sealed class GraphQuery
             vmNode = FindNodes(NodeType.ViewModel, viewModel).FirstOrDefault()
                   ?? FindNodes(NodeType.Class, viewModel).FirstOrDefault();
 
-        return new PageContext(page, model, vmNode, services);
+        return new PageContext(page, model, vmNode, services,
+            IsBlazorComponent(page) ? ComponentInjectionsCaveat : null);
     }
 
     /// <summary>
@@ -717,8 +743,14 @@ public sealed class GraphQuery
 /// <summary>
 /// Bundled context for a Razor page and its backing infrastructure.
 /// </summary>
+/// <param name="Caveat">
+/// What this context cannot show, or null when it is complete as far as the
+/// graph models it. Set for a Blazor component, whose @inject directives are
+/// not modelled, so that its empty InjectedServices is not read as a fact.
+/// </param>
 public sealed record PageContext(
     GraphNode Page,
     GraphNode? PageModel,
     GraphNode? ViewModel,
-    IReadOnlyList<GraphNode> InjectedServices);
+    IReadOnlyList<GraphNode> InjectedServices,
+    string? Caveat = null);
