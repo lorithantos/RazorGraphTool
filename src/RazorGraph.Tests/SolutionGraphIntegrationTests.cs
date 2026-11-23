@@ -1997,7 +1997,9 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
 
     private const string CachedProperty = "prop:SampleLib.PartShelf.Cached";
     private const string FreshProperty = "prop:SampleLib.PartShelf.Fresh";
-    private const string ShelfIndexer = "prop:SampleLib.PartShelf.this[]";
+    private const string ShelfIndexer = "prop:SampleLib.PartShelf.this[int]";
+    private const string RackBySlot = "prop:SampleLib.PartRack.this[int]";
+    private const string RackByName = "prop:SampleLib.PartRack.this[string]";
 
     /// <summary>
     /// The 1-based line of the one line in a node's file holding the text, so a
@@ -2043,7 +2045,7 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     [Fact]
     public void Indexer_CallsAndConstructsFromItsPropertyNode()
     {
-        // An indexer is a Property node named this[], and that node is the near end.
+        // An indexer is a Property node, and that node is the near end.
         Assert.Equal(NodeType.Property, _solutionGraph!.GetNode(ShelfIndexer)!.Type);
 
         Assert.Equal(ShelfIndexer, Assert.Single(CallsInto("m:SampleLib.PartShelf.Check(")).FromId);
@@ -2051,6 +2053,42 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         var built = Assert.Single(Constructs("type:SampleLib.SlotPart"));
         Assert.Equal(ShelfIndexer, built.FromId);
         Assert.Equal(LineHolding(ShelfIndexer, "new SlotPart()"), built.GetProperty<int>("line"));
+    }
+
+    [Fact]
+    public void Indexer_IdCarriesItsParameterTypes_EvenWithNoOverloadBesideIt()
+    {
+        // Named this[] like every indexer, but identified as a method is, by
+        // its parameter types -- also when it is its type's only indexer, so
+        // adding an overload later never renames it.
+        Assert.Equal("this[]", _solutionGraph!.GetNode(ShelfIndexer)!.Name);
+        Assert.Null(_solutionGraph.GetNode("prop:SampleLib.PartShelf.this[]"));
+    }
+
+    [Fact]
+    public void TwoIndexersOnOneType_AreTwoNodes_EachWithItsOwnEdges()
+    {
+        // Until 3.12 both minted prop:SampleLib.PartRack.this[]: one node, the
+        // int indexer's span, carrying both getters' Calls and Constructs, and
+        // the string indexer had no node at all.
+        var indexers = _solutionGraph!.Outgoing("type:SampleLib.PartRack")
+            .Where(e => e.Type == EdgeType.Contains)
+            .Select(e => _solutionGraph.GetNode(e.ToId)!)
+            .Where(n => n.Type == NodeType.Property)
+            .Select(n => n.Id)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(new[] { RackBySlot, RackByName }, indexers);
+
+        // Each node is its own declaration ...
+        Assert.Equal(LineHolding(RackBySlot, "NumberedPart this[int slot]"), _solutionGraph.GetNode(RackBySlot)!.LineStart);
+        Assert.Equal(LineHolding(RackByName, "NamedPart this[string name]"), _solutionGraph.GetNode(RackByName)!.LineStart);
+
+        // ... and the near end of only its own getter's edges.
+        Assert.Equal(RackBySlot, Assert.Single(CallsInto("m:SampleLib.PartRack.BySlot(")).FromId);
+        Assert.Equal(RackByName, Assert.Single(CallsInto("m:SampleLib.PartRack.ByName(")).FromId);
+        Assert.Equal(RackBySlot, Assert.Single(Constructs("type:SampleLib.NumberedPart")).FromId);
+        Assert.Equal(RackByName, Assert.Single(Constructs("type:SampleLib.NamedPart")).FromId);
     }
 
     [Fact]

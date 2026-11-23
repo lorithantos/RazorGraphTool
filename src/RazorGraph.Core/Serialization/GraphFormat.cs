@@ -177,6 +177,19 @@ internal static class GraphFormat
     /// component inherits now read their type from its compiled property
     /// (<c>typeFrom</c> "generatedProperty") rather than the directive text. No
     /// kind, shape or property is new; the bump names the population change.
+    /// 3.12 writes an indexer's parameter types into its id, as a method's id
+    /// already carries them: <c>prop:T.this[int]</c> where it was
+    /// <c>prop:T.this[]</c>. Every indexer is named this[], so two indexers on one
+    /// type shared one id -- one node, the first indexer's, carried both getters'
+    /// edges and the second had no node. Every indexer's id changes, not only an
+    /// overloaded one's, so adding an overload never renames its neighbour; the
+    /// node's name stays this[]. MINOR by the policy's own words: no existing
+    /// field changed meaning -- id is still a node's unique identity, and is now
+    /// actually unique -- and nothing was added that a reader must understand. A
+    /// 3.11 reader loads a 3.12 graph whole and reads it correctly; what moved is
+    /// the population, Property nodes and the edges touching them re-keyed under
+    /// a new spelling, and the bump is what tells a reader holding a hand-written
+    /// this[] id, or diffing against a 3.11 graph, why it no longer matches.
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -217,7 +230,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(3, 11);
+    public static readonly GraphFormatVersion Current = new(3, 12);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

@@ -229,3 +229,57 @@ public sealed class PartShelf
     /// <summary>Called only from the indexer's getter.</summary>
     private static void Check(int slot) { }
 }
+
+/// <summary>Built only inside <see cref="PartRack"/>'s int indexer.</summary>
+public sealed class NumberedPart
+{
+    public int Value => 8;
+}
+
+/// <summary>Built only inside <see cref="PartRack"/>'s string indexer.</summary>
+public sealed class NamedPart
+{
+    public int Value => 9;
+}
+
+/// <summary>
+/// Two indexers on one type, overloaded on the parameter type. Every indexer
+/// is named this[] whatever its parameters, so an id built from the name alone
+/// gives both the same node. Each getter calls and builds something the other
+/// does not, so a merge shows as both getters' edges leaving one node, and a
+/// drop as one indexer with no node of its own.
+/// </summary>
+public sealed class PartRack
+{
+    public NumberedPart this[int slot]
+    {
+        get
+        {
+            BySlot(slot);
+            return new NumberedPart();
+        }
+    }
+
+    public NamedPart this[string name]
+    {
+        get
+        {
+            ByName(name);
+            return new NamedPart();
+        }
+    }
+
+    /// <summary>Called only from the int indexer's getter.</summary>
+    private static void BySlot(int slot) { }
+
+    /// <summary>Called only from the string indexer's getter.</summary>
+    private static void ByName(string name) { }
+}
+
+/// <summary>Reads each of <see cref="PartRack"/>'s indexers from its own method.</summary>
+public static class PartRackReader
+{
+    public static int First(PartRack rack) => rack[0].Value;
+
+    public static int Primary(PartRack rack) => rack["primary"].Value;
+}

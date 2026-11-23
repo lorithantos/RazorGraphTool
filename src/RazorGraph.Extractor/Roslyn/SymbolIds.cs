@@ -66,16 +66,35 @@ internal static class SymbolIds
     private static string MethodBody(IMethodSymbol method)
     {
         var def = Canonical(method);
-        var parameters = string.Join(",", def.Parameters.Select(p => p.Type.ToDisplayString()));
         var container = def.ContainingType?.ToDisplayString() ?? "global";
-        return $"{container}.{def.Name}({parameters})";
+        return $"{container}.{def.Name}({ParameterTypes(def.Parameters)})";
     }
 
     /// <summary>
-    /// Stable id for a property or field node. No parameter list — members
-    /// cannot overload — and a distinct prefix per kind, so the id tells a
-    /// reader what it names the same way m:/type:/page: already do.
+    /// The comma-joined parameter types an overload is told apart by. Method ids
+    /// and indexer ids both spell their parameters through here, so the two
+    /// conventions cannot drift: <c>m:T.Get(int)</c> and <c>prop:T.this[int]</c>.
     /// </summary>
+    private static string ParameterTypes(IEnumerable<IParameterSymbol> parameters) =>
+        string.Join(",", parameters.Select(p => p.Type.ToDisplayString()));
+
+    /// <summary>
+    /// Stable id for a property or field node. No parameter list for a plain
+    /// property or field — those cannot overload — and a distinct prefix per
+    /// kind, so the id tells a reader what it names the same way m:/type:/page:
+    /// already do.
+    /// </summary>
+    /// <remarks>
+    /// An indexer is the member that CAN overload, and every indexer is named
+    /// <c>this[]</c> whatever its parameters, so the name alone gave
+    /// <c>this[int]</c> and <c>this[string]</c> on one type the same id: one
+    /// node kept the first indexer's span, the second had none, and both
+    /// getters' edges left the survivor. Every indexer carries its parameter
+    /// types inside the brackets, written as MethodId writes them —
+    /// <c>prop:T.this[int]</c>, <c>prop:T.this[int,string]</c> — including a
+    /// type with only one, so an indexer's id does not change when an overload
+    /// is added beside it. The node's name stays <c>this[]</c>.
+    /// </remarks>
     /// <remarks>
     /// An extension member is the exception, and carries a parenthesised
     /// receiver: <c>prop:Money.Extensions.IsZero(Money)</c>. Two extension
@@ -105,8 +124,18 @@ internal static class SymbolIds
         }
 
         var container = def.ContainingType?.ToDisplayString() ?? "global";
-        return $"{prefix}:{container}.{def.Name}";
+        return $"{prefix}:{container}.{IndexerAwareName(def)}";
     }
+
+    /// <summary>
+    /// A member's name as its id spells it: an indexer's <c>this[]</c> (or an
+    /// explicit implementation's <c>I.this[]</c>) with the parameter types
+    /// written between the brackets, and any other member's name unchanged.
+    /// </summary>
+    private static string IndexerAwareName(ISymbol def) =>
+        def is IPropertySymbol { IsIndexer: true } indexer && indexer.Name.EndsWith("[]", StringComparison.Ordinal)
+            ? $"{indexer.Name[..^1]}{ParameterTypes(indexer.Parameters)}]"
+            : def.Name;
 
     /// <summary>
     /// Id for a type the compilation referenced but does not contain.

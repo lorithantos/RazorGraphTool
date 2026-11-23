@@ -548,7 +548,9 @@ constructors, static initializers to nothing — static ctors are not nodes. Cal
 constructions inside accessor and expression bodies, indexers included, attribute
 the same way: a getter that calls `DistinctKinds` or builds `new Rule()` is a `Calls`
 or `Constructs` edge from the *property* node, so a method or type used only there
-no longer reads as dead. An indexer is a `Property` node named `this[]`; event
+no longer reads as dead. An indexer is a `Property` node named `this[]` whose id
+carries its parameter types the way a method's does (`prop:PartShelf.this[int]`),
+so two indexers on one type are two nodes; event
 accessors are not walked, because an event is not a node. Compound
 assignment and `++` yield both a Reads and a Writes edge; an `out` argument writes,
 a `ref` argument does both. A member's declared type becomes a `References` edge to
