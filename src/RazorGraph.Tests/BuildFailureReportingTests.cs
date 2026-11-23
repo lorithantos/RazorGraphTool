@@ -71,7 +71,9 @@ public sealed class BuildFailureReportingTests : IAsyncLifetime
         Restore();
         Write("Unloadable/Unloadable.csproj", LibraryProject.Replace("</PropertyGroup>", "</PropertyGrop>"));
 
-        _response = await new GraphStoreTools(_store)
+        // Cached inside the temp directory, so the run neither litters nor reads the
+        // real per-user cache.
+        _response = await new GraphStoreTools(_store) { CacheDirectory = Path.Combine(_dir, "cache") }
             .BuildSolution(Path.Combine(_dir, "Failing.slnx"), graphId: "failing", excludeText: true);
     }
 
@@ -151,5 +153,16 @@ public sealed class BuildFailureReportingTests : IAsyncLifetime
         var graph = _store.Require("failing").Graph;
 
         Assert.Contains(graph.Nodes, n => n.Name == "Widget");
+    }
+
+    [Fact]
+    public void FailingBuild_IsStillCached_BecauseTheBuildCallItselfSucceeded()
+    {
+        using var doc = JsonDocument.Parse(_response);
+        var savedTo = doc.RootElement.GetProperty("savedTo").GetString()!;
+
+        Assert.StartsWith(Path.Combine(_dir, "cache"), savedTo, StringComparison.OrdinalIgnoreCase);
+        Assert.True(File.Exists(savedTo));
+        Assert.False(doc.RootElement.TryGetProperty("saveError", out _));
     }
 }

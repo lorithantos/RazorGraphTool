@@ -105,10 +105,20 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
             // the build summary as well as the graph, and only the tool writes that.
             // It also carries a progress listener, standing in for the one the SDK
             // binds when a client sends a progressToken.
+            // Its cache goes to a scratch directory removed straight after, so the run
+            // neither litters nor reads the real per-user cache.
             var noTextStore = new GraphStore();
             var notifications = new Recorder<ModelContextProtocol.ProgressNotificationValue>();
-            _noTextSummary = await new GraphStoreTools(noTextStore)
-                .BuildSolution(solutionPath, graphId: "no-text", excludeText: true, progress: notifications);
+            var noTextCache = Path.Combine(Path.GetTempPath(), "rg-cache-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                _noTextSummary = await new GraphStoreTools(noTextStore) { CacheDirectory = noTextCache }
+                    .BuildSolution(solutionPath, graphId: "no-text", excludeText: true, progress: notifications);
+            }
+            finally
+            {
+                try { Directory.Delete(noTextCache, recursive: true); } catch (IOException) { }
+            }
             _noTextGraph = noTextStore.Require("no-text").Graph;
             _noTextNotifications = notifications.Values;
 

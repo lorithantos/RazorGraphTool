@@ -228,6 +228,13 @@ The server holds **several graphs at once** in a keyed registry. Every tool take
 optional `graphId` and falls back to the most recently added, so a solution graph and a
 single-project graph of the same code can be compared without rebuilding either.
 
+Every successful build is also cached, outside any repository, in
+`%LOCALAPPDATA%\RazorGraph\graphs` (the per-user application data folder on other
+platforms) as `<graphId>-<hash8>.json`, the hash being of the
+source path; the next build of that source overwrites it. The build response names the
+file as `savedTo`, so a new session — a stdio server dies with its client — can
+`load_graph` that path instead of compiling again.
+
 Results are compact JSON — the consumer is a model, not a terminal — and searches return
 a `{ returned, totalMatches, truncated }` envelope. Check `truncated` before concluding
 you have seen everything.

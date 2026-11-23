@@ -15,8 +15,25 @@ using RazorGraph.Lua;
 [McpServerToolType]
 internal sealed class GraphStoreTools(GraphStore store)
 {
+    /// <summary>
+    /// Where every successful build is cached. The per-user default in production;
+    /// tests point it at a scratch directory so they neither read nor litter the real one.
+    /// </summary>
+    internal string? CacheDirectory { get; init; } = GraphCache.DefaultDirectory;
+
+    /// <summary>
+    /// Registers a built graph and saves it to the cache: the one step all three build
+    /// tools share, and the only one -- load_graph registers too, but what it loads is
+    /// already on disk.
+    /// </summary>
+    private (GraphStore.GraphEntry Entry, GraphCache.Outcome Cache) AddBuilt(CodeGraph graph, string source, string? graphId)
+    {
+        var entry = store.Add(graph, source, graphId);
+        return (entry, GraphCache.Save(entry, CacheDirectory));
+    }
+
     [McpServerTool(Name = "build_graph")]
-    [Description("Build a code graph from one ASP.NET Core Razor project (.csproj), or one project inside a solution. Slow (compiles the project). To graph a whole solution with edges that cross project boundaries, use build_solution instead. Returns a summary with node/edge counts by type, per-phase timings as phases, and projectFailures when the project did not load or compile cleanly. Sends progress notifications when the request carries a progressToken.")]
+    [Description("Build a code graph from one ASP.NET Core Razor project (.csproj), or one project inside a solution. Slow (compiles the project). To graph a whole solution with edges that cross project boundaries, use build_solution instead. Returns a summary with node/edge counts by type, per-phase timings as phases, and projectFailures when the project did not load or compile cleanly. Sends progress notifications when the request carries a progressToken. The graph is also saved to the server's cache, reported as savedTo (or saveError), and load_graph on that path restores it in a later session without recompiling.")]
     public async Task<string> BuildGraph(
         [Description("Absolute path to a .csproj, .sln, or .slnx file")] string path,
         [Description("Project name inside the solution; required when path is a solution")] string? projectName = null,
@@ -51,10 +68,12 @@ internal sealed class GraphStoreTools(GraphStore store)
             ? await builder.BuildFromSolutionAsync(full, projectName!, ct)
             : await builder.BuildFromProjectAsync(full, ct);
 
-        return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries,
+        var (entry, cache) = AddBuilt(graph, full, graphId);
+        return Summarize(entry, builder.AssetSkipSummaries,
             unboundShapes: builder.UnboundShapes, unresolvedAttributes: builder.UnresolvedAttributes,
             analyzerHostWarnings: builder.AnalyzerHostWarnings, literalsExcluded: excludeLiterals,
-            textExcluded: excludeText, textFileSkips: builder.TextFileSkips, build: BuildReport.From(builder));
+            textExcluded: excludeText, textFileSkips: builder.TextFileSkips, build: BuildReport.From(builder),
+            cache: cache);
     }
 
     /// <summary>
@@ -97,7 +116,7 @@ internal sealed class GraphStoreTools(GraphStore store)
         "and platformFrom (requested, environment or projectDefault).";
 
     [McpServerTool(Name = "build_solution")]
-    [Description("Build ONE graph spanning every project in a solution (.sln/.slnx). Unlike build_graph, calls and injections that cross project boundaries become real edges — this is what makes \"which tests cover this method\" and \"what breaks if I change this\" answerable. Adds Project nodes, per-node project attribution, and Covers edges from test methods to the code they exercise. Slower than build_graph: it compiles every project. Sends progress notifications (phase, and project N of M) when the request carries a progressToken; the response always carries projectCount, per-phase timings as phases, and projectFailures naming any project that did not load or compile, with its first errors -- the graph is still built from what did.")]
+    [Description("Build ONE graph spanning every project in a solution (.sln/.slnx). Unlike build_graph, calls and injections that cross project boundaries become real edges — this is what makes \"which tests cover this method\" and \"what breaks if I change this\" answerable. Adds Project nodes, per-node project attribution, and Covers edges from test methods to the code they exercise. Slower than build_graph: it compiles every project. Sends progress notifications (phase, and project N of M) when the request carries a progressToken; the response always carries projectCount, per-phase timings as phases, and projectFailures naming any project that did not load or compile, with its first errors -- the graph is still built from what did. The graph is also saved to the server's cache, reported as savedTo (or saveError), and load_graph on that path restores it in a later session without recompiling.")]
     public async Task<string> BuildSolution(
         [Description("Absolute path to a .sln or .slnx file")] string path,
         [Description("Id to file the result under. Defaults to the solution file name.")] string? graphId = null,
@@ -127,10 +146,12 @@ internal sealed class GraphStoreTools(GraphStore store)
         };
         var graph = await builder.BuildFromSolutionAllAsync(full, ct);
 
-        return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries, builder.SkippedTestProjects,
+        var (entry, cache) = AddBuilt(graph, full, graphId);
+        return Summarize(entry, builder.AssetSkipSummaries, builder.SkippedTestProjects,
             builder.UnboundShapes, unresolvedAttributes: builder.UnresolvedAttributes,
             analyzerHostWarnings: builder.AnalyzerHostWarnings, literalsExcluded: excludeLiterals,
-            textExcluded: excludeText, textFileSkips: builder.TextFileSkips, build: BuildReport.From(builder));
+            textExcluded: excludeText, textFileSkips: builder.TextFileSkips, build: BuildReport.From(builder),
+            cache: cache);
     }
 
     /// <summary>
@@ -147,7 +168,7 @@ internal sealed class GraphStoreTools(GraphStore store)
     }
 
     [McpServerTool(Name = "build_lua")]
-    [Description("Build a graph from a directory of Lua source. Unlike build_graph there is no compile step: the host environment is detected from the tree (Info.lua → Lightroom, .rockspec → LuaRocks, else plain path conventions) and files are parsed directly, so it is fast. Modules and module references are foreign kinds ('luaModule', 'requires') selectable by name; functions are ordinary Method nodes with Contains edges, so normal navigation works. The response reports the detected host, and counts resolved / external / unresolved references separately — external means a host or standard-library module outside the tree, which is not a failure.")]
+    [Description("Build a graph from a directory of Lua source. Unlike build_graph there is no compile step: the host environment is detected from the tree (Info.lua → Lightroom, .rockspec → LuaRocks, else plain path conventions) and files are parsed directly, so it is fast. Modules and module references are foreign kinds ('luaModule', 'requires') selectable by name; functions are ordinary Method nodes with Contains edges, so normal navigation works. The response reports the detected host, and counts resolved / external / unresolved references separately — external means a host or standard-library module outside the tree, which is not a failure. The graph is also saved to the server's cache, reported as savedTo (or saveError), and load_graph on that path restores it in a later session.")]
     public string BuildLua(
         [Description("Absolute path to a directory containing Lua source")] string path,
         [Description("Id to file the result under. Defaults to the directory name.")] string? graphId = null,
@@ -159,7 +180,7 @@ internal sealed class GraphStoreTools(GraphStore store)
         if (!Directory.Exists(full)) throw new McpException($"Directory not found: {full}");
 
         var (graph, report) = new LuaGraphBuilder { IncludeVendor = includeVendor }.Build(full);
-        var entry = store.Add(graph, full, graphId ?? new DirectoryInfo(full).Name);
+        var (entry, cache) = AddBuilt(graph, full, graphId ?? new DirectoryInfo(full).Name);
 
         var listed = report.UnresolvedReferences.Take(Math.Max(0, unresolvedLimit)).ToList();
 
@@ -167,6 +188,8 @@ internal sealed class GraphStoreTools(GraphStore store)
         {
             graphId = entry.Id,
             source = entry.Source,
+            savedTo = cache.SavedTo,
+            saveError = cache.SaveError,
             // Always present: a misdetected host uses the wrong reference function
             // and yields a graph that is empty for a reason nothing else reveals.
             host = report.HostName,
@@ -290,7 +313,8 @@ internal sealed class GraphStoreTools(GraphStore store)
         bool literalsExcluded = false,
         bool textExcluded = false,
         IReadOnlyList<string>? textFileSkips = null,
-        BuildReport? build = null)
+        BuildReport? build = null,
+        GraphCache.Outcome? cache = null)
     {
         var graph = entry.Graph;
         // Grouped by display kind, so a foreign vocabulary is censused under its
@@ -310,6 +334,10 @@ internal sealed class GraphStoreTools(GraphStore store)
             graphId = entry.Id,
             source = entry.Source,
             loadedFrom = entry.LoadedFrom,
+            // Build responses only: where the server cached this graph, so a later
+            // session can load_graph it, or the one line saying why it could not.
+            savedTo = cache?.SavedTo,
+            saveError = cache?.SaveError,
             // Both stamps, on every response that returns a summary: a build
             // response is the first thing a caller sees, and it must say which
             // extractor answered, not only that extraction just ran.
