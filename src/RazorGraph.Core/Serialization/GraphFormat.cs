@@ -190,6 +190,18 @@ internal static class GraphFormat
     /// the population, Property nodes and the edges touching them re-keyed under
     /// a new spelling, and the bump is what tells a reader holding a hand-written
     /// this[] id, or diffing against a 3.11 graph, why it no longer matches.
+    /// 3.13 reads an indexer access as a Reads or Writes of the indexer. An
+    /// element access -- rack[0], rack?[0], or [0] = x in an object initializer
+    /// -- names no member, so the scan that finds named accesses never saw one,
+    /// and an in-solution indexer had no incoming Reads or Writes anywhere. It
+    /// now gets them by the rules a named property has: Reads for a read, Writes
+    /// for an assignment target, both for compound assignment, ++ and a ref
+    /// argument. Indexers declared outside the solution still produce no edge.
+    /// Additive in the 3.9 sense: more edges of kinds and shapes a 3.12 reader
+    /// already knows, and through them more Covers edges, since the walk steps
+    /// onto a property a test reads or writes and now reaches what an indexer's
+    /// accessors call. A 3.12 graph read here answers coverage without them,
+    /// which is the population change the bump exists to name.
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -230,7 +242,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(3, 12);
+    public static readonly GraphFormatVersion Current = new(3, 13);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

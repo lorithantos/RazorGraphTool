@@ -24,24 +24,28 @@ internal static class MemberAccessScanner
     /// selector scanning: mentioning a thing must not create a data-flow
     /// contract.
     /// </summary>
+    /// <remarks>
+    /// An indexer is reached through an element access -- rack[0], rack?[0],
+    /// or [0] = x in an object initializer -- which names no identifier, so
+    /// those sites are accesses of the indexer itself, classified by the same
+    /// position rules as a named member.
+    /// </remarks>
     internal static IEnumerable<MemberAccessInfo> TreeMemberAccesses(
         SyntaxNode root, SemanticModel model, IReadOnlySet<string> inScope)
     {
-        foreach (var name in root.DescendantNodes().OfType<IdentifierNameSyntax>())
+        foreach (var node in root.DescendantNodes())
         {
-            var symbol = model.GetSymbolInfo(name).Symbol;
-            if (symbol is not (IPropertySymbol or IFieldSymbol)) continue;
+            if (AccessedMember(node, model) is not { } symbol) continue;
             if (symbol.IsImplicitlyDeclared) continue;
-            if (symbol is IFieldSymbol { AssociatedSymbol: not null }) continue;
 
             var def = symbol.OriginalDefinition;
             if (def.ContainingAssembly?.Name is not { } assembly || !inScope.Contains(assembly)) continue;
-            if (InsideNameof(name)) continue;
+            if (InsideNameof(node)) continue;
 
             var toId = SymbolIds.MemberId(def);
-            var (isRead, isWrite) = ClassifyAccess(TopAccessExpression(name));
+            var (isRead, isWrite) = ClassifyAccess(TopAccessExpression(node));
 
-            foreach (var fromId in SyntaxAttribution.OwningNodeIds(name, model))
+            foreach (var fromId in SyntaxAttribution.OwningNodeIds(node, model))
             {
                 if (fromId == toId) continue; // self-access adds no navigational value
                 yield return new MemberAccessInfo(fromId, toId, isRead, isWrite);
@@ -50,13 +54,35 @@ internal static class MemberAccessScanner
     }
 
     /// <summary>
-    /// The outermost expression this name participates in as a value: the
-    /// member access for a.B, the conditional access for a?.B. Assignment
-    /// context lives on that expression's parent, not the name's.
+    /// The property or field a node accesses: a name bound to one, or an
+    /// element access bound to an indexer. Null for everything else, arrays
+    /// and pointers included -- their element access binds to no member.
     /// </summary>
-    private static ExpressionSyntax TopAccessExpression(IdentifierNameSyntax name)
+    private static ISymbol? AccessedMember(SyntaxNode node, SemanticModel model) =>
+        node switch
+        {
+            IdentifierNameSyntax name => model.GetSymbolInfo(name).Symbol switch
+            {
+                IFieldSymbol { AssociatedSymbol: not null } => null, // a property's backing field
+                IPropertySymbol property => property,
+                IFieldSymbol field => field,
+                _ => null
+            },
+            ElementAccessExpressionSyntax or ElementBindingExpressionSyntax or ImplicitElementAccessSyntax =>
+                model.GetSymbolInfo((ExpressionSyntax)node).Symbol is IPropertySymbol { IsIndexer: true } indexer
+                    ? indexer
+                    : null,
+            _ => null
+        };
+
+    /// <summary>
+    /// The outermost expression this access participates in as a value: the
+    /// member access for a.B, the conditional access for a?.B and a?[0].
+    /// Assignment context lives on that expression's parent, not the access's.
+    /// </summary>
+    private static ExpressionSyntax TopAccessExpression(SyntaxNode access)
     {
-        ExpressionSyntax expr = name;
+        var expr = (ExpressionSyntax)access;
         while (true)
         {
             if (expr.Parent is MemberAccessExpressionSyntax ma && ma.Name == expr) { expr = ma; continue; }

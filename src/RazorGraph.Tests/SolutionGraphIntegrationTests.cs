@@ -387,7 +387,8 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
                 "Advance_ThroughARunnerThatHoldsTheBase", "Advance_ThroughTheBaseDeclaration",
                 "Cache_SeedsItself", "Cached_IsBuiltOnce", "Channel_ThroughTheInterface",
                 "DrawnWorld_CanBeBuilt", "Greet_ThroughTheInterface", "List_ReturnsSortedCatalogs",
-                "Preload_CountsCatalogs", "Registry_HasAFallback", "Warm_IsPositive"
+                "Preload_CountsCatalogs", "Registry_HasAFallback", "Slot_ReadsThroughTheIntIndexer",
+                "Warm_IsPositive"
             },
             tests.OrderBy(t => t, StringComparer.Ordinal));
         // NotATest calls production code but carries no attribute, and
@@ -2092,6 +2093,25 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void ReadingThroughAnIndexer_ReadsThatIndexersNode()
+    {
+        // rack[0] names no member, so until 3.13 neither reader had an edge into
+        // either indexer -- only the .Value read beyond it.
+        var first = Method(_solutionGraph!, "SampleLib.PartRackReader", "First").Id;
+        var primary = Method(_solutionGraph!, "SampleLib.PartRackReader", "Primary").Id;
+
+        Assert.True(HasEdge(_solutionGraph!, first, EdgeType.Reads, RackBySlot));
+        Assert.True(HasEdge(_solutionGraph!, primary, EdgeType.Reads, RackByName));
+
+        // Each reader reaches its own overload, and only reads it.
+        Assert.False(HasEdge(_solutionGraph!, first, EdgeType.Reads, RackByName));
+        Assert.False(HasEdge(_solutionGraph!, primary, EdgeType.Reads, RackBySlot));
+        Assert.DoesNotContain(
+            _solutionGraph!.Edges,
+            e => e.Type == EdgeType.Writes && e.ToId is RackBySlot or RackByName);
+    }
+
+    [Fact]
     public void AccessorBodies_MintNoAccessorMethodNodes()
     {
         // The design decision, pinned: get_Cached would name a node nothing else
@@ -2129,6 +2149,17 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         var covering = CoveringDepths("SampleLib.PartShelf", "Restock");
 
         Assert.Equal("Cached_IsBuiltOnce", Assert.Single(covering.Keys));
+    }
+
+    [Fact]
+    public void ReadingThroughAnIndexer_CoversWhatThatIndexersGetterCalls()
+    {
+        // PartRackTests reads rack[0] and nothing else: test -Reads-> this[int]
+        // -Calls-> BySlot, two steps, as for a named property's getter.
+        Assert.Equal(2, CoveringDepths("SampleLib.PartRack", "BySlot")["Slot_ReadsThroughTheIntIndexer"]);
+
+        // The string indexer is another node, and that test never reads it.
+        Assert.DoesNotContain("Slot_ReadsThroughTheIntIndexer", CoveringDepths("SampleLib.PartRack", "ByName").Keys);
     }
 
     [Fact]

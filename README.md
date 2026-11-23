@@ -455,8 +455,8 @@ Method-level `Implements` and `Overrides` edges carry the two joins, and `Overri
 spans the whole chain, so a test reaching an abstract root also reaches a leaf two
 levels below it. **The walk stands on properties and types, not only methods**,
 because `Calls` and `Constructs` edges start at both. A property is reached when
-anything on the chain `Reads` or `Writes` it, and from there the walk takes what its
-accessor bodies call and build (see *Properties and fields are nodes* below) — so a
+anything on the chain `Reads` or `Writes` it, through an indexer access too, and from
+there the walk takes what its accessor bodies call and build (see *Properties and fields are nodes* below) — so a
 method called only from a getter is covered by the tests that read the property, and
 a property nothing reads covers nothing. A type is reached when the chain reaches one
 of its members or builds it, and from there the walk takes what its static
@@ -551,7 +551,11 @@ or `Constructs` edge from the *property* node, so a method or type used only the
 no longer reads as dead. An indexer is a `Property` node named `this[]` whose id
 carries its parameter types the way a method's does (`prop:PartShelf.this[int]`),
 so two indexers on one type are two nodes; event
-accessors are not walked, because an event is not a node. Compound
+accessors are not walked, because an event is not a node. Indexer access counts as
+an access of the indexer: `rack[0]`, `rack?[0]` and `[0] = x` in an object
+initializer are `Reads` or `Writes` of that indexer's node, by the same rules as a
+named property; an indexer declared outside the solution (`List<T>`, `Dictionary`)
+gets no edge, like any other out-of-solution member. Compound
 assignment and `++` yield both a Reads and a Writes edge; an `out` argument writes,
 a `ref` argument does both. A member's declared type becomes a `References` edge to
 every in-solution type it mentions — through `List<>` and array wrappers — so "who
