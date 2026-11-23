@@ -114,15 +114,29 @@ public static class SourceFiles
         return (true, GitListFiles(folder, "--cached")?.ToHashSet(StringComparer.OrdinalIgnoreCase));
     }
 
+    /// <summary>How long git ls-files gets before its answer is given up on.</summary>
+    internal static readonly TimeSpan GitTimeout = TimeSpan.FromSeconds(10);
+
     /// <summary>
     /// The files git lists under the folder in the given modes, relative to it. Null when
     /// git could not answer, so the caller walks instead of reporting an empty tree.
     /// </summary>
-    private static List<string>? GitListFiles(string folder, params string[] modes)
+    private static List<string>? GitListFiles(string folder, params string[] modes) =>
+        // -z: NUL-separated and unquoted, so no path needs unescaping.
+        ListFiles("git", ["ls-files", .. modes, "-z"], folder, GitTimeout);
+
+    /// <summary>
+    /// Runs a NUL-separated file lister in the folder and returns what it printed, or null
+    /// when it could not answer: not found, a non-zero exit, or still running after the
+    /// timeout, in which case it is killed with everything it started. The executable is a
+    /// parameter so tests can stand in a lister that never exits; started hands them its pid.
+    /// </summary>
+    internal static List<string>? ListFiles(
+        string executable, IEnumerable<string> arguments, string folder, TimeSpan timeout, Action<int>? started = null)
     {
         try
         {
-            var start = new ProcessStartInfo("git")
+            var start = new ProcessStartInfo(executable)
             {
                 // Run IN the folder: ls-files then lists only what is beneath it, relative to it.
                 WorkingDirectory = folder,
@@ -136,20 +150,28 @@ public static class SourceFiles
                 UseShellExecute = false,
             };
 
-            // -z: NUL-separated and unquoted, so no path needs unescaping.
-            foreach (var argument in (string[])["ls-files", .. modes, "-z"]) start.ArgumentList.Add(argument);
+            foreach (var argument in arguments) start.ArgumentList.Add(argument);
 
             using var process = Process.Start(start);
             if (process is null) return null;
+            started?.Invoke(process.Id);
             process.StandardInput.Close();
 
-            // Drain stderr concurrently: a full pipe on either stream blocks git forever.
+            // Both streams are read asynchronously, so the timeout is real. A synchronous
+            // ReadToEnd on stdout returns only once git exits, which left a bound placed
+            // after it unable to fire: a hung git hung the caller. Draining stderr at the
+            // same time matters too, since a full pipe on either stream blocks git forever.
+            var stdout = process.StandardOutput.ReadToEndAsync();
             var stderr = process.StandardError.ReadToEndAsync();
-            var output = process.StandardOutput.ReadToEnd();
-            if (!process.WaitForExit(10_000) || process.ExitCode != 0) return null;
-            _ = stderr.Result;
+            if (!Task.WhenAll(stdout, stderr, process.WaitForExitAsync()).Wait(timeout))
+            {
+                Kill(process);
+                return null;
+            }
 
-            return output
+            if (process.ExitCode != 0) return null;
+
+            return stdout.Result
                 .Split('\0', StringSplitOptions.RemoveEmptyEntries)
                 // An untracked nested repository is listed as "dir/"; it is not a file.
                 .Where(p => !p.EndsWith('/'))
@@ -160,6 +182,24 @@ public static class SourceFiles
         {
             // git is not installed or not on PATH.
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Ends a lister that outlived its timeout, with every process it started, since a
+    /// child left holding the output pipe would keep it open. Bounded in turn: a process
+    /// that will not die is abandoned rather than waited on.
+    /// </summary>
+    private static void Kill(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit(TimeSpan.FromSeconds(5));
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            // Exited on its own between the timeout and the kill, or could not be touched.
         }
     }
 
