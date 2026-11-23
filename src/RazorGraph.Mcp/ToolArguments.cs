@@ -44,10 +44,13 @@ internal static class ToolArguments
     /// character it stands for. Named, decimal and hex spellings, because an id
     /// is escaped by whatever layer it passed through and they do not agree.
     ///
-    /// The JSON spellings (<c><</c> as six literal characters) are the one
-    /// form RazorGraph itself produces: System.Text.Json's default encoder writes
-    /// &lt; &gt; &amp; that way, and a client that shows a tool result as text
-    /// rather than parsing it hands the escape to the agent verbatim. Only those
+    /// The JSON spellings (backslash-u-003C, six literal characters, for the
+    /// less-than sign) are the form RazorGraph itself produced until
+    /// ToolResponses moved to the relaxed encoder: System.Text.Json's default
+    /// encoder writes &lt; &gt; &amp; that way, and a client that shows a tool
+    /// result as text rather than parsing it hands the escape to the agent
+    /// verbatim. Ids copied from older output, and from clients that re-escape,
+    /// still arrive wearing them, so the decode stays. Only those
     /// three: the encoder escapes quotes and plus as well, but no id has needed
     /// them, and a decoder that grows past what was observed starts inventing.
     ///

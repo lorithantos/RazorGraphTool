@@ -852,23 +852,53 @@ public class GraphToolsTests
         Assert.Contains("find_nodes", message, StringComparison.Ordinal);
     }
 
-    // ---- The JSON spelling: the one RazorGraph itself puts on the wire ----------
+    // ---- The JSON spelling: the one RazorGraph used to put on the wire ---------
 
-    // System.Text.Json's default encoder writes < > & as < > &.
-    // A client that shows the tool result as text rather than parsing it hands
+    // System.Text.Json's default encoder writes the less-than, greater-than and
+    // ampersand signs as backslash-u escapes (backslash-u-003C and the rest). A
+    // client that shows the tool result as text rather than parsing it hands
     // the agent those six characters, and an id copied from there arrives with
-    // them still in it. Same near miss as &lt;, different costume.
+    // them still in it. Same near miss as &lt;, different costume. ToolResponses
+    // now writes them plain; the decode stays for clients that re-escape.
+    // (Escapes are spelled out in words here: an earlier copy of this comment
+    // was decoded in transit into nonsense.)
 
     [Fact]
-    public void ResponsesCarryTheJsonSpellingOfAGenericId_AndNeverTheHtmlOne()
+    public void ResponsesCarryAGenericIdPlain_NeitherJsonNorHtmlEscaped()
     {
-        // Where the escaped ids come from. The JSON form is ours; the HTML form
-        // is not -- nothing here writes &lt; -- so accepting it is tolerance of
-        // some other layer, while accepting < is accepting our own output.
+        // In the raw response text, not just after a parse: the id a caller
+        // copies out of get_node is the id get_node takes, nothing to decode.
+        // This pinned the escaped form until the encoder changed; flipped on
+        // purpose.
         var json = new GraphNavigationTools(StoreOver(EscapedIdGraph())).GetNode(PaginateId);
 
-        Assert.Contains(JsonEscape(PaginateId), json, StringComparison.Ordinal);
+        Assert.Contains($"\"id\":\"{PaginateId}\"", json, StringComparison.Ordinal);
+        Assert.DoesNotContain(JsonEscape(PaginateId), json, StringComparison.Ordinal);
         Assert.DoesNotContain("&lt;", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ResponsesCarryAnAmpersandPlain()
+    {
+        var json = new GraphNavigationTools(StoreOver(EscapedIdGraph())).GetNode(BareAmpersandId);
+
+        Assert.Contains($"\"id\":\"{BareAmpersandId}\"", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ResponsesCarryNonAsciiTextPlain()
+    {
+        // A literal or a path with accents comes back as written, not as
+        // escapes a reader has to decode by eye.
+        const string value = "Crème brûlée — déjà vu";
+        var graph = new CodeGraph { BuiltAt = DateTimeOffset.UtcNow };
+        graph.AddNode(new GraphNode { Id = "lit:" + value, Type = NodeType.Literal, Name = value, FilePath = "Désserts/Menü.cs" });
+
+        var json = new GraphNavigationTools(StoreOver(graph)).GetNode("lit:" + value);
+
+        Assert.Contains($"\"id\":\"lit:{value}\"", json, StringComparison.Ordinal);
+        Assert.Contains("Désserts/Menü.cs", json, StringComparison.Ordinal);
+        Assert.DoesNotContain((char)92 + "u", json, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -914,7 +944,8 @@ public class GraphToolsTests
     [Fact]
     public void TheJsonSpellingIsCaseInsensitive()
     {
-        // < and < are the same escape; encoders differ on the case.
+        // backslash-u003C and backslash-u003c are the same escape; encoders
+        // differ on the case of the hex digits.
         var tools = new GraphNavigationTools(StoreOver(EscapedIdGraph()));
         var lower = JsonEscape(PaginateId).Replace("\\u003C", "\\u003c", StringComparison.Ordinal)
                                           .Replace("\\u003E", "\\u003e", StringComparison.Ordinal);
@@ -927,8 +958,9 @@ public class GraphToolsTests
     [Fact]
     public void TheJsonAmpersandDecodesInOnePass_LikeTheHtmlOne()
     {
-        // &lt; is an escaped ampersand followed by "lt;", and must come back
-        // as the four characters &lt; -- not be decoded on into a bracket.
+        // backslash-u0026 followed by "lt;" is an escaped ampersand and then
+        // "lt;", and must come back as the four characters &lt; -- not be
+        // decoded on into a bracket.
         var tools = new GraphNavigationTools(StoreOver(EscapedIdGraph()));
 
         using var doc = JsonDocument.Parse(tools.GetNode(JsonEscape(MarkupLiteralId)));

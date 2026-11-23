@@ -1,5 +1,6 @@
 namespace RazorGraph.Mcp;
 
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using RazorGraph.Core.Graph;
@@ -12,8 +13,21 @@ using RazorGraph.Core.Graph;
 /// </summary>
 internal static class ToolResponses
 {
+    /// <summary>
+    /// The encoder is the relaxed one so that a result's text is the text: the
+    /// default encoder writes the less-than, greater-than and ampersand signs,
+    /// and every non-ASCII character, as backslash-u escapes, which turned every
+    /// generic id into one a caller could not copy back verbatim. That escaping
+    /// guards JSON embedded in HTML; these results go to a model over MCP and are
+    /// never embedded in a page, and they stay valid JSON either way. It has to be
+    /// UnsafeRelaxedJsonEscaping rather than JavaScriptEncoder.Create with wider
+    /// ranges: Create escapes the HTML-sensitive characters whatever ranges it is
+    /// given. ToolArguments still decodes the escaped spelling, for clients that
+    /// re-escape on their own.
+    /// </summary>
     internal static readonly JsonSerializerOptions Json = new()
     {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
