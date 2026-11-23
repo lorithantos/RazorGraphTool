@@ -111,7 +111,7 @@ internal sealed class RazorExtractor
             Layout = ExtractLayout(root)
                 ?? RazorTextScanners.ScanLayoutDirective(stripped)
                 ?? RazorTextScanners.ScanLayoutAssignment(stripped),
-            InjectedServices = ExtractInjectDirectives(root),
+            InjectedServices = ExtractInjectDirectives(root, sourceLines),
             ViewDataKeys = RazorTextScanners.ScanViewDataKeys(stripped),
             AssetReferences = RazorTextScanners.ScanAssetReferences(stripped),
             ServerDataKeys = RazorTextScanners.ScanServerBoundDataKeys(stripped),
@@ -158,13 +158,14 @@ internal sealed class RazorExtractor
         return body?.Trim('"', '\'');
     }
 
-    private static List<string> ExtractInjectDirectives(RazorSyntaxNode root) =>
+    private static List<InjectDirective> ExtractInjectDirectives(RazorSyntaxNode root, LineMap lines) =>
         root.DescendantNodes()
             .OfType<RazorDirectiveSyntax>()
             .Where(d => GetDirectiveName(d) == "inject")
-            .Select(d => GetDirectiveBody(d))
-            .Where(s => !string.IsNullOrWhiteSpace(s))
-            .ToList()!;
+            .Select(d => (Body: GetDirectiveBody(d), Line: lines.LineAt(d.Span.Start)))
+            .Where(x => !string.IsNullOrWhiteSpace(x.Body))
+            .Select(x => InjectDirective.Parse(x.Body!, x.Line))
+            .ToList();
 
     private static List<TagHelperInfo> ExtractTagHelperInvocations(RazorSyntaxNode root, LineMap lines)
     {
@@ -237,7 +238,7 @@ internal sealed class RazorPageInfo
     public string? RouteTemplate { get; init; }
     public string? ModelType { get; init; }
     public string? Layout { get; init; }
-    public List<string> InjectedServices { get; init; } = new();
+    public List<InjectDirective> InjectedServices { get; init; } = new();
     public List<string> ViewDataKeys { get; init; } = new();
 
     /// <summary>script src / stylesheet href values as authored in the page.</summary>
@@ -262,6 +263,30 @@ internal sealed class RazorPageInfo
 
     public List<TagHelperInfo> TagHelpers { get; init; } = new();
     public List<string> Sections { get; init; } = new();
+}
+
+/// <summary>
+/// One <c>@inject Type Name</c> line, as written. The type is text here: it is
+/// resolved later, against the property the compiled class carries for it.
+/// </summary>
+/// <param name="Type">The type as written, generic arguments and all.</param>
+/// <param name="Name">The property name the directive declares; empty when the line has none.</param>
+/// <param name="Line">1-based line of the directive in the Razor file.</param>
+internal sealed record InjectDirective(string Type, string Name, int Line)
+{
+    /// <summary>
+    /// Split a directive body at its LAST whitespace: the name is one
+    /// identifier, while the type may carry spaces of its own
+    /// (<c>IDictionary&lt;string, int&gt; Map</c>).
+    /// </summary>
+    internal static InjectDirective Parse(string body, int line)
+    {
+        var trimmed = body.Trim();
+        var split = trimmed.LastIndexOfAny([' ', '\t']);
+        return split < 0
+            ? new InjectDirective(trimmed, string.Empty, line)
+            : new InjectDirective(trimmed[..split].TrimEnd(), trimmed[(split + 1)..], line);
+    }
 }
 
 /// <summary>

@@ -688,8 +688,14 @@ public sealed class GraphQuery
     internal const string ComponentChildrenCaveat =
         "This is a Blazor component (.razor). The child components it renders (<ChildComponent />) are not modelled, so none of them appear in items: an empty or short list is not evidence that it renders nothing. Read the component's markup for them.";
 
-    internal const string ComponentInjectionsCaveat =
-        "This is a Blazor component (.razor). Its @inject directives are not modelled, so injectedServices does not list what it injects: an empty list is not evidence that it injects nothing. Read the @inject lines in the file, or the [Inject] properties of the class it compiles into (the References edge with compiledInto=true, where the graph has one). pageModel and viewModel do not apply to a component.";
+    internal const string ComponentContextCaveat =
+        "This is a Blazor component (.razor). pageModel and viewModel do not apply to a component, and the child components it renders (<ChildComponent />) are not modelled, so this context does not show them; read the component's markup for them.";
+
+    /// <summary>How a service reached a page: a PageModel constructor parameter.</summary>
+    internal const string ViaConstructor = "constructor";
+
+    /// <summary>How a service reached a page: an @inject directive in the Razor file.</summary>
+    internal const string ViaInjectDirective = "@inject";
 
     /// <summary>
     /// Find the PageModel, Services, and ViewModel for a given Razor page.
@@ -703,10 +709,17 @@ public sealed class GraphQuery
             .Select(n => n.Target)
             .FirstOrDefault(n => n.Type == NodeType.PageModel);
 
-        // InjectedInto edges point service -> consumer, so services are predecessors.
-        var services = model != null
-            ? GetPredecessors(model.Id, EdgeType.InjectedInto).Select(n => n.Source).ToList()
-            : new List<GraphNode>();
+        // InjectedInto edges point service -> consumer, so services are
+        // predecessors: of the PageModel for constructor injection, and of the
+        // page itself for its @inject lines (the only edges that end at a page).
+        var injections = new List<PageInjection>();
+        if (model != null)
+            injections.AddRange(GetPredecessors(model.Id, EdgeType.InjectedInto)
+                .Select(p => new PageInjection(p.Source, ViaConstructor)));
+        injections.AddRange(GetPredecessors(pageId, EdgeType.InjectedInto)
+            .Select(p => new PageInjection(p.Source, ViaInjectDirective,
+                p.Edge.GetProperty<string>("name"),
+                p.Edge.Properties.TryGetValue("line", out var line) && line is int l ? l : null)));
 
         var viewModel = page.GetProperty<string>("modelType");
         GraphNode? vmNode = null;
@@ -714,9 +727,25 @@ public sealed class GraphQuery
             vmNode = FindNodes(NodeType.ViewModel, viewModel).FirstOrDefault()
                   ?? FindNodes(NodeType.Class, viewModel).FirstOrDefault();
 
-        return new PageContext(page, model, vmNode, services,
-            IsBlazorComponent(page) ? ComponentInjectionsCaveat : null);
+        return new PageContext(page, model, vmNode, injections,
+            IsBlazorComponent(page) ? ComponentContextCaveat : null,
+            UnresolvedInjections(page));
     }
+
+    /// <summary>
+    /// The @inject lines on a page whose type has no node in this graph, as the
+    /// extractor recorded them: declared outside the solution (ILogger&lt;T&gt;,
+    /// NavigationManager) or naming nothing it could find.
+    /// </summary>
+    internal static IReadOnlyList<UnresolvedInjection> UnresolvedInjections(GraphNode page) =>
+        (page.GetProperty<List<object>>("unresolvedInjections") ?? [])
+            .OfType<Dictionary<string, object>>()
+            .Select(d => new UnresolvedInjection(
+                d.TryGetValue("name", out var name) ? name as string ?? "" : "",
+                d.TryGetValue("declaredType", out var declared) ? declared as string ?? "" : "",
+                d.TryGetValue("resolvedType", out var resolved) ? resolved as string : null,
+                d.TryGetValue("line", out var line) && line is int l ? l : null))
+            .ToList();
 
     /// <summary>
     /// Detect anti-patterns: server-prepared data consumed by client JS.
@@ -743,14 +772,43 @@ public sealed class GraphQuery
 /// <summary>
 /// Bundled context for a Razor page and its backing infrastructure.
 /// </summary>
+/// <param name="Injections">
+/// Every in-solution service the page receives, each with how it arrived: a
+/// PageModel constructor parameter or an @inject line.
+/// </param>
 /// <param name="Caveat">
 /// What this context cannot show, or null when it is complete as far as the
-/// graph models it. Set for a Blazor component, whose @inject directives are
-/// not modelled, so that its empty InjectedServices is not read as a fact.
+/// graph models it. Set for a Blazor component, whose child components are not
+/// modelled and to which pageModel and viewModel do not apply.
+/// </param>
+/// <param name="UnresolvedInjections">
+/// The page's @inject lines whose type has no node here -- out of solution, or
+/// unresolvable -- so the services list is not read as the whole answer.
 /// </param>
 public sealed record PageContext(
     GraphNode Page,
     GraphNode? PageModel,
     GraphNode? ViewModel,
-    IReadOnlyList<GraphNode> InjectedServices,
-    string? Caveat = null);
+    IReadOnlyList<PageInjection> Injections,
+    string? Caveat = null,
+    IReadOnlyList<UnresolvedInjection>? UnresolvedInjections = null)
+{
+    /// <summary>The service nodes of <see cref="Injections"/>, in the same order.</summary>
+    public IReadOnlyList<GraphNode> InjectedServices => Injections.Select(i => i.Service).ToList();
+}
+
+/// <summary>One in-solution service a page receives.</summary>
+/// <param name="Via"><see cref="GraphQuery.ViaConstructor"/> or <see cref="GraphQuery.ViaInjectDirective"/>.</param>
+/// <param name="Name">The property name an @inject declares; null for a constructor parameter.</param>
+/// <param name="Line">The @inject line in the Razor file; null for a constructor parameter.</param>
+public sealed record PageInjection(GraphNode Service, string Via, string? Name = null, int? Line = null);
+
+/// <summary>
+/// An @inject line whose type has no node in the graph.
+/// </summary>
+/// <param name="DeclaredType">The type as written in the Razor file.</param>
+/// <param name="ResolvedType">
+/// The type the compiler resolved it to, read from the compiled class's
+/// property; null when the class was not in the graph to ask.
+/// </param>
+public sealed record UnresolvedInjection(string Name, string DeclaredType, string? ResolvedType, int? Line);

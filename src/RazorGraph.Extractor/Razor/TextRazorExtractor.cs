@@ -50,9 +50,10 @@ internal sealed class TextRazorExtractor
             ModelType = ModelDirectiveRegex.Match(stripped) is { Success: true } m ? m.Groups["t"].Value.Trim() : null,
             Layout = RazorTextScanners.ScanLayoutDirective(stripped)
                 ?? RazorTextScanners.ScanLayoutAssignment(stripped),
+            // Line from the body, not the match: ^\s* can swallow blank lines above.
             InjectedServices = InjectDirectiveRegex.Matches(stripped)
-                .Select(x => x.Groups["b"].Value.Trim())
-                .Where(s => s.Length > 0)
+                .Where(x => x.Groups["b"].Value.Trim().Length > 0)
+                .Select(x => InjectDirective.Parse(x.Groups["b"].Value, lines.LineAt(x.Groups["b"].Index)))
                 .ToList(),
             ViewDataKeys = RazorTextScanners.ScanViewDataKeys(stripped),
             AssetReferences = RazorTextScanners.ScanAssetReferences(stripped),

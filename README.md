@@ -345,6 +345,21 @@ no longer be true: the disk section answers for it, and `staleTextFiles` says ho
 (`MapsToRoute`, `HandlesHttpMethod`, `UrlGeneratedBy`), `Covers`, `Escapes`, and
 `Extends` — an extension method pointing at the in-solution type it extends.
 
+`InjectedInto` has two sources, both running service → consumer. A constructor
+parameter points the service at the type that takes it. An `@inject` line in a `.cshtml`
+or `.razor` file points the service at the page, partial, layout or component node that
+declares it, carrying `via: "@inject"`, the property `name`, the `declaredType` as
+written, the `line`, and `typeFrom` — `generatedProperty` when the type was read from the
+property Razor compiles the directive into (the class the page's `compiledInto`
+`References` edge names), `directiveText` when that class was not in the graph and the
+text had to be matched. An `@inject` whose type has no node — a framework service such as
+`ILogger<T>` or `NavigationManager`, or a name nothing matches — gets no edge and is
+recorded on the page as `unresolvedInjections`. `page_context` lists both kinds of
+service under `injectedServices`, each with `via` (`constructor` or `@inject`), and the
+unresolved ones under `unresolvedInjections`. `@inject` lines inherited from
+`_ViewImports.cshtml` or `_Imports.razor` are attributed to that file, not to each page
+under it.
+
 `DataBinds` runs from a XAML view to every member one of its bindings could name,
 carrying the path as written, the line, and how many candidates the name resolved
 to. Conservative in the same direction as interface dispatch, and for the same

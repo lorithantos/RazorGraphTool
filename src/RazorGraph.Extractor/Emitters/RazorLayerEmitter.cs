@@ -217,6 +217,183 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
         }
     }
 
+    /// <summary>
+    /// An InjectedInto edge for each <c>@inject</c> line, from the service's node
+    /// to the Razor node that declares it -- the direction constructor injection
+    /// already runs, service to consumer.
+    ///
+    /// The type is taken from the compiled class rather than from the text. Razor
+    /// compiles every @inject into a property of the same name ([RazorInject] for
+    /// a .cshtml, [Inject] for a .razor), and that property's type is the one the
+    /// compiler resolved through @using, _ViewImports and _Imports. Reading the
+    /// text instead would mean re-implementing that lookup. The text is the
+    /// fallback only when the class or the property is not in the graph.
+    ///
+    /// A type with no node -- declared outside the solution, like ILogger&lt;T&gt;,
+    /// or naming nothing at all -- gets no edge, since there is nothing to point
+    /// at, and is recorded on the page as <c>unresolvedInjections</c> instead, so
+    /// page_context can list it rather than answer short.
+    /// </summary>
+    /// <remarks>
+    /// Runs after <see cref="AddGeneratedClassLinks"/>: the compiledInto edge is
+    /// how a page finds its class.
+    /// </remarks>
+    internal void AddInjectDirectiveEdges() =>
+        AddInjectDirectiveEdges(_pendingBindings.Select(p => p.Info));
+
+    /// <inheritdoc cref="AddInjectDirectiveEdges()"/>
+    internal void AddInjectDirectiveEdges(IEnumerable<RazorPageInfo> infos)
+    {
+        Dictionary<string, GraphNode>? typesByFullName = null;
+
+        foreach (var info in infos)
+        {
+            if (info.InjectedServices.Count == 0) continue;
+            var page = graph.GetNode(info.Id);
+            if (page is null) continue;
+
+            typesByFullName ??= InSolutionTypesByFullName();
+            var generatedClass = graph.Outgoing(page.Id)
+                .Where(e => e.Type == EdgeType.References && e.GetProperty<bool>("compiledInto"))
+                .Select(e => e.ToId)
+                .FirstOrDefault();
+
+            var unresolved = new List<object>();
+            foreach (var directive in info.InjectedServices)
+            {
+                var property = generatedClass is null ? null : GeneratedProperty(generatedClass, directive.Name);
+                var resolvedType = property?.GetProperty<string>("memberType");
+
+                var (service, closedType) = resolvedType is not null
+                    ? ResolveFullName(resolvedType, typesByFullName)
+                    : ResolveWrittenName(directive.Type, typesByFullName);
+                var typeFrom = resolvedType is not null ? "generatedProperty" : "directiveText";
+
+                if (service is null)
+                {
+                    var entry = new Dictionary<string, object>
+                    {
+                        ["name"] = directive.Name,
+                        ["declaredType"] = directive.Type,
+                        ["line"] = directive.Line,
+                        ["typeFrom"] = typeFrom
+                    };
+                    if (resolvedType is not null) entry["resolvedType"] = resolvedType;
+                    unresolved.Add(entry);
+                    continue;
+                }
+
+                var edge = new GraphEdge { FromId = service.Id, ToId = page.Id, Type = EdgeType.InjectedInto };
+                edge.Properties["via"] = "@inject";
+                edge.Properties["name"] = directive.Name;
+                edge.Properties["declaredType"] = directive.Type;
+                edge.Properties["line"] = directive.Line;
+                edge.Properties["typeFrom"] = typeFrom;
+                // As on a constructor edge: the written type, carried only when the
+                // edge reached an open generic's node through its definition.
+                if (closedType is not null) edge.Properties["closedType"] = closedType;
+                graph.AddEdge(edge);
+            }
+
+            // Stored as List<object> of Dictionary<string, object>, the shape the
+            // serializer hands back on load, as constructorDependencies is.
+            if (unresolved.Count > 0) page.SetProperty("unresolvedInjections", unresolved);
+        }
+    }
+
+    /// <summary>The property the compiled class declares for one @inject name.</summary>
+    private GraphNode? GeneratedProperty(string classId, string name) =>
+        name.Length == 0
+            ? null
+            : graph.Outgoing(classId)
+                .Where(e => e.Type == EdgeType.Contains)
+                .Select(e => graph.GetNode(e.ToId))
+                .FirstOrDefault(n => n is { Type: NodeType.Property } && n.Name == name);
+
+    /// <summary>
+    /// Every node the solution declares a type for, by full name. ExternalType
+    /// nodes are left out: they are minted for attributes declared elsewhere, and
+    /// an edge from one would claim a service the solution does not have.
+    /// </summary>
+    private Dictionary<string, GraphNode> InSolutionTypesByFullName()
+    {
+        var types = new Dictionary<string, GraphNode>(StringComparer.Ordinal);
+        foreach (var node in graph.Nodes)
+        {
+            if (node.Type == NodeType.ExternalType) continue;
+            if (node.GetProperty<string>("fullName") is { Length: > 0 } fullName) types.TryAdd(fullName, node);
+        }
+        return types;
+    }
+
+    /// <summary>
+    /// A compiler-resolved full name: exact first, then -- for a constructed
+    /// generic -- the open definition of the same name and arity, which is what
+    /// the solution declares (<c>IRepository&lt;T&gt;</c>, never
+    /// <c>IRepository&lt;CatalogItem&gt;</c>).
+    /// </summary>
+    private static (GraphNode? Node, string? ClosedType) ResolveFullName(
+        string fullName, Dictionary<string, GraphNode> types)
+    {
+        if (types.TryGetValue(fullName, out var exact)) return (exact, null);
+
+        if (GenericShape(fullName) is not { } shape) return (null, null);
+        var definition = types
+            .Where(t => GenericShape(t.Key) == shape)
+            .Select(t => t.Value)
+            .FirstOrDefault();
+        return definition is null ? (null, null) : (definition, fullName);
+    }
+
+    /// <summary>
+    /// A type as written in the Razor file, used only when the compiled class
+    /// does not say. It may be qualified or not, so it matches a full name
+    /// exactly or as its unique dotted suffix; more than one candidate is left
+    /// unresolved, because picking one would be a guess.
+    /// </summary>
+    private static (GraphNode? Node, string? ClosedType) ResolveWrittenName(
+        string written, Dictionary<string, GraphNode> types)
+    {
+        var name = written.Replace(" ", string.Empty).TrimEnd('?');
+        if (types.TryGetValue(name, out var exact)) return (exact, null);
+
+        var suffix = types.Where(t => t.Key.EndsWith("." + name, StringComparison.Ordinal)).Take(2).ToList();
+        if (suffix.Count == 1) return (suffix[0].Value, null);
+        if (suffix.Count > 1) return (null, null);
+
+        if (GenericShape(name) is not { } shape) return (null, null);
+        var definitions = types
+            .Where(t => GenericShape(t.Key) is { } other
+                        && other.Arity == shape.Arity
+                        && (other.Stem == shape.Stem || other.Stem.EndsWith("." + shape.Stem, StringComparison.Ordinal)))
+            .Take(2)
+            .ToList();
+        return definitions.Count == 1 ? (definitions[0].Value, written) : (null, null);
+    }
+
+    /// <summary>
+    /// The name before the first '&lt;' and the number of top-level type
+    /// arguments, or null for a name that is not generic.
+    /// </summary>
+    private static (string Stem, int Arity)? GenericShape(string name)
+    {
+        var open = name.IndexOf('<');
+        if (open <= 0 || !name.EndsWith('>')) return null;
+
+        var arity = 1;
+        var depth = 0;
+        for (var i = open + 1; i < name.Length - 1; i++)
+        {
+            switch (name[i])
+            {
+                case '<': depth++; break;
+                case '>': depth--; break;
+                case ',' when depth == 0: arity++; break;
+            }
+        }
+        return (name[..open], arity);
+    }
+
     private static string NormalizeFullPath(string path) =>
         Path.GetFullPath(path).Replace('\\', '/').ToLowerInvariant();
 

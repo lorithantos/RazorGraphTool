@@ -118,9 +118,21 @@ public class RazorExtractorTests
     {
         var info = Extract(syntaxMode, SamplePage);
 
-        Assert.Equal(2, info.InjectedServices.Count);
-        Assert.Contains("IGreetingService Greetings", info.InjectedServices);
-        Assert.Contains("ILogger<IndexModel> Logger", info.InjectedServices);
+        Assert.Equal(
+            new[] { new InjectDirective("IGreetingService", "Greetings", 3), new InjectDirective("ILogger<IndexModel>", "Logger", 4) },
+            info.InjectedServices);
+    }
+
+    /// <summary>
+    /// The name is the last token; everything before it is the type, spaces
+    /// inside generic arguments included.
+    /// </summary>
+    [Fact]
+    public void InjectDirective_SplitsAtTheLastWhitespace()
+    {
+        Assert.Equal(new InjectDirective("IDictionary<string, int>", "Map", 7),
+            InjectDirective.Parse("IDictionary<string, int>  Map ", 7));
+        Assert.Equal(new InjectDirective("IOnlyAType", "", 1), InjectDirective.Parse("IOnlyAType", 1));
     }
 
     [Theory]

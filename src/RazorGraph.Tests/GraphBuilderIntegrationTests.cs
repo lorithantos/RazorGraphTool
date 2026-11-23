@@ -187,8 +187,9 @@ public class GraphBuilderIntegrationTests : IAsyncLifetime
     /// <summary>
     /// What the graph holds for a Blazor component, pinned so a change to it is
     /// a decision rather than a drift: GreetingPanel.razor (@page, two @inject,
-    /// one child component) becomes a RazorPage carrying no injection or child
-    /// edge, and the honest answer for it is a caveat, never a bare empty list.
+    /// one child component) becomes a RazorPage whose in-solution @inject is an
+    /// edge and whose framework one is listed, with no child edge, and the
+    /// honest answer for the children is a caveat, never a bare empty list.
     /// The Razor Pages page beside it carries no caveat.
     /// </summary>
     [Fact]
@@ -198,8 +199,11 @@ public class GraphBuilderIntegrationTests : IAsyncLifetime
         var query = new GraphQuery(_graph);
 
         var context = query.GetPageContext(component.Id)!;
-        Assert.Empty(context.InjectedServices);
-        Assert.Equal(GraphQuery.ComponentInjectionsCaveat, context.Caveat);
+        var injection = Assert.Single(context.Injections);
+        Assert.Equal("IGreetingService", injection.Service.Name);
+        Assert.Equal(GraphQuery.ViaInjectDirective, injection.Via);
+        Assert.Single(context.UnresolvedInjections!);
+        Assert.Equal(GraphQuery.ComponentContextCaveat, context.Caveat);
 
         Assert.Empty(query.GetRenderTree(component.Id));
         Assert.Equal(GraphQuery.ComponentChildrenCaveat, query.GetRenderTreeCaveat(component.Id));
@@ -211,6 +215,75 @@ public class GraphBuilderIntegrationTests : IAsyncLifetime
         var page = _graph.Nodes.Single(n => n.Type == NodeType.RazorPage && n.Name == "Index");
         Assert.Null(query.GetPageContext(page.Id)!.Caveat);
         Assert.Null(query.GetRenderTreeCaveat(page.Id));
+    }
+
+    // ---- @inject -------------------------------------------------------------
+
+    /// <summary>
+    /// Index.cshtml's <c>@inject IGreetingService Greeter</c> (line 3) is an
+    /// InjectedInto edge from the service to the PAGE node -- service to
+    /// consumer, as a constructor edge runs -- carrying what the directive says.
+    /// The type comes from the [RazorInject] property the compiled class
+    /// declares, not from the text.
+    /// </summary>
+    [Fact]
+    public void Builds_InjectedIntoEdge_FromServiceToACshtmlPage_ForItsInjectDirective()
+    {
+        var page = _graph!.Nodes.Single(n => n.Type == NodeType.RazorPage && n.Name == "Index");
+
+        var edge = Assert.Single(_graph.Incoming(page.Id), e => e.Type == EdgeType.InjectedInto);
+        Assert.Equal("svc:SampleApp.Services.IGreetingService", edge.FromId);
+        Assert.Equal("@inject", edge.GetProperty<string>("via"));
+        Assert.Equal("Greeter", edge.GetProperty<string>("name"));
+        Assert.Equal("IGreetingService", edge.GetProperty<string>("declaredType"));
+        Assert.Equal(3, edge.GetProperty<int>("line"));
+        Assert.Equal("generatedProperty", edge.GetProperty<string>("typeFrom"));
+
+        // Nothing points the other way: the page is the consumer.
+        Assert.DoesNotContain(_graph.Outgoing(page.Id), e => e.Type == EdgeType.InjectedInto);
+        Assert.Null(page.GetProperty<List<object>>("unresolvedInjections"));
+    }
+
+    /// <summary>
+    /// GreetingPanel.razor's two @inject: IGreetingService is in the solution
+    /// and becomes an edge; ILogger&lt;GreetingPanel&gt; is not, so it is listed
+    /// on the page with the type the compiler resolved -- which only the
+    /// compiled class's [Inject] property knows, the file saying just
+    /// <c>ILogger&lt;GreetingPanel&gt;</c>.
+    /// </summary>
+    [Fact]
+    public void Builds_ComponentInjects_AsOneEdgeAndOneUnresolvedEntry()
+    {
+        var component = _graph!.Nodes.Single(n => n.Type == NodeType.RazorPage && n.Name == "GreetingPanel");
+
+        var edge = Assert.Single(_graph.Incoming(component.Id), e => e.Type == EdgeType.InjectedInto);
+        Assert.Equal("svc:SampleApp.Services.IGreetingService", edge.FromId);
+        Assert.Equal("Greetings", edge.GetProperty<string>("name"));
+        Assert.Equal(3, edge.GetProperty<int>("line"));
+        Assert.Equal("generatedProperty", edge.GetProperty<string>("typeFrom"));
+
+        var unresolved = Assert.Single(new GraphQuery(_graph).GetPageContext(component.Id)!.UnresolvedInjections!);
+        Assert.Equal(new UnresolvedInjection(
+                "Logger", "ILogger<GreetingPanel>",
+                "Microsoft.Extensions.Logging.ILogger<SampleApp.Components.GreetingPanel>", 4),
+            unresolved);
+    }
+
+    /// <summary>
+    /// page_context on Index lists IGreetingService twice, once per mechanism:
+    /// IndexModel's constructor, and the page's own @inject.
+    /// </summary>
+    [Fact]
+    public void PageContext_ListsBothInjectionMechanisms()
+    {
+        var page = _graph!.Nodes.Single(n => n.Type == NodeType.RazorPage && n.Name == "Index");
+
+        var context = new GraphQuery(_graph).GetPageContext(page.Id)!;
+
+        Assert.Equal(
+            new[] { ("IGreetingService", "constructor", (string?)null, (int?)null), ("IGreetingService", "@inject", "Greeter", 3) },
+            context.Injections.Select(i => (i.Service.Name, i.Via, i.Name, i.Line)).ToArray());
+        Assert.Empty(context.UnresolvedInjections!);
     }
 
     [Fact]

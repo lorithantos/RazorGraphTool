@@ -133,6 +133,15 @@ internal static class GraphFormat
     /// would be wrong against this graph, and the bump is what tells a 3.6 reader
     /// the population moved. Coverage and escape propagation do not step through a
     /// property node, so Covers and Escapes are unchanged by it.
+    /// 3.8 emits an InjectedInto edge for each @inject directive in a .cshtml or
+    /// .razor file, from the service's node to the RazorPage, PartialView or
+    /// Layout node that declares it, carrying <c>via</c> ("@inject"), <c>name</c>,
+    /// <c>declaredType</c>, <c>line</c> and <c>typeFrom</c>; and an @inject whose
+    /// type has no node is recorded on that page as <c>unresolvedInjections</c>.
+    /// Until now InjectedInto only ever ended at a type, from a constructor
+    /// parameter. A new SHAPE of a known kind plus a new property, in 1.5's sense:
+    /// a 3.7 reader keeps both, but one assuming every InjectedInto edge ends at a
+    /// type would be wrong against this graph, and the bump is what says so.
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -173,7 +182,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(3, 7);
+    public static readonly GraphFormatVersion Current = new(3, 8);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

@@ -1,6 +1,8 @@
 namespace RazorGraph.Mcp;
 
 using System.ComponentModel;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using RazorGraph.Core.Graph;
@@ -31,7 +33,7 @@ internal sealed class RazorPageTools(GraphStore store)
     }
 
     [McpServerTool(Name = "page_context")]
-    [Description("Backing infrastructure of a Razor page: its PageModel, ViewModel, and injected services. Only valid for RazorPage nodes. For a Blazor component (.razor) a 'caveat' says that its @inject directives are not modelled, so an empty injectedServices is not read as 'injects nothing'.")]
+    [Description("Backing infrastructure of a Razor page: its PageModel, ViewModel, and injected services. Only valid for RazorPage nodes. Each injectedServices entry says how it arrived in 'via': 'constructor' (a PageModel constructor parameter) or '@inject' (a directive in the .cshtml or .razor file, with its 'property' and 'directiveLine'). An @inject whose type has no node in the graph -- a framework service such as ILogger<T>, or a name nothing matches -- is listed in 'unresolvedInjections' instead. For a Blazor component (.razor) a 'caveat' says that its child components are not modelled and pageModel and viewModel do not apply.")]
     public string PageContext(
         [Description("Id of a RazorPage node")] string pageId,
         [Description(ToolArguments.GraphIdDescription)] string? graphId = null)
@@ -46,11 +48,35 @@ internal sealed class RazorPageTools(GraphStore store)
             page = ToolResponses.NodeSummary(context.Page),
             pageModel = context.PageModel is null ? null : ToolResponses.NodeSummary(context.PageModel),
             viewModel = context.ViewModel is null ? null : ToolResponses.NodeSummary(context.ViewModel),
-            // Lambda, not a method group: NodeSummary's optional freshness
-            // parameter makes the group ambiguous against Select's indexed overload.
-            injectedServices = context.InjectedServices.Select(n => ToolResponses.NodeSummary(n)).ToList(),
+            injectedServices = context.Injections.Select(InjectedService).ToList(),
+            // Null, so omitted, when every @inject resolved -- a page with none
+            // answers in the shape it always had.
+            unresolvedInjections = context.UnresolvedInjections is { Count: > 0 } unresolved
+                ? unresolved.Select(u => new
+                {
+                    name = u.Name,
+                    declaredType = u.DeclaredType,
+                    resolvedType = u.ResolvedType,
+                    line = u.Line,
+                    via = "@inject"
+                }).ToList()
+                : null,
             caveat = context.Caveat
         });
+    }
+
+    /// <summary>
+    /// A service's node summary plus how it reached the page. For an @inject,
+    /// <c>property</c> and <c>directiveLine</c> say which line declared it;
+    /// <c>name</c> and <c>line</c> stay the service's own, as everywhere else.
+    /// </summary>
+    private static JsonObject InjectedService(PageInjection injection)
+    {
+        var summary = JsonSerializer.SerializeToNode(ToolResponses.NodeSummary(injection.Service), ToolResponses.Json)!.AsObject();
+        summary["via"] = injection.Via;
+        if (injection.Name is not null) summary["property"] = injection.Name;
+        if (injection.Line is not null) summary["directiveLine"] = injection.Line;
+        return summary;
     }
 
     /// <summary>
@@ -62,7 +88,7 @@ internal sealed class RazorPageTools(GraphStore store)
     {
         var message = $"Node '{pageId}' is not a RazorPage; page_context only applies to RazorPage nodes.";
         return GraphQuery.IsBlazorComponent(node)
-            ? message + " It is a Blazor component (.razor) without @page; a component's @inject directives are not modelled in any case, so read them in the file."
+            ? message + " It is a Blazor component (.razor) without @page. Its @inject services are this node's incoming InjectedInto edges (get_node with edges=incoming, edgeType=InjectedInto), and any whose type has no node are in its unresolvedInjections property."
             : message;
     }
 

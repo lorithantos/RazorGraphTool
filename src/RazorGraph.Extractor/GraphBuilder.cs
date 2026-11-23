@@ -305,6 +305,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         _xamlLayer.AddXamlLayer(projectDir, idScope: null);
         _clock?.Begin(BuildPhases.Links);
         _razorLayer.AddGeneratedClassLinks(_symbols);
+        _razorLayer.AddInjectDirectiveEdges();
         _razorLayer.AddBindingEdges(
             _roslyn.ExtractViewCalls().ToList(),
             _roslyn.ExtractShapeNames().ToList(),
@@ -355,6 +356,7 @@ public sealed class GraphBuilder : IAsyncDisposable
 
         _clock?.Begin(BuildPhases.Links);
         _razorLayer.AddGeneratedClassLinks(_symbols);
+        _razorLayer.AddInjectDirectiveEdges();
 
         // Projects before bindings: a view name resolves against the referencing
         // project and the ones it references, which needs the project nodes and
