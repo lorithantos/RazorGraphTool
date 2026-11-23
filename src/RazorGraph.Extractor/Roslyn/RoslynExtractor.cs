@@ -609,6 +609,56 @@ public sealed class RoslynExtractor : IAsyncDisposable
     }
 
     /// <summary>
+    /// The call, construction and member-access sites of every loaded project,
+    /// from one walk that asks each syntax tree for its semantic model once and
+    /// hands that model to all three scans.
+    /// </summary>
+    /// <remarks>
+    /// One model per tree is the point. A semantic model binds a method body the
+    /// first time it is asked about it and keeps the result, but the cache lives
+    /// in the model, not the compilation, and GetSemanticModel returns a new model
+    /// every time. Three passes each calling it bound every body in the solution
+    /// three times, and the second and third bindings were most of what the
+    /// construction and member-access scans cost: on RazorGraphTool.slnx the
+    /// construction scan fell from 1.4 s to 0.1 s, and member access from 1.9 s
+    /// to 1.3 s, once they shared the call scan's model. The model goes when its
+    /// tree is done, so no more than one tree's bindings are held at a time.
+    ///
+    /// Each list is in the order its own pass produced before the walks were
+    /// fused -- project, then tree, then the scan's own order within the tree --
+    /// so the emitters see the sequences they always did.
+    /// </remarks>
+    internal UsageSites ExtractUsageSites()
+    {
+        if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
+
+        return UsageSitesOf(_loaded.Select(l => l.Compilation), InScopeAssemblies());
+    }
+
+    /// <summary>
+    /// The walk behind <see cref="ExtractUsageSites"/>, over any compilations.
+    /// </summary>
+    internal static UsageSites UsageSitesOf(IEnumerable<Compilation> compilations, IReadOnlySet<string> inScope)
+    {
+        var sites = new UsageSites([], [], []);
+
+        foreach (var compilation in compilations)
+        {
+            foreach (var tree in compilation.SyntaxTrees)
+            {
+                var root = tree.GetRoot();
+                var model = compilation.GetSemanticModel(tree);
+
+                sites.Calls.AddRange(CallSitesIn(root, model, inScope));
+                sites.Constructions.AddRange(ConstructionSitesIn(root, model, inScope));
+                sites.MemberAccesses.AddRange(MemberAccessScanner.TreeMemberAccesses(root, model, inScope));
+            }
+        }
+
+        return sites;
+    }
+
+    /// <summary>
     /// Resolve call sites to (caller, callee) method-id pairs with the
     /// exception guards enclosing each site. Only calls whose target is
     /// declared in one of the loaded projects are returned -- an edge to
@@ -626,34 +676,26 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// syntax at the site, and without the edges the methods read as unreached
     /// by the very code that guarantees they run.
     /// </summary>
-    internal IEnumerable<CallSiteInfo> ExtractCallSites()
+    internal static IEnumerable<CallSiteInfo> CallSitesIn(SyntaxNode root, SemanticModel model, IReadOnlySet<string> inScope)
     {
-        if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
-
-        var inScope = InScopeAssemblies();
-
-        foreach (var (root, model) in _loaded.SelectMany(
-                     l => l.Compilation.SyntaxTrees.Select(t => (t.GetRoot(), l.Compilation.GetSemanticModel(t)))))
+        foreach (var site in TopLevelProgram.MethodScopes(root)
+            .SelectMany(scope => CallSiteScanner.MethodCallSites(scope, model, inScope)))
         {
-            foreach (var site in TopLevelProgram.MethodScopes(root)
-                .SelectMany(scope => CallSiteScanner.MethodCallSites(scope, model, inScope)))
-            {
-                yield return site;
-            }
+            yield return site;
+        }
 
-            foreach (var site in root.DescendantNodes()
-                .OfType<TypeDeclarationSyntax>()
-                .SelectMany(typeDecl => CallSiteScanner.InitializerCallSites(typeDecl, model, inScope)))
-            {
-                yield return site;
-            }
+        foreach (var site in root.DescendantNodes()
+            .OfType<TypeDeclarationSyntax>()
+            .SelectMany(typeDecl => CallSiteScanner.InitializerCallSites(typeDecl, model, inScope)))
+        {
+            yield return site;
+        }
 
-            foreach (var site in root.DescendantNodes()
-                .OfType<TypeDeclarationSyntax>()
-                .SelectMany(typeDecl => CallSiteScanner.StaticInitializerCallSites(typeDecl, model, inScope)))
-            {
-                yield return site;
-            }
+        foreach (var site in root.DescendantNodes()
+            .OfType<TypeDeclarationSyntax>()
+            .SelectMany(typeDecl => CallSiteScanner.StaticInitializerCallSites(typeDecl, model, inScope)))
+        {
+            yield return site;
         }
     }
 
@@ -662,40 +704,32 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// member that builds it.
     /// </summary>
     /// <remarks>
-    /// A separate walk from <see cref="ExtractCallSites"/> rather than a second
+    /// A separate scan from <see cref="CallSitesIn"/> rather than a second
     /// consumer of it, because the two keep different things: a call site keeps
     /// the CONSTRUCTOR and is dropped when that constructor has no node, which is
     /// exactly the case this edge exists for — a type whose constructor the
     /// compiler supplied had no incoming edge of any kind and read as dead.
     /// </remarks>
-    internal IEnumerable<ConstructionSiteInfo> ExtractConstructionSites()
+    internal static IEnumerable<ConstructionSiteInfo> ConstructionSitesIn(SyntaxNode root, SemanticModel model, IReadOnlySet<string> inScope)
     {
-        if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
-
-        var inScope = InScopeAssemblies();
-
-        foreach (var (root, model) in _loaded.SelectMany(
-                     l => l.Compilation.SyntaxTrees.Select(t => (t.GetRoot(), l.Compilation.GetSemanticModel(t)))))
+        foreach (var site in TopLevelProgram.MethodScopes(root)
+            .SelectMany(scope => CallSiteScanner.ConstructionSites(scope, model, inScope)))
         {
-            foreach (var site in TopLevelProgram.MethodScopes(root)
-                .SelectMany(scope => CallSiteScanner.ConstructionSites(scope, model, inScope)))
-            {
-                yield return site;
-            }
+            yield return site;
+        }
 
-            foreach (var site in root.DescendantNodes()
-                .OfType<TypeDeclarationSyntax>()
-                .SelectMany(typeDecl => CallSiteScanner.InitializerConstructionSites(typeDecl, model, inScope)))
-            {
-                yield return site;
-            }
+        foreach (var site in root.DescendantNodes()
+            .OfType<TypeDeclarationSyntax>()
+            .SelectMany(typeDecl => CallSiteScanner.InitializerConstructionSites(typeDecl, model, inScope)))
+        {
+            yield return site;
+        }
 
-            foreach (var site in root.DescendantNodes()
-                .OfType<TypeDeclarationSyntax>()
-                .SelectMany(typeDecl => CallSiteScanner.StaticInitializerConstructionSites(typeDecl, model, inScope)))
-            {
-                yield return site;
-            }
+        foreach (var site in root.DescendantNodes()
+            .OfType<TypeDeclarationSyntax>()
+            .SelectMany(typeDecl => CallSiteScanner.StaticInitializerConstructionSites(typeDecl, model, inScope)))
+        {
+            yield return site;
         }
     }
 
@@ -769,24 +803,6 @@ public sealed class RoslynExtractor : IAsyncDisposable
             {
                 if (action is not null) yield return action;
             }
-        }
-    }
-
-    /// <summary>
-    /// Every read and write of an in-solution property or field, attributed to
-    /// the code that performs it; see MemberAccessScanner.
-    /// </summary>
-    internal IEnumerable<MemberAccessInfo> ExtractMemberAccesses()
-    {
-        if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
-
-        var inScope = InScopeAssemblies();
-
-        foreach (var (root, model) in _loaded.SelectMany(
-                     l => l.Compilation.SyntaxTrees.Select(t => (t.GetRoot(), l.Compilation.GetSemanticModel(t)))))
-        {
-            foreach (var access in MemberAccessScanner.TreeMemberAccesses(root, model, inScope))
-                yield return access;
         }
     }
 

@@ -375,6 +375,16 @@ internal sealed record MemberAccessInfo(
     bool IsWrite);
 
 /// <summary>
+/// Every read and write of an in-solution property or field (see
+/// MemberAccessScanner), with the call and construction sites the same walk
+/// collects; see RoslynExtractor.ExtractUsageSites for why it is one walk.
+/// </summary>
+internal sealed record UsageSites(
+    List<CallSiteInfo> Calls,
+    List<ConstructionSiteInfo> Constructions,
+    List<MemberAccessInfo> MemberAccesses);
+
+/// <summary>
 /// One string a member produces, before anything has decided whether it names
 /// something. ToId is absent on purpose: matching needs the solution-wide name
 /// index, which exists only once every declaration is a node.

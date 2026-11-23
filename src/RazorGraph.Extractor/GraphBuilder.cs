@@ -417,9 +417,10 @@ public sealed class GraphBuilder : IAsyncDisposable
         }
 
         _clock?.Begin(BuildPhases.Calls);
-        _usage.AddCallEdges(_roslyn.ExtractCallSites(), _declarations.TypeIdFor);
-        _declarations.AddConstructsEdges(_roslyn.ExtractConstructionSites());
-        _usage.AddMemberAccessEdges(_roslyn.ExtractMemberAccesses());
+        var usageSites = _roslyn.ExtractUsageSites();
+        _usage.AddCallEdges(usageSites.Calls, _declarations.TypeIdFor);
+        _declarations.AddConstructsEdges(usageSites.Constructions);
+        _usage.AddMemberAccessEdges(usageSites.MemberAccesses);
         // One scan, two consumers. ExtractQuotedNames is a lazy walk over every
         // syntax tree in the solution, so enumerating it twice would compile the
         // question twice; materialised once and handed to both.
