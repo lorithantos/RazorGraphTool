@@ -159,6 +159,23 @@ dotnet run --project src/RazorGraph.Cli -- research graph.json --focus "page:Pag
 `build` and `build-solution` are slow — they run a real MSBuild + Roslyn compile.
 `load`/`save` of the JSON is fast, so build once and query many times.
 
+Rough guidance, measured on one Windows 11 machine with packages already restored (a build
+never restores: it needs each project's `obj/project.assets.json`, so run `dotnet restore`
+first):
+
+| Solution | Projects | Lines of C# and Razor | Wall time |
+|---|---|---|---|
+| `tests/fixtures` MultiProject | 3 | 1,428 | about 4 s |
+| [eShopOnWeb](https://github.com/dotnet-architecture/eShopOnWeb) | 10 | 13,008 | 11–13 s |
+
+Resolving calls and member access is the largest share: under 40% of the time on
+eShopOnWeb, about half on this repository's own solution. While a build
+runs it reports its phase and project N of M — on stderr from the CLI, as MCP progress
+notifications to a client that asks for them — and ends with the time each phase took.
+A project that fails to load or compile does not stop the build, and is not silent: the
+summary names it with its first errors, root failures before the projects that reference
+them, and the graph is built from whatever did compile.
+
 ## Use it from Claude Code
 
 This is the development path, for working on RazorGraph rather than with it; to use it, see

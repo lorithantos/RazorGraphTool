@@ -29,6 +29,21 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     private static CodeGraph? _x64Graph;
     private static CodeGraph? _noTextGraph;
     private static string? _noTextSummary;
+    private static List<BuildProgress>? _solutionProgress;
+    private static IReadOnlyList<BuildPhaseTiming>? _solutionPhaseTimings;
+    private static int _solutionProjectCount;
+    private static List<ModelContextProtocol.ProgressNotificationValue>? _noTextNotifications;
+
+    /// <summary>
+    /// Records reports synchronously, in order. Not Progress&lt;T&gt;, which posts each
+    /// report to the thread pool and so cannot be trusted to keep the order the
+    /// tests assert on.
+    /// </summary>
+    private sealed class Recorder<T> : IProgress<T>
+    {
+        public List<T> Values { get; } = new();
+        public void Report(T value) => Values.Add(value);
+    }
 
     private static string RepoRoot()
     {
@@ -55,10 +70,14 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
 
             EnsureRestored(fixtureDir);
 
-            await using (var builder = new GraphBuilder())
+            var progress = new Recorder<BuildProgress>();
+            await using (var builder = new GraphBuilder { Progress = progress })
             {
                 _solutionGraph = await builder.BuildFromSolutionAllAsync(solutionPath);
+                _solutionPhaseTimings = builder.PhaseTimings;
+                _solutionProjectCount = builder.ProjectCount;
             }
+            _solutionProgress = progress.Values;
 
             // The contrast case: the same web project on its own.
             await using (var builder = new GraphBuilder())
@@ -84,10 +103,14 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
 
             // And without the text-file index, through the MCP tool: the claim covers
             // the build summary as well as the graph, and only the tool writes that.
+            // It also carries a progress listener, standing in for the one the SDK
+            // binds when a client sends a progressToken.
             var noTextStore = new GraphStore();
+            var notifications = new Recorder<ModelContextProtocol.ProgressNotificationValue>();
             _noTextSummary = await new GraphStoreTools(noTextStore)
-                .BuildSolution(solutionPath, graphId: "no-text", excludeText: true);
+                .BuildSolution(solutionPath, graphId: "no-text", excludeText: true, progress: notifications);
             _noTextGraph = noTextStore.Require("no-text").Graph;
+            _noTextNotifications = notifications.Values;
 
             // And for a requested Platform. A real build rather than a stamp check,
             // because the claim is that the value reaches MSBuild, and only the
@@ -135,6 +158,72 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         var projects = _solutionGraph!.NodesOfType(NodeType.Project).Select(p => p.Name).OrderBy(n => n).ToList();
 
         Assert.Equal(new[] { "SampleLib", "SampleWeb", "SampleWeb.Tests" }, projects);
+    }
+
+    // ---- Build progress --------------------------------------------------------
+
+    [Fact]
+    public void Build_ReportsEveryPhase_InPlanOrder_AndTimesEach()
+    {
+        // Consecutive duplicates collapse: a per-project phase reports its start and
+        // then once per project, and the claim here is about the order of phases.
+        var reported = new List<string>();
+        foreach (var step in _solutionProgress!)
+            if (reported.Count == 0 || reported[^1] != step.Phase) reported.Add(step.Phase);
+
+        Assert.Equal(BuildPhases.Solution, reported);
+        Assert.All(_solutionProgress!, step =>
+        {
+            Assert.Equal(BuildPhases.Solution.Count, step.PhaseCount);
+            Assert.Equal(BuildPhases.Solution.ToList().IndexOf(step.Phase) + 1, step.PhaseNumber);
+        });
+        Assert.Equal(BuildPhases.Solution, _solutionPhaseTimings!.Select(t => t.Name));
+        Assert.All(_solutionPhaseTimings!, t => Assert.True(t.Seconds >= 0));
+    }
+
+    [Theory]
+    [InlineData(BuildPhases.Compile)]
+    [InlineData(BuildPhases.CheckErrors)]
+    [InlineData(BuildPhases.Razor)]
+    public void Build_ReportsProjectNofM_WithTheSolutionsProjectCount(string phase)
+    {
+        var steps = _solutionProgress!.Where(s => s.Phase == phase && s.ProjectCount > 0).ToList();
+
+        Assert.Equal(new[] { 1, 2, 3 }, steps.Select(s => s.Project));
+        Assert.All(steps, s => Assert.Equal(3, s.ProjectCount));
+        Assert.Equal(
+            new[] { "SampleLib", "SampleWeb", "SampleWeb.Tests" },
+            steps.Select(s => s.ProjectName).OrderBy(n => n, StringComparer.Ordinal));
+        Assert.Equal(3, _solutionProjectCount);
+    }
+
+    [Fact]
+    public void BuildSolutionTool_ResponseCarriesProjectCountAndPhaseSummary()
+    {
+        using var doc = JsonDocument.Parse(_noTextSummary!);
+        var root = doc.RootElement;
+
+        Assert.Equal(3, root.GetProperty("projectCount").GetInt32());
+        var phases = root.GetProperty("phases").EnumerateArray().ToList();
+        Assert.Equal(BuildPhases.Solution, phases.Select(p => p.GetProperty("name").GetString()));
+        Assert.All(phases, p => Assert.True(p.GetProperty("seconds").GetDouble() >= 0));
+        Assert.True(root.GetProperty("totalSeconds").GetDouble() > 0);
+
+        // A clean build carries no failure field at all: its presence is the signal.
+        Assert.False(root.TryGetProperty("projectFailures", out _));
+    }
+
+    [Fact]
+    public void BuildSolutionTool_ForwardsProgress_StrictlyIncreasing_OutOfThePhaseCount()
+    {
+        var notifications = _noTextNotifications!;
+
+        Assert.NotEmpty(notifications);
+        Assert.All(notifications, n => Assert.Equal(BuildPhases.Solution.Count, n.Total));
+        for (var i = 1; i < notifications.Count; i++)
+            Assert.True(notifications[i].Progress > notifications[i - 1].Progress,
+                $"progress went {notifications[i - 1].Progress} -> {notifications[i].Progress} at '{notifications[i].Message}'");
+        Assert.Contains(notifications, n => n.Message?.StartsWith("phase 2 of 11: compile -- project 3 of 3 (", StringComparison.Ordinal) == true);
     }
 
     [Fact]

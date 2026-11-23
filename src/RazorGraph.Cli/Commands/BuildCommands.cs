@@ -140,13 +140,16 @@ internal static class BuildCommands
             ExcludeLiterals = noLiterals,
             ExcludeText = noText,
             AttributePolicy = policy,
-            Platform = platform
+            Platform = platform,
+            Progress = new StderrProgress()
         };
         var graph = isSolution
             ? await builder.BuildFromSolutionAsync(path.FullName, projectName!, ct)
             : await builder.BuildFromProjectAsync(path.FullName, ct);
 
+        var write = System.Diagnostics.Stopwatch.StartNew();
         await GraphFiles.WriteGraphAsync(graph, outputPath, ct);
+        write.Stop();
 
         ReportLiteralsExcluded(noLiterals);
         ReportText(noText, builder);
@@ -160,7 +163,56 @@ internal static class BuildCommands
         ReportUnresolvedAttributes(builder);
 
         GraphReports.PrintSummary(graph);
+        ReportPhases(builder, write.Elapsed);
+        ReportProjectFailures(builder);
         return 0;
+    }
+
+    /// <summary>
+    /// Each phase as it starts, on stderr: stdout is where results go, and a pipe
+    /// reading the build's stdout should see exactly what it saw before progress
+    /// existed. A first build of a large solution takes minutes, and silence for
+    /// that long reads as a hang.
+    /// </summary>
+    private sealed class StderrProgress : IProgress<BuildProgress>
+    {
+        public void Report(BuildProgress value) =>
+            Console.Error.WriteLine($"[{value.Elapsed.TotalSeconds,6:0.0}s] {value}");
+    }
+
+    /// <summary>
+    /// Where the time went, last, on stderr beside the progress it summarises.
+    /// Writing the graph file is the CLI's own phase, so it is timed here and
+    /// added to the extractor's.
+    /// </summary>
+    private static void ReportPhases(GraphBuilder builder, TimeSpan write)
+    {
+        var phases = builder.PhaseTimings
+            .Append(new BuildPhaseTiming("write graph", Math.Round(write.TotalSeconds, 3)))
+            .ToList();
+        var width = phases.Max(p => p.Name.Length);
+
+        Console.Error.WriteLine(
+            $"Phases ({phases.Sum(p => p.Seconds):0.0}s total, {builder.ProjectCount} project(s)):");
+        foreach (var phase in phases)
+            Console.Error.WriteLine($"  {phase.Name.PadRight(width)}  {phase.Seconds,7:0.00}s");
+    }
+
+    /// <summary>
+    /// A project that did not load or compile still leaves a graph -- of what did --
+    /// so it has to say so, or the graph's missing rows read as missing code. Last,
+    /// so it is the final thing on the screen, and on stderr with the other
+    /// warnings. Root failures lead; see RoslynExtractor.ProjectFailures.
+    /// </summary>
+    private static void ReportProjectFailures(GraphBuilder builder)
+    {
+        if (builder.ProjectFailures.Count == 0) return;
+
+        Console.Error.WriteLine(
+            "warning: the solution did not build cleanly, so this graph is partial -- " +
+            "it holds what loaded and bound, and is missing edges through the failures below:");
+        foreach (var failure in builder.ProjectFailures)
+            Console.Error.WriteLine($"  {failure}");
     }
 
     /// <summary>
@@ -295,11 +347,14 @@ internal static class BuildCommands
             ExcludeLiterals = noLiterals,
             ExcludeText = noText,
             AttributePolicy = policy,
-            Platform = platform
+            Platform = platform,
+            Progress = new StderrProgress()
         };
         var graph = await builder.BuildFromSolutionAllAsync(path.FullName, ct);
 
+        var write = System.Diagnostics.Stopwatch.StartNew();
         await GraphFiles.WriteGraphAsync(graph, outputPath, ct);
+        write.Stop();
 
         var projects = graph.NodesOfType(NodeType.Project).Select(p => p.Name).OrderBy(n => n).ToList();
         if (projects.Count > 0)
@@ -316,6 +371,8 @@ internal static class BuildCommands
 
         GraphReports.PrintSummary(graph);
         GraphReports.PrintEdgeSummary(graph);
+        ReportPhases(builder, write.Elapsed);
+        ReportProjectFailures(builder);
         return 0;
     }
 }

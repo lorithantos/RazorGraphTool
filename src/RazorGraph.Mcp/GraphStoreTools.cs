@@ -16,7 +16,7 @@ using RazorGraph.Lua;
 internal sealed class GraphStoreTools(GraphStore store)
 {
     [McpServerTool(Name = "build_graph")]
-    [Description("Build a code graph from one ASP.NET Core Razor project (.csproj), or one project inside a solution. Slow (compiles the project). To graph a whole solution with edges that cross project boundaries, use build_solution instead. Returns a summary with node/edge counts by type.")]
+    [Description("Build a code graph from one ASP.NET Core Razor project (.csproj), or one project inside a solution. Slow (compiles the project). To graph a whole solution with edges that cross project boundaries, use build_solution instead. Returns a summary with node/edge counts by type, per-phase timings as phases, and projectFailures when the project did not load or compile cleanly. Sends progress notifications when the request carries a progressToken.")]
     public async Task<string> BuildGraph(
         [Description("Absolute path to a .csproj, .sln, or .slnx file")] string path,
         [Description("Project name inside the solution; required when path is a solution")] string? projectName = null,
@@ -26,6 +26,7 @@ internal sealed class GraphStoreTools(GraphStore store)
         [Description("Absolute path to an attribute-policy JSON overriding the embedded default (classification name sets, argument-payload suppression, registration vocabulary). Sections the file omits are inherited.")] string? attributePolicy = null,
         [Description(PlatformDescription)] string? platform = null,
         [Description(ExcludeTextDescription)] bool excludeText = false,
+        IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken ct = default)
     {
         var full = Path.GetFullPath(path);
@@ -43,7 +44,8 @@ internal sealed class GraphStoreTools(GraphStore store)
             ExcludeLiterals = excludeLiterals,
             ExcludeText = excludeText,
             AttributePolicy = LoadPolicy(attributePolicy),
-            Platform = platform
+            Platform = platform,
+            Progress = BuildProgressNotifications.Forward(progress)
         };
         var graph = isSolution
             ? await builder.BuildFromSolutionAsync(full, projectName!, ct)
@@ -52,7 +54,19 @@ internal sealed class GraphStoreTools(GraphStore store)
         return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries,
             unboundShapes: builder.UnboundShapes, unresolvedAttributes: builder.UnresolvedAttributes,
             analyzerHostWarnings: builder.AnalyzerHostWarnings, literalsExcluded: excludeLiterals,
-            textExcluded: excludeText, textFileSkips: builder.TextFileSkips);
+            textExcluded: excludeText, textFileSkips: builder.TextFileSkips, build: BuildReport.From(builder));
+    }
+
+    /// <summary>
+    /// What a build response says about the build itself rather than the graph:
+    /// how many projects it was asked for, where the time went, and which
+    /// projects failed. Present on build responses only -- a loaded graph's build
+    /// happened somewhere else and this server cannot vouch for it.
+    /// </summary>
+    private sealed record BuildReport(int ProjectCount, IReadOnlyList<BuildPhaseTiming> Phases, IReadOnlyList<string> ProjectFailures)
+    {
+        public static BuildReport From(GraphBuilder builder) =>
+            new(builder.ProjectCount, builder.PhaseTimings, builder.ProjectFailures);
     }
 
     /// <summary>
@@ -83,7 +97,7 @@ internal sealed class GraphStoreTools(GraphStore store)
         "and platformFrom (requested, environment or projectDefault).";
 
     [McpServerTool(Name = "build_solution")]
-    [Description("Build ONE graph spanning every project in a solution (.sln/.slnx). Unlike build_graph, calls and injections that cross project boundaries become real edges — this is what makes \"which tests cover this method\" and \"what breaks if I change this\" answerable. Adds Project nodes, per-node project attribution, and Covers edges from test methods to the code they exercise. Slower than build_graph: it compiles every project.")]
+    [Description("Build ONE graph spanning every project in a solution (.sln/.slnx). Unlike build_graph, calls and injections that cross project boundaries become real edges — this is what makes \"which tests cover this method\" and \"what breaks if I change this\" answerable. Adds Project nodes, per-node project attribution, and Covers edges from test methods to the code they exercise. Slower than build_graph: it compiles every project. Sends progress notifications (phase, and project N of M) when the request carries a progressToken; the response always carries projectCount, per-phase timings as phases, and projectFailures naming any project that did not load or compile, with its first errors -- the graph is still built from what did.")]
     public async Task<string> BuildSolution(
         [Description("Absolute path to a .sln or .slnx file")] string path,
         [Description("Id to file the result under. Defaults to the solution file name.")] string? graphId = null,
@@ -93,6 +107,7 @@ internal sealed class GraphStoreTools(GraphStore store)
         [Description("Absolute path to an attribute-policy JSON overriding the embedded default (classification name sets, argument-payload suppression, registration vocabulary). Sections the file omits are inherited.")] string? attributePolicy = null,
         [Description(PlatformDescription)] string? platform = null,
         [Description(ExcludeTextDescription)] bool excludeText = false,
+        IProgress<ProgressNotificationValue>? progress = null,
         CancellationToken ct = default)
     {
         var full = Path.GetFullPath(path);
@@ -107,14 +122,15 @@ internal sealed class GraphStoreTools(GraphStore store)
             ExcludeLiterals = excludeLiterals,
             ExcludeText = excludeText,
             AttributePolicy = LoadPolicy(attributePolicy),
-            Platform = platform
+            Platform = platform,
+            Progress = BuildProgressNotifications.Forward(progress)
         };
         var graph = await builder.BuildFromSolutionAllAsync(full, ct);
 
         return Summarize(store.Add(graph, full, graphId), builder.AssetSkipSummaries, builder.SkippedTestProjects,
             builder.UnboundShapes, unresolvedAttributes: builder.UnresolvedAttributes,
             analyzerHostWarnings: builder.AnalyzerHostWarnings, literalsExcluded: excludeLiterals,
-            textExcluded: excludeText, textFileSkips: builder.TextFileSkips);
+            textExcluded: excludeText, textFileSkips: builder.TextFileSkips, build: BuildReport.From(builder));
     }
 
     /// <summary>
@@ -273,7 +289,8 @@ internal sealed class GraphStoreTools(GraphStore store)
         IReadOnlyList<string>? analyzerHostWarnings = null,
         bool literalsExcluded = false,
         bool textExcluded = false,
-        IReadOnlyList<string>? textFileSkips = null)
+        IReadOnlyList<string>? textFileSkips = null,
+        BuildReport? build = null)
     {
         var graph = entry.Graph;
         // Grouped by display kind, so a foreign vocabulary is censused under its
@@ -306,9 +323,20 @@ internal sealed class GraphStoreTools(GraphStore store)
             // only a load has something to report.
             formatVersion = format?.Display,
             formatCaveat = format?.Caveat,
+            // Before the counts, so a reader meets it first: a partial graph's counts
+            // are smaller for a reason, and this is the reason. Root failures lead,
+            // each project named with its first few errors as file:line.
+            projectFailures = build?.ProjectFailures is { Count: > 0 } failures ? failures : null,
             nodes = graph.Nodes.Count,
             edges = graph.Edges.Count,
+            // The M of "project N of M": projects the build was asked for, counting
+            // any it skipped, where projects lists the ones the graph holds.
+            projectCount = build?.ProjectCount,
             projects = projects.Count > 0 ? projects : null,
+            // Where the build's time went, in the order the phases ran. A first build
+            // of a large solution is slow, and this says which part was slow.
+            totalSeconds = build is null ? (double?)null : Math.Round(build.Phases.Sum(p => p.Seconds), 3),
+            phases = build?.Phases,
             nodeCounts,
             edgeCounts,
             // Present only on build responses that dropped vendor assets: a

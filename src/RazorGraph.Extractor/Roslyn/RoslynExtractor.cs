@@ -132,32 +132,50 @@ public sealed class RoslynExtractor : IAsyncDisposable
         ? MSBuildWorkspace.Create(new Dictionary<string, string> { ["Platform"] = platform })
         : MSBuildWorkspace.Create();
 
+    /// <summary>
+    /// Where this session's phases are timed and announced. Set by GraphBuilder
+    /// before a load; null, as for a bare extractor, times and announces nothing.
+    /// </summary>
+    internal BuildClock? Clock { get; set; }
+
     public async Task<Compilation> LoadProjectAsync(string projectPath, CancellationToken ct = default)
     {
+        Clock?.Begin(BuildPhases.LoadProject);
         _workspace = CreateWorkspace();
         var project = await _workspace.OpenProjectAsync(projectPath, cancellationToken: ct);
+        RecordLoadFailures(project.Solution);
+
+        Clock?.Begin(BuildPhases.Compile);
+        Clock?.Project(1, 1, project.Name);
         WatchAnalyzerHost(project);
         var compilation = await project.GetCompilationAsync(ct)
             ?? throw new InvalidOperationException($"Failed to compile project: {projectPath}");
 
         _loaded.Clear();
         _loaded.Add(new LoadedProject(project, compilation));
+        RecordCompileErrors(ct);
         return compilation;
     }
 
     public async Task<Compilation> LoadSolutionAsync(string solutionPath, string projectName, CancellationToken ct = default)
     {
+        Clock?.Begin(BuildPhases.LoadProject);
         _workspace = CreateWorkspace();
         Solution = await _workspace.OpenSolutionAsync(solutionPath, cancellationToken: ct);
+        RecordLoadFailures(Solution);
         var project = Solution.Projects.FirstOrDefault(p =>
             p.Name.Equals(projectName, StringComparison.OrdinalIgnoreCase))
             ?? throw new InvalidOperationException($"Project '{projectName}' not found in solution.");
+
+        Clock?.Begin(BuildPhases.Compile);
+        Clock?.Project(1, 1, project.Name);
         WatchAnalyzerHost(project);
         var compilation = await project.GetCompilationAsync(ct)
             ?? throw new InvalidOperationException($"Failed to compile project: {projectName}");
 
         _loaded.Clear();
         _loaded.Add(new LoadedProject(project, compilation));
+        RecordCompileErrors(ct);
         return compilation;
     }
 
@@ -170,14 +188,20 @@ public sealed class RoslynExtractor : IAsyncDisposable
     public async Task<IReadOnlyList<LoadedProject>> LoadAllProjectsAsync(
         string solutionPath, bool excludeTestProjects = false, CancellationToken ct = default)
     {
+        Clock?.Begin(BuildPhases.LoadSolution);
         _workspace = CreateWorkspace();
         Solution = await _workspace.OpenSolutionAsync(solutionPath, cancellationToken: ct);
+        RecordLoadFailures(Solution);
 
+        Clock?.Begin(BuildPhases.Compile);
         _loaded.Clear();
         _skippedTestProjects.Clear();
-        foreach (var project in Solution.Projects)
+        var projects = Solution.Projects.ToList();
+        for (var i = 0; i < projects.Count; i++)
         {
+            var project = projects[i];
             ct.ThrowIfCancellationRequested();
+            Clock?.Project(i + 1, projects.Count, project.Name);
 
             // The test decision is made from metadata references, before the
             // compile — skipping the compile is the point of excluding. Skips
@@ -199,6 +223,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
             if (compilation == null)
             {
                 Console.Error.WriteLine($"Warning: no compilation for project '{project.Name}'; skipped.");
+                FailureFor(project, project.Name).Headers.Add("produced no compilation, so it is not in the graph");
                 continue;
             }
 
@@ -208,7 +233,162 @@ public sealed class RoslynExtractor : IAsyncDisposable
         if (_loaded.Count == 0)
             throw new InvalidOperationException($"No project in '{solutionPath}' produced a compilation.");
 
+        RecordCompileErrors(ct);
         return _loaded;
+    }
+
+    /// <summary>
+    /// Projects that did not load or did not compile cleanly: a header line per
+    /// project and then its first few errors as file:line, every line prefixed with
+    /// the project's name. Empty is a clean build. Partial is still a graph --
+    /// what gets built is unchanged -- but a partial graph that does not say so
+    /// answers "who calls this" with fewer rows and no hint that rows are missing.
+    /// </summary>
+    /// <remarks>
+    /// Root failures come first. A project that references another failing
+    /// project says so in its header, because its errors may be that project's
+    /// missing types arriving downstream rather than anything wrong in its own
+    /// source. That is a statement about references, which the solution knows,
+    /// not a verdict on each error, which it does not.
+    /// </remarks>
+    internal IReadOnlyList<string> ProjectFailures => FormatFailures();
+
+    private readonly List<ProjectFailure> _failures = new();
+
+    /// <summary>One failing project: what went wrong, and the lines that show it.</summary>
+    private sealed class ProjectFailure(Project? project, string name)
+    {
+        public Project? Project { get; } = project;
+        public string Name { get; } = name;
+        public List<string> Headers { get; } = new();
+        public List<string> Details { get; } = new();
+    }
+
+    private ProjectFailure FailureFor(Project? project, string name)
+    {
+        var existing = _failures.FirstOrDefault(f => f.Name == name);
+        if (existing != null) return existing;
+        var created = new ProjectFailure(project, name);
+        _failures.Add(created);
+        return created;
+    }
+
+    /// <summary>How many errors to list per failing project. The count is always given in full.</summary>
+    internal const int ErrorsListedPerProject = 3;
+
+    private const string DidNotLoad = "did not load, so none of its code is in the graph";
+
+    private List<string> FormatFailures()
+    {
+        var failingIds = _failures.Where(f => f.Project != null).Select(f => f.Project!.Id).ToHashSet();
+
+        var rows = _failures.Select(f =>
+        {
+            var upstream = f.Project is { } p
+                ? p.Solution.GetProjectDependencyGraph().GetProjectsThatThisProjectTransitivelyDependsOn(p.Id)
+                    .Where(failingIds.Contains)
+                    .Select(id => p.Solution.GetProject(id)?.Name ?? id.ToString())
+                    .OrderBy(n => n, StringComparer.Ordinal)
+                    .ToList()
+                : new List<string>();
+            return (Failure: f, Upstream: upstream);
+        });
+
+        var lines = new List<string>();
+        // Roots first; OrderBy is stable, so within each group the build's own order holds.
+        foreach (var (failure, upstream) in rows.OrderBy(r => r.Upstream.Count > 0))
+        {
+            var header = string.Join("; ", failure.Headers);
+            if (upstream.Count > 0)
+                header += $"; it references {string.Join(", ", upstream)}, which also failed, so these errors " +
+                    "may follow from that rather than from its own source";
+            lines.Add($"{failure.Name}: {header}.");
+            lines.AddRange(failure.Details.Select(d => $"{failure.Name}: {d}"));
+        }
+        return lines;
+    }
+
+    /// <summary>
+    /// The workspace's own load failures. MSBuildWorkspace does not throw for a
+    /// project it cannot evaluate: it logs the failure here and leaves the project
+    /// in the solution with no documents, so it compiles to nothing and reads as
+    /// a project with no code. Matched back to a project by its file path in the
+    /// message, which is where MSBuild puts it.
+    /// </summary>
+    /// <remarks>
+    /// Failure is not proof of failure: the workspace files MSBuild warnings under
+    /// it too (eShopOnWeb's NuGet vulnerability warnings, NU1902/NU1903, arrive as
+    /// "Msbuild failed when processing the file" on projects that loaded whole). So
+    /// a project counts as not loaded only when it also came out with no documents,
+    /// which is what a real load failure leaves behind.
+    /// </remarks>
+    private void RecordLoadFailures(Solution solution)
+    {
+        if (_workspace is null) return;
+
+        foreach (var diagnostic in _workspace.Diagnostics.Where(d => d.Kind == WorkspaceDiagnosticKind.Failure))
+        {
+            var owner = solution.Projects.FirstOrDefault(p =>
+                p.FilePath is { } path && diagnostic.Message.Contains(path, StringComparison.OrdinalIgnoreCase));
+            if (owner is { DocumentIds.Count: > 0 }) continue;
+            // Unowned is a project the solution names but the workspace never made:
+            // a C# project whose file is missing is a failure, while a project type
+            // with no language (eShopOnWeb's docker-compose.dcproj) was never going
+            // to be graphed and is skipped by design.
+            if (owner is null && !diagnostic.Message.Contains(".csproj", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var failure = FailureFor(owner, owner?.Name ?? "(solution)");
+            if (!failure.Headers.Contains(DidNotLoad)) failure.Headers.Add(DidNotLoad);
+            // Once each: MSBuild repeats the failure for every project that references the broken one.
+            if (!failure.Details.Contains(diagnostic.Message)) failure.Details.Add(diagnostic.Message);
+        }
+    }
+
+    /// <summary>
+    /// The compile errors of every loaded project, timed as a phase of its own.
+    /// GetCompilationAsync succeeds on code that does not compile -- a compilation
+    /// with errors is still a compilation -- so without this a broken project
+    /// yields a quietly thinner graph. Asking costs a full bind of every method
+    /// body, which is why it is its own phase in the timings: that cost is visible
+    /// rather than folded into compile.
+    /// </summary>
+    private void RecordCompileErrors(CancellationToken ct)
+    {
+        Clock?.Begin(BuildPhases.CheckErrors);
+        for (var i = 0; i < _loaded.Count; i++)
+        {
+            var loaded = _loaded[i];
+            Clock?.Project(i + 1, _loaded.Count, loaded.Name);
+
+            // A project that did not load compiles from no documents, so its
+            // "errors" are only that emptiness (an exe with no Main) and would
+            // bury the load failure that explains them.
+            if (_failures.Any(f => f.Name == loaded.Name && f.Headers.Contains(DidNotLoad))) continue;
+
+            var errors = loaded.Compilation.GetDiagnostics(ct)
+                .Where(d => d.Severity == DiagnosticSeverity.Error)
+                .Select(d => (Diagnostic: d, Span: d.Location.GetMappedLineSpan()))
+                .OrderBy(e => e.Span.Path, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(e => e.Span.StartLinePosition.Line)
+                .ToList();
+            if (errors.Count == 0) continue;
+
+            var failure = FailureFor(loaded.Project, loaded.Name);
+            failure.Headers.Add($"{errors.Count} compile error(s), the graph holds what Roslyn could bind of it");
+            var projectDir = loaded.FilePath is { } file ? Path.GetDirectoryName(file) : null;
+            foreach (var (diagnostic, span) in errors.Take(ErrorsListedPerProject))
+                failure.Details.Add(DescribeError(diagnostic, span, projectDir));
+        }
+    }
+
+    /// <summary>file:line: id: message, the path relative to the project when it lives inside it.</summary>
+    private static string DescribeError(Diagnostic diagnostic, FileLinePositionSpan span, string? projectDir)
+    {
+        var message = diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+        if (!span.IsValid || string.IsNullOrEmpty(span.Path)) return $"{diagnostic.Id}: {message}";
+
+        var path = projectDir != null ? Path.GetRelativePath(projectDir, span.Path) : span.Path;
+        return $"{path}:{span.StartLinePosition.Line + 1}: {diagnostic.Id}: {message}";
     }
 
     /// <summary>Test projects skipped by the most recent load, empty unless exclusion was asked for.</summary>

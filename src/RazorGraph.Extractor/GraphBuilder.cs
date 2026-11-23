@@ -188,6 +188,39 @@ public sealed class GraphBuilder : IAsyncDisposable
     public IReadOnlyList<string> AnalyzerHostWarnings => _roslyn.AnalyzerHostWarnings;
 
     /// <summary>
+    /// Told as each phase starts, and as each project starts inside the phases
+    /// that walk the solution a project at a time. Reports arrive synchronously on
+    /// the build's thread, in order. Null, the default, tells no one; the phases
+    /// are timed either way.
+    /// </summary>
+    public IProgress<BuildProgress>? Progress { get; set; }
+
+    private BuildClock? _clock;
+
+    /// <summary>How long each phase of the last build took, in the order they ran. Empty before a build.</summary>
+    public IReadOnlyList<BuildPhaseTiming> PhaseTimings => _clock?.Timings ?? [];
+
+    /// <summary>
+    /// Projects in the solution (or the one project) the last build was asked to
+    /// graph -- the M of "project N of M", counting test projects a --no-tests
+    /// build skipped.
+    /// </summary>
+    public int ProjectCount { get; private set; }
+
+    /// <summary>
+    /// Projects that did not load or did not compile cleanly, root failures first,
+    /// each named with its first few errors as file:line. The graph is still built
+    /// from what did load; this is what makes that partial graph say it is one.
+    /// </summary>
+    public IReadOnlyList<string> ProjectFailures => _roslyn.ProjectFailures;
+
+    private void StartClock(IReadOnlyList<string> plan)
+    {
+        _clock = new BuildClock(plan, Progress);
+        _roslyn.Clock = _clock;
+    }
+
+    /// <summary>
     /// The attribute policy for this build — classification name sets and
     /// argument-payload suppression as data. Defaults to the embedded shipped
     /// policy; set it from AttributePolicy.LoadFile to override without a
@@ -208,7 +241,9 @@ public sealed class GraphBuilder : IAsyncDisposable
         var projectDir = Path.GetDirectoryName(Path.GetFullPath(projectPath))
             ?? throw new ArgumentException("Invalid project path", nameof(projectPath));
 
+        StartClock(BuildPhases.Project);
         await _roslyn.LoadProjectAsync(projectPath, ct);
+        ProjectCount = 1;
         _graph.Source = Path.GetFullPath(projectPath);
         StampPlatform();
         return BuildGraph(projectDir);
@@ -216,7 +251,9 @@ public sealed class GraphBuilder : IAsyncDisposable
 
     public async Task<CodeGraph> BuildFromSolutionAsync(string solutionPath, string projectName, CancellationToken ct = default)
     {
+        StartClock(BuildPhases.Project);
         await _roslyn.LoadSolutionAsync(solutionPath, projectName, ct);
+        ProjectCount = 1;
 
         var projectFile = _roslyn.ProjectFilePath
             ?? throw new InvalidOperationException($"Project '{projectName}' has no file path.");
@@ -241,7 +278,9 @@ public sealed class GraphBuilder : IAsyncDisposable
     /// </summary>
     public async Task<CodeGraph> BuildFromSolutionAllAsync(string solutionPath, CancellationToken ct = default)
     {
+        StartClock(BuildPhases.Solution);
         await _roslyn.LoadAllProjectsAsync(solutionPath, ExcludeTestProjects, ct);
+        ProjectCount = _roslyn.Solution?.Projects.Count() ?? _roslyn.LoadedProjects.Count;
         _graph.Source = Path.GetFullPath(solutionPath);
         StampPlatform();
         return BuildSolutionGraph();
@@ -250,8 +289,11 @@ public sealed class GraphBuilder : IAsyncDisposable
     private CodeGraph BuildGraph(string projectDir)
     {
         BuildRoslynLayer();
+        _clock?.Begin(BuildPhases.Razor);
+        _clock?.Project(1, 1, _roslyn.LoadedProjects[0].Name);
         _razorLayer.BuildRazorLayer(projectDir, idScope: null, _roslyn.Compilation, _symbols, IncludeVendorAssets);
         _xamlLayer.AddXamlLayer(projectDir, idScope: null);
+        _clock?.Begin(BuildPhases.Links);
         _razorLayer.AddGeneratedClassLinks(_symbols);
         _razorLayer.AddBindingEdges(
             _roslyn.ExtractViewCalls().ToList(),
@@ -259,7 +301,9 @@ public sealed class GraphBuilder : IAsyncDisposable
             _roslyn.ExtractActionMethods().ToList());
         // A single-project graph, even one loaded from a solution, is rooted at the
         // project: the rest of the solution's text is not this graph's to hold.
+        _clock?.Begin(BuildPhases.TextFiles);
         AddTextFiles(projectDir);
+        _clock?.Finish();
         return _graph;
     }
 
@@ -285,8 +329,12 @@ public sealed class GraphBuilder : IAsyncDisposable
     {
         BuildRoslynLayer();
 
-        foreach (var loaded in _roslyn.LoadedProjects)
+        _clock?.Begin(BuildPhases.Razor);
+        var loadedProjects = _roslyn.LoadedProjects;
+        for (var i = 0; i < loadedProjects.Count; i++)
         {
+            var loaded = loadedProjects[i];
+            _clock?.Project(i + 1, loadedProjects.Count, loaded.Name);
             if (loaded.FilePath == null) continue;
             var projectDir = Path.GetDirectoryName(Path.GetFullPath(loaded.FilePath));
             if (projectDir == null) continue;
@@ -295,6 +343,7 @@ public sealed class GraphBuilder : IAsyncDisposable
             _xamlLayer.AddXamlLayer(projectDir, loaded.Name);
         }
 
+        _clock?.Begin(BuildPhases.Links);
         _razorLayer.AddGeneratedClassLinks(_symbols);
 
         // Projects before bindings: a view name resolves against the referencing
@@ -313,8 +362,11 @@ public sealed class GraphBuilder : IAsyncDisposable
             _roslyn.ExtractShapeNames().ToList(),
             _roslyn.ExtractActionMethods().ToList());
 
+        _clock?.Begin(BuildPhases.Coverage);
         _coverage.AddCoverageEdges();
+        _clock?.Begin(BuildPhases.TextFiles);
         AddTextFiles(Path.GetDirectoryName(_graph.Source!)!);
+        _clock?.Finish();
         return _graph;
     }
 
@@ -325,6 +377,7 @@ public sealed class GraphBuilder : IAsyncDisposable
     /// </summary>
     private void BuildRoslynLayer()
     {
+        _clock?.Begin(BuildPhases.Symbols);
         var symbols = _roslyn.ExtractSymbols().ToList();
         _symbols.AddRange(symbols);
 
@@ -353,6 +406,7 @@ public sealed class GraphBuilder : IAsyncDisposable
             _declarations.AddAttributeEdges(sym);
         }
 
+        _clock?.Begin(BuildPhases.Calls);
         _usage.AddCallEdges(_roslyn.ExtractCallSites(), _declarations.TypeIdFor);
         _declarations.AddConstructsEdges(_roslyn.ExtractConstructionSites());
         _usage.AddMemberAccessEdges(_roslyn.ExtractMemberAccesses());
@@ -368,6 +422,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         // After every declaration is a node: the name index a quoted string is
         // matched against is built from the graph, so anything emitted later
         // would be invisible to it.
+        _clock?.Begin(BuildPhases.Literals);
         var quotedNames = _roslyn.ExtractQuotedNames().ToList();
         _usage.AddQuotesEdges(quotedNames);
         // Second, and never first: AddQuotesEdges reads the graph's own names to
@@ -376,6 +431,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         // safe, but there is no reason to make the order argue with the guard.
         if (!ExcludeLiterals) _usage.AddMentionsEdges(quotedNames);
         _usage.AddCallbackEntryPoints(_roslyn.ExtractCallbackTargets());
+        _clock?.Begin(BuildPhases.Escapes);
         _escapes.AddExceptionEscapeEdges(_declarations.MethodThrows);
     }
 
