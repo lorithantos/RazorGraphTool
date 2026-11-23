@@ -105,12 +105,16 @@ public static class GraphOutput
                 // -q: exit code carries the answer, so nothing has to be parsed.
                 ArgumentList = { "check-ignore", "-q", fullPath },
                 WorkingDirectory = repositoryRoot,
+                // Never inherit stdin: under the stdio MCP transport it is the server's own pipe,
+                // and git for Windows blocks on it at startup (see SourceFiles.GitListFiles).
+                RedirectStandardInput = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
             });
 
             if (process is null) return null;
+            process.StandardInput.Close();
 
             // Bounded: git answers this in milliseconds, and an analysis tool must not hang on
             // an advisory check. A timeout is treated as "could not answer", so we still advise.

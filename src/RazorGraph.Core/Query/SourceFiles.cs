@@ -126,6 +126,10 @@ public static class SourceFiles
             {
                 // Run IN the folder: ls-files then lists only what is beneath it, relative to it.
                 WorkingDirectory = folder,
+                // Never inherit stdin. Under the stdio MCP transport it is the server's own pipe,
+                // with a read pending on it, and git for Windows blocks on that handle at startup
+                // until the client closes the pipe: build_solution over stdio never returned.
+                RedirectStandardInput = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 StandardOutputEncoding = Encoding.UTF8,
@@ -137,6 +141,7 @@ public static class SourceFiles
 
             using var process = Process.Start(start);
             if (process is null) return null;
+            process.StandardInput.Close();
 
             // Drain stderr concurrently: a full pipe on either stream blocks git forever.
             var stderr = process.StandardError.ReadToEndAsync();
