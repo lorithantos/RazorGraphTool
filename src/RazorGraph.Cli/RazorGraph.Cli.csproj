@@ -7,6 +7,13 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <PropertyGroup Label="Global tool">
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>razorgraph</ToolCommandName>
+    <PackageId>RazorGraph.Cli</PackageId>
+    <Description>Command line for RazorGraph: builds a queryable code graph of a .NET project or solution from the compiler's own model, saves it as JSON, and queries it.</Description>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="System.CommandLine" Version="2.0.10" />
     <!-- MSBuild assemblies must come from the locator-resolved SDK at runtime, never the output dir (MSBL001). -->

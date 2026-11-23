@@ -23,6 +23,88 @@ survive review. This exposes the compiler's model instead.
 | Lua | Modules, functions, `require` / `import` references | Loretta syntax trees, in `build_lua` / `build-lua`; no compile step |
 | Every other text file | One `TextFile` node per file, carrying its lines for `grep` | File read; tracked files only in a git tree |
 
+## Install
+
+You build RazorGraph from source, and that is the design. Clone it and read it before you
+run it, or have your own agent read it: it compiles your solution, starts MSBuild and git,
+and hands what it finds to a model, which is reach worth checking for anything hostile.
+Then build it yourself.
+
+You need the .NET 10 SDK, and git on PATH (it lists a repository's files; without it a
+directory walk stands in). Built and tested on Windows 11. Untested on Linux and macOS:
+the environment rebuild described under [Use it from Claude Code](#use-it-from-claude-code)
+reads the Windows registry and is skipped there, leaving the server with whatever
+environment its client started it with, and the `.exe` names in this README are Windows'.
+
+**1. Build its one unpublished dependency.** `RazorGraph.Mcp` references
+`Janet.Mcp.Security` (the loopback guard and bearer check behind `--http`), which lives in
+[Janet.Shared](https://github.com/lorithantos/Janet.Shared) and is restored from the local
+feed `..\.packages` that `nuget.config` names. Clone and read that too, beside this repo,
+and pack that one project into the feed. From the folder that holds both clones:
+
+```bash
+git clone https://github.com/lorithantos/Janet.Shared
+dotnet pack Janet.Shared/src/Janet.Mcp.Security -c Release -o .packages
+```
+
+```
+<parent>/
+  RazorGraphTool/
+  Janet.Shared/
+  .packages/          Janet.Mcp.Security.<version>.nupkg
+```
+
+The version it packs must be the one `src/RazorGraph.Mcp/RazorGraph.Mcp.csproj` references.
+Pack the one project rather than the whole Janet.Shared solution, whose WPF libraries
+target `net10.0-windows`. `nuget.config` names the feed for every project here, so create
+it before the first restore.
+
+**2. Put your build on PATH.** Pack the server and the CLI as .NET tools and install them
+from the folder you packed into, so client config is a bare command name rather than a
+path on your machine:
+
+```bash
+cd RazorGraphTool
+dotnet pack src/RazorGraph.Mcp -c Release -o ../razorgraph-tools
+dotnet pack src/RazorGraph.Cli -c Release -o ../razorgraph-tools
+dotnet tool install -g --add-source ../razorgraph-tools RazorGraph.Mcp   # -> razorgraph-mcp
+dotnet tool install -g --add-source ../razorgraph-tools RazorGraph.Cli   # -> razorgraph
+```
+
+Every pack is version 1.0.0 unless told otherwise, so to install a later build give it a
+version of its own and update to it: `dotnet pack ... -p:PackageVersion=1.0.1`, then
+`dotnet tool update -g --add-source ../razorgraph-tools RazorGraph.Mcp --version 1.0.1`.
+The other route, `dotnet publish` to a folder and run the executable from there, is under
+[Use it from Claude Code](#use-it-from-claude-code).
+
+**3. Connect a client.** With no flags `razorgraph-mcp` speaks stdio: the client starts it
+and owns the process, and there is no port and no token, since the bearer check applies
+only under `--http`.
+
+Claude Code, `.mcp.json` in your project root:
+
+```json
+{
+  "mcpServers": {
+    "razorgraph": { "type": "stdio", "command": "razorgraph-mcp", "args": [] }
+  }
+}
+```
+
+VS Code, `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "razorgraph": { "type": "stdio", "command": "razorgraph-mcp", "args": [] }
+  }
+}
+```
+
+Then ask the agent to `build_solution` your `.sln` or `.slnx`. The CLI does the same from a
+terminal: `razorgraph build-solution path/to/App.sln -o solution-graph.json`, which is the
+`dotnet run --project src/RazorGraph.Cli --` of the Quick start, installed.
+
 ## Quick start
 
 ```bash
@@ -65,7 +147,8 @@ dotnet run --project src/RazorGraph.Cli -- research graph.json --focus "page:Pag
 
 ## Use it from Claude Code
 
-`.mcp.json` in the repo root points the session at an HTTP server on port 7718. Publish a
+This is the development path, for working on RazorGraph rather than with it; to use it, see
+[Install](#install). `.mcp.json` in the repo root points the session at an HTTP server on port 7718. Publish a
 copy and start it once; every session on the machine then shares it, and it survives being
 killed and rebuilt while a session stays open:
 

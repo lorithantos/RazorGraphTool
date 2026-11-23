@@ -7,6 +7,13 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <PropertyGroup Label="Global tool">
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>razorgraph-mcp</ToolCommandName>
+    <PackageId>RazorGraph.Mcp</PackageId>
+    <Description>MCP server over a queryable code graph of a .NET solution, built from the compiler's own model. Speaks stdio by default; --http serves one shared server for the development loop. Installing as a global tool puts it on PATH, so client config is a bare command name rather than a machine-specific absolute path.</Description>
+  </PropertyGroup>
+
   <ItemGroup>
     <!-- WebApplication for the HTTP transport, without switching to the Web SDK. -->
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
