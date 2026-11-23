@@ -575,15 +575,37 @@ public sealed class GraphQuery
     /// answer, not an empty one: every method would read as uncovered, which
     /// is the absence-of-data-as-finding trap. Refusing loudly is the same
     /// contract as the escapes guard in the MCP layer. Fires for graphs built
-    /// single-project or with tests excluded (--no-tests / excludeTests).
+    /// single-project or with tests excluded (--no-tests / excludeTests), and
+    /// for graphs built before a test project was restored: its [Fact] never
+    /// binds, so nothing is a test. That third cause is the likeliest on a fresh
+    /// clone, and the graph records it, so the refusal names those projects
+    /// rather than guessing at the other two.
     /// </summary>
     private void RequireTestMethods(string operation)
     {
-        if (!_graph.NodesOfType(NodeType.Method).Any(m => m.GetProperty<bool>("isTest")))
-            throw new InvalidOperationException(
+        if (_graph.NodesOfType(NodeType.Method).Any(m => m.GetProperty<bool>("isTest"))) return;
+
+        var restore = _graph.Source is { } source ? $"dotnet restore \"{source}\"" : "dotnet restore";
+        throw new InvalidOperationException(_graph.UnrestoredProjects switch
+        {
+            { Count: > 0 } unrestored =>
+                $"{operation} needs a graph containing test methods, and this graph has none. "
+                + $"Likely cause: {string.Join(", ", unrestored)} had no project.assets.json when this "
+                + "graph was built — never restored — so a test project's test attributes ([Fact], "
+                + "[Test], ...) did not bind and no method was recognised as a test. Every method would "
+                + $"read as uncovered, so refusing to answer. Run {restore}, then rebuild the graph.",
+            null =>
+                $"{operation} needs a graph containing test methods, and this graph has none — "
+                + "built from a single project, or with tests excluded? Or a test project was not "
+                + "restored when it was built, so its test attributes did not bind; this graph "
+                + "predates the record of unrestored projects, so it cannot say which. Every method "
+                + "would read as uncovered, so refusing to answer. Rebuild with build-solution, "
+                + $"without --no-tests, after {restore}.",
+            _ =>
                 $"{operation} needs a graph containing test methods, and this graph has none — "
                 + "built from a single project, or with tests excluded? Every method would read "
-                + "as uncovered, so refusing to answer. Rebuild with build-solution, without --no-tests.");
+                + "as uncovered, so refusing to answer. Rebuild with build-solution, without --no-tests."
+        });
     }
 
     /// <summary>

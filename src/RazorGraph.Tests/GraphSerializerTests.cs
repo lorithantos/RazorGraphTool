@@ -405,6 +405,39 @@ public class GraphSerializerTests
     }
 
     [Fact]
+    public void RoundTrip_PreservesUnrestoredProjects_AndEmptyStaysEmpty()
+    {
+        var graph = BuildGraph();
+        graph.UnrestoredProjects = ["App.Tests", "App.Core"];
+
+        var json = GraphSerializer.ToJson(graph);
+
+        Assert.Equal(new[] { "App.Tests", "App.Core" }, GraphSerializer.FromJson(json).UnrestoredProjects);
+        using (var doc = JsonDocument.Parse(json))
+            Assert.Equal(2, doc.RootElement.GetProperty("unrestoredProjects").GetArrayLength());
+
+        // Checked and all restored is written as [], so it reads back as checked:
+        // omitting it would make a clean build indistinguishable from an old one.
+        graph.UnrestoredProjects = [];
+        var clean = GraphSerializer.ToJson(graph);
+        using (var doc = JsonDocument.Parse(clean))
+            Assert.Equal(0, doc.RootElement.GetProperty("unrestoredProjects").GetArrayLength());
+        var restored = GraphSerializer.FromJson(clean).UnrestoredProjects;
+        Assert.NotNull(restored);
+        Assert.Empty(restored);
+    }
+
+    /// <summary>
+    /// A 3.5 file never checked, and must read as "not recorded". An empty list
+    /// would claim every project was restored, which that build never looked at.
+    /// </summary>
+    [Fact]
+    public void Read_GraphWithoutUnrestoredProjects_LeavesItNull()
+    {
+        Assert.Null(GraphSerializer.FromJson(GraphJson("3.5")).UnrestoredProjects);
+    }
+
+    [Fact]
     public void Read_CurrentVersion_HasNoCaveat()
     {
         var result = GraphSerializer.Read(GraphSerializer.ToJson(BuildGraph()));

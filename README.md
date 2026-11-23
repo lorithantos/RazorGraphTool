@@ -161,7 +161,8 @@ dotnet run --project src/RazorGraph.Cli -- research graph.json --focus "page:Pag
 
 Rough guidance, measured on one Windows 11 machine with packages already restored (a build
 never restores: it needs each project's `obj/project.assets.json`, so run `dotnet restore`
-first):
+first; a project without one is named in the build's project failures, and the coverage tools'
+refusal names it too):
 
 | Solution | Projects | Lines of C# and Razor | Wall time |
 |---|---|---|---|

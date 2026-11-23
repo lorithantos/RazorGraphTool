@@ -94,6 +94,21 @@ public sealed class CodeGraph
     public string? PlatformFrom { get; set; }
 
     /// <summary>
+    /// Projects that had no project.assets.json when this graph was built -- never
+    /// restored, so their package references did not resolve. Empty means the
+    /// build checked and every project was restored; null means it was not
+    /// recorded, on a graph that predates the field or one no MSBuild load
+    /// produced, and must read as "cannot tell", never as "all restored".
+    /// </summary>
+    /// <remarks>
+    /// Carried on the graph because the build's own warning scrolls away and the
+    /// cost arrives later: an unrestored test project's [Fact] never binds, so the
+    /// graph holds no test methods and a coverage query refuses days after the
+    /// build that could have said why. The refusal reads this to name the cause.
+    /// </remarks>
+    public IReadOnlyList<string>? UnrestoredProjects { get; set; }
+
+    /// <summary>
     /// Format versions newer than this build's that data in this graph was read
     /// from. Empty for a graph built from source, or loaded from a file at or
     /// below this build's version.

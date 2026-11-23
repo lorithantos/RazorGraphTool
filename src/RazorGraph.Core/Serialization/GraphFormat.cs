@@ -117,6 +117,14 @@ internal static class GraphFormat
     /// Additive, as 1.6's XamlView was: a new KIND with no edges, which a 3.4 reader
     /// keeps verbatim as foreign data, and a 3.4 graph read here has no text files,
     /// which reads as "not indexed" -- grep's disk section still finds every line.
+    /// 3.6 added the document-level <c>unrestoredProjects</c>, the projects that had
+    /// no project.assets.json at build time. RazorGraph never restores, and an
+    /// unrestored test project's [Fact] does not bind, so the graph holds no test
+    /// methods and a coverage query refuses long after the build that knew why; the
+    /// refusal reads this to name the projects. Written as [] when every project was
+    /// restored. Additive, as 3.4's stamps were: a 3.5 reader ignores the key, and a
+    /// 3.5 graph read here has none, which reads as "not recorded" -- never as "all
+    /// restored".
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -157,7 +165,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(3, 5);
+    public static readonly GraphFormatVersion Current = new(3, 6);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

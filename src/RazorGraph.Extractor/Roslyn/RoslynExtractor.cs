@@ -144,6 +144,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
         _workspace = CreateWorkspace();
         var project = await _workspace.OpenProjectAsync(projectPath, cancellationToken: ct);
         RecordLoadFailures(project.Solution);
+        RecordUnrestored(project.Solution, projectPath);
 
         Clock?.Begin(BuildPhases.Compile);
         Clock?.Project(1, 1, project.Name);
@@ -163,6 +164,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
         _workspace = CreateWorkspace();
         Solution = await _workspace.OpenSolutionAsync(solutionPath, cancellationToken: ct);
         RecordLoadFailures(Solution);
+        RecordUnrestored(Solution, solutionPath);
         var project = Solution.Projects.FirstOrDefault(p =>
             p.Name.Equals(projectName, StringComparison.OrdinalIgnoreCase))
             ?? throw new InvalidOperationException($"Project '{projectName}' not found in solution.");
@@ -192,6 +194,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
         _workspace = CreateWorkspace();
         Solution = await _workspace.OpenSolutionAsync(solutionPath, cancellationToken: ct);
         RecordLoadFailures(Solution);
+        RecordUnrestored(Solution, solutionPath);
 
         Clock?.Begin(BuildPhases.Compile);
         _loaded.Clear();
@@ -342,6 +345,88 @@ public sealed class RoslynExtractor : IAsyncDisposable
             // Once each: MSBuild repeats the failure for every project that references the broken one.
             if (!failure.Details.Contains(diagnostic.Message)) failure.Details.Add(diagnostic.Message);
         }
+    }
+
+    /// <summary>
+    /// Projects the last load opened that had no project.assets.json -- never
+    /// restored. Empty when every project was. The same projects lead their
+    /// entries in <see cref="ProjectFailures"/> with the fix.
+    /// </summary>
+    internal IReadOnlyList<string> UnrestoredProjects => _unrestored;
+    private readonly List<string> _unrestored = new();
+
+    private const string AssetsFileName = "project.assets.json";
+
+    /// <summary>
+    /// Name every project that was never restored, folded into its project
+    /// failure with the command that fixes it. RazorGraph does not restore, and
+    /// an unrestored project fails quietly: the design-time build suppresses
+    /// NETSDK1004, so the workspace reports nothing, and what arrives is a pile of
+    /// CS0246 errors for package types -- [Fact] among them, which is how a fresh
+    /// clone's graph comes to hold no test methods. The errors say what did not
+    /// bind; only this says why.
+    /// </summary>
+    private void RecordUnrestored(Solution solution, string restoreTarget)
+    {
+        _unrestored.Clear();
+        var fix = $"run dotnet restore \"{Path.GetFullPath(restoreTarget)}\" and rebuild";
+        foreach (var project in solution.Projects)
+        {
+            if (project.FilePath is not { } file || !RestoreExpected(file) || AssetsFileFound(project, file)) continue;
+
+            _unrestored.Add(project.Name);
+            FailureFor(project, project.Name).Headers.Add(
+                $"not restored -- it has no {AssetsFileName}, so its package references did not resolve " +
+                $"and the code that uses them did not bind; {fix}");
+        }
+    }
+
+    /// <summary>
+    /// Whether the project restores to an assets file at all: SDK-style, or
+    /// declaring a PackageReference. A packages.config project never has one,
+    /// and calling it unrestored would be a false alarm on every legacy build.
+    /// Unreadable is false -- cannot tell is not an alarm.
+    /// </summary>
+    private static bool RestoreExpected(string projectFile)
+    {
+        try
+        {
+            var text = File.ReadAllText(projectFile);
+            return text.Contains("Sdk=", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("<Sdk ", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("<PackageReference", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
+
+    /// <summary>
+    /// Whether the project's assets file exists. obj\ beside the project is the
+    /// default; a moved obj (BaseIntermediateOutputPath, the artifacts layout)
+    /// is found from the editorconfig the SDK generates into IntermediateOutputPath,
+    /// which sits a level or two below the folder restore writes to -- walked up
+    /// a few levels, and never past a folder named obj.
+    /// </summary>
+    private static bool AssetsFileFound(Project project, string projectFile)
+    {
+        if (Path.GetDirectoryName(projectFile) is { } projectDir
+            && File.Exists(Path.Combine(projectDir, "obj", AssetsFileName)))
+            return true;
+
+        foreach (var config in project.AnalyzerConfigDocuments)
+        {
+            if (config.FilePath is not { } path
+                || !path.EndsWith(".GeneratedMSBuildEditorConfig.editorconfig", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var dir = Path.GetDirectoryName(path);
+            for (var level = 0; dir != null && level < 4; level++, dir = Path.GetDirectoryName(dir))
+            {
+                if (File.Exists(Path.Combine(dir, AssetsFileName))) return true;
+                if (string.Equals(Path.GetFileName(dir), "obj", StringComparison.OrdinalIgnoreCase)) break;
+            }
+        }
+        return false;
     }
 
     /// <summary>

@@ -40,6 +40,9 @@ public static class GraphSerializer
             HostArchitecture = graph.HostArchitecture,
             Platform = graph.Platform,
             PlatformFrom = graph.PlatformFrom,
+            // Empty is written, not omitted: [] is "checked, all restored", and
+            // only a graph that never checked leaves the key out.
+            UnrestoredProjects = graph.UnrestoredProjects?.ToList(),
             ForeignData = DescribeForeignData(graph),
             Nodes = graph.Nodes.Select(ToNodeDto).ToList(),
             Edges = graph.Edges.Select(e => new EdgeDto
@@ -139,7 +142,8 @@ public static class GraphSerializer
             Source = dto.Source,
             HostArchitecture = dto.HostArchitecture,
             Platform = dto.Platform,
-            PlatformFrom = dto.PlatformFrom
+            PlatformFrom = dto.PlatformFrom,
+            UnrestoredProjects = dto.UnrestoredProjects
         };
 
         // Provenance the elements cannot carry. A newer format can add a property
@@ -327,6 +331,11 @@ public static class GraphSerializer
         /// <summary>requested, environment or projectDefault. Null on graphs
         /// written before the field existed, which reads as "cannot tell".</summary>
         public string? PlatformFrom { get; set; }
+
+        /// <summary>Projects with no project.assets.json at build time; empty when
+        /// every one was restored. Null on graphs written before the field
+        /// existed, which reads as "not recorded", never as "all restored".</summary>
+        public List<string>? UnrestoredProjects { get; set; }
 
         // Second for the same reason, and omitted entirely when the graph holds
         // nothing foreign -- its presence is the signal.

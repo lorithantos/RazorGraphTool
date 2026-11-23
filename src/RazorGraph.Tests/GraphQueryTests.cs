@@ -499,4 +499,46 @@ public class GraphQueryTests
         Assert.Throws<InvalidOperationException>(() => query.GetCoveredMethods("m:Lib.Load()"));
         Assert.Throws<InvalidOperationException>(() => query.FindUncoveredMethods("Lib"));
     }
+
+    private static CodeGraph TestlessGraph(IReadOnlyList<string>? unrestored)
+    {
+        var graph = new CodeGraph { Source = @"C:\repos\App\App.slnx", UnrestoredProjects = unrestored };
+        var node = new GraphNode { Id = "m:Lib.Load()", Type = NodeType.Method, Name = "Load" };
+        node.SetProperty("project", "Lib");
+        graph.AddNode(node);
+        return graph;
+    }
+
+    [Fact]
+    public void CoverageRefusal_OnAGraphWithUnrestoredProjects_NamesThemAndTheRestore()
+    {
+        var query = new GraphQuery(TestlessGraph(["App.Tests", "App.Core"]));
+
+        var refusal = Assert.Throws<InvalidOperationException>(() => query.GetCoveringTests("m:Lib.Load()"));
+
+        Assert.Contains("App.Tests, App.Core had no project.assets.json", refusal.Message);
+        Assert.Contains(@"dotnet restore ""C:\repos\App\App.slnx""", refusal.Message);
+        Assert.DoesNotContain("built from a single project", refusal.Message);
+    }
+
+    [Fact]
+    public void CoverageRefusal_OnAnOlderGraph_SaysItCannotTell_NeverThatAllWereRestored()
+    {
+        var refusal = Assert.Throws<InvalidOperationException>(() =>
+            new GraphQuery(TestlessGraph(null)).FindUncoveredMethods("Lib"));
+
+        Assert.Contains("built from a single project, or with tests excluded?", refusal.Message);
+        Assert.Contains("not restored", refusal.Message);
+        Assert.Contains("cannot say which", refusal.Message);
+    }
+
+    [Fact]
+    public void CoverageRefusal_OnAGraphThatCheckedAndFoundAllRestored_DoesNotBlameRestore()
+    {
+        var refusal = Assert.Throws<InvalidOperationException>(() =>
+            new GraphQuery(TestlessGraph([])).GetCoveredMethods("m:Lib.Load()"));
+
+        Assert.Contains("built from a single project, or with tests excluded?", refusal.Message);
+        Assert.DoesNotContain("restore", refusal.Message);
+    }
 }

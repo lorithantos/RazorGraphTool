@@ -58,6 +58,13 @@ public sealed class GraphBuilder : IAsyncDisposable
     }
 
     /// <summary>
+    /// Record which projects the load found unrestored, beside Platform and for
+    /// the same reason: the graph's answers depend on it, and a coverage refusal
+    /// long after the build can only name the cause if the graph carries it.
+    /// </summary>
+    private void StampRestore() => _graph.UnrestoredProjects = _roslyn.UnrestoredProjects.ToList();
+
+    /// <summary>
     /// Last-write time of the assembly this extractor lives in -- the closest
     /// thing to "which build produced this graph" that does not require knowing
     /// how the host deploys itself. Null rather than a guess when the location is
@@ -246,6 +253,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         ProjectCount = 1;
         _graph.Source = Path.GetFullPath(projectPath);
         StampPlatform();
+        StampRestore();
         return BuildGraph(projectDir);
     }
 
@@ -264,6 +272,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         // rebuilds from, and the one build_graph has always reported.
         _graph.Source = Path.GetFullPath(solutionPath);
         StampPlatform();
+        StampRestore();
         return BuildGraph(projectDir);
     }
 
@@ -283,6 +292,7 @@ public sealed class GraphBuilder : IAsyncDisposable
         ProjectCount = _roslyn.Solution?.Projects.Count() ?? _roslyn.LoadedProjects.Count;
         _graph.Source = Path.GetFullPath(solutionPath);
         StampPlatform();
+        StampRestore();
         return BuildSolutionGraph();
     }
 

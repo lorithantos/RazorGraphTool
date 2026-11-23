@@ -224,6 +224,16 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public void Build_OfARestoredSolution_RecordsThatItChecked_AndFoundNothingUnrestored()
+    {
+        // Empty, not null: null is "not recorded", which a refusal must not read
+        // as "all restored" -- and this build did check.
+        Assert.NotNull(_solutionGraph!.UnrestoredProjects);
+        Assert.Empty(_solutionGraph.UnrestoredProjects!);
+        Assert.Empty(_noTextGraph!.UnrestoredProjects!);
+    }
+
+    [Fact]
     public void BuildSolutionTool_ForwardsProgress_StrictlyIncreasing_OutOfThePhaseCount()
     {
         var notifications = _noTextNotifications!;
