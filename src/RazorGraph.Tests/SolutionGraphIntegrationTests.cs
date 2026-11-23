@@ -243,7 +243,7 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         for (var i = 1; i < notifications.Count; i++)
             Assert.True(notifications[i].Progress > notifications[i - 1].Progress,
                 $"progress went {notifications[i - 1].Progress} -> {notifications[i].Progress} at '{notifications[i].Message}'");
-        Assert.Contains(notifications, n => n.Message?.StartsWith("phase 2 of 11: compile -- project 3 of 3 (", StringComparison.Ordinal) == true);
+        Assert.Contains(notifications, n => n.Message?.StartsWith("phase 2 of 10: compile -- project 3 of 3 (", StringComparison.Ordinal) == true);
     }
 
     [Fact]

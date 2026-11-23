@@ -610,8 +610,9 @@ public sealed class RoslynExtractor : IAsyncDisposable
 
     /// <summary>
     /// The call, construction and member-access sites of every loaded project,
-    /// from one walk that asks each syntax tree for its semantic model once and
-    /// hands that model to all three scans.
+    /// with the quoted names and callback targets, from one walk that asks each
+    /// syntax tree for its semantic model once and hands that model to all five
+    /// scans.
     /// </summary>
     /// <remarks>
     /// One model per tree is the point. A semantic model binds a method body the
@@ -623,6 +624,14 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// construction scan fell from 1.4 s to 0.1 s, and member access from 1.9 s
     /// to 1.3 s, once they shared the call scan's model. The model goes when its
     /// tree is done, so no more than one tree's bindings are held at a time.
+    ///
+    /// The quoted-name and callback scans were two more passes with a model each,
+    /// and their own phase; on the shared model they cost next to nothing, and
+    /// that phase went from about 1.5 s to 0.01 s on RazorGraphTool.slnx and
+    /// from about 1.1 s on eShopOnWeb. So they joined this walk, and their phase
+    /// joined the calls phase, whose name says so -- a phase that took 0.01 s
+    /// under a name promising the literals work would have reported that work as
+    /// free and charged it to calls.
     ///
     /// Each list is in the order its own pass produced before the walks were
     /// fused -- project, then tree, then the scan's own order within the tree --
@@ -640,7 +649,7 @@ public sealed class RoslynExtractor : IAsyncDisposable
     /// </summary>
     internal static UsageSites UsageSitesOf(IEnumerable<Compilation> compilations, IReadOnlySet<string> inScope)
     {
-        var sites = new UsageSites([], [], []);
+        var sites = new UsageSites([], [], [], [], []);
 
         foreach (var compilation in compilations)
         {
@@ -652,6 +661,8 @@ public sealed class RoslynExtractor : IAsyncDisposable
                 sites.Calls.AddRange(CallSitesIn(root, model, inScope));
                 sites.Constructions.AddRange(ConstructionSitesIn(root, model, inScope));
                 sites.MemberAccesses.AddRange(MemberAccessScanner.TreeMemberAccesses(root, model, inScope));
+                sites.QuotedNames.AddRange(QuotedNameScanner.TreeQuotedNames(root, model));
+                sites.CallbackTargets.AddRange(CallbackTargetsIn(root, model, inScope));
             }
         }
 
@@ -827,44 +838,19 @@ public sealed class RoslynExtractor : IAsyncDisposable
     }
 
     /// <summary>
-    /// Every string a member produces, attributed to that member; see
-    /// QuotedNameScanner. Unfiltered -- whether a string NAMES anything is the
-    /// emitter's question, because only it holds the whole solution's names.
-    /// </summary>
-    internal IEnumerable<QuotedName> ExtractQuotedNames()
-    {
-        if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
-
-        foreach (var (root, model) in _loaded.SelectMany(
-                     l => l.Compilation.SyntaxTrees.Select(t => (t.GetRoot(), l.Compilation.GetSemanticModel(t)))))
-        {
-            foreach (var quoted in QuotedNameScanner.TreeQuotedNames(root, model))
-                yield return quoted;
-        }
-    }
-
-    /// <summary>
-    /// Methods that out-of-solution code can call back into; see
+    /// Methods in one tree that out-of-solution code can call back into; see
     /// CallSiteScanner.CallbackTargets.
     /// </summary>
-    internal IEnumerable<string> ExtractCallbackTargets()
+    internal static IEnumerable<string> CallbackTargetsIn(SyntaxNode root, SemanticModel model, IReadOnlySet<string> inScope)
     {
-        if (_loaded.Count == 0) throw new InvalidOperationException("Load a project first.");
-
-        var inScope = InScopeAssemblies();
-
-        foreach (var (root, model) in _loaded.SelectMany(
-                     l => l.Compilation.SyntaxTrees.Select(t => (t.GetRoot(), l.Compilation.GetSemanticModel(t)))))
+        // Top-level scopes included: a minimal API registers its whole
+        // surface from Main — app.MapGet("/", Handler) hands a method group
+        // to the framework, and that is a callback entry point exactly as a
+        // registration inside a Startup class would be.
+        foreach (var scope in TopLevelProgram.MethodScopes(root))
         {
-            // Top-level scopes included: a minimal API registers its whole
-            // surface from Main — app.MapGet("/", Handler) hands a method group
-            // to the framework, and that is a callback entry point exactly as a
-            // registration inside a Startup class would be.
-            foreach (var scope in TopLevelProgram.MethodScopes(root))
-            {
-                foreach (var targetId in CallSiteScanner.CallbackTargets(scope, model, inScope))
-                    yield return targetId;
-            }
+            foreach (var targetId in CallSiteScanner.CallbackTargets(scope, model, inScope))
+                yield return targetId;
         }
     }
 

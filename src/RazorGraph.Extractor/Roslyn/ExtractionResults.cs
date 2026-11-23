@@ -376,13 +376,17 @@ internal sealed record MemberAccessInfo(
 
 /// <summary>
 /// Every read and write of an in-solution property or field (see
-/// MemberAccessScanner), with the call and construction sites the same walk
-/// collects; see RoslynExtractor.ExtractUsageSites for why it is one walk.
+/// MemberAccessScanner), with the call and construction sites, the quoted names
+/// (see QuotedNameScanner) and the callback targets (see
+/// CallSiteScanner.CallbackTargets) the same walk collects; see
+/// RoslynExtractor.ExtractUsageSites for why it is one walk.
 /// </summary>
 internal sealed record UsageSites(
     List<CallSiteInfo> Calls,
     List<ConstructionSiteInfo> Constructions,
-    List<MemberAccessInfo> MemberAccesses);
+    List<MemberAccessInfo> MemberAccesses,
+    List<QuotedName> QuotedNames,
+    List<string> CallbackTargets);
 
 /// <summary>
 /// One string a member produces, before anything has decided whether it names

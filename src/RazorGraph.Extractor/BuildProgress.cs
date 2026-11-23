@@ -47,8 +47,7 @@ internal static class BuildPhases
     public const string Compile = "compile";
     public const string CheckErrors = "check compile errors";
     public const string Symbols = "symbols";
-    public const string Calls = "calls and member access";
-    public const string Literals = "quoted names and literals";
+    public const string Calls = "calls, member access, quoted names and literals";
     public const string Escapes = "exception escapes";
     public const string Razor = "razor, client assets and xaml";
     public const string Links = "cross-project links";
@@ -58,13 +57,13 @@ internal static class BuildPhases
     /// <summary>build_solution and build-solution: every project, compiled together.</summary>
     public static readonly IReadOnlyList<string> Solution =
     [
-        LoadSolution, Compile, CheckErrors, Symbols, Calls, Literals, Escapes, Razor, Links, Coverage, TextFiles
+        LoadSolution, Compile, CheckErrors, Symbols, Calls, Escapes, Razor, Links, Coverage, TextFiles
     ];
 
     /// <summary>build_graph and build: one project, from a .csproj or from inside a solution.</summary>
     public static readonly IReadOnlyList<string> Project =
     [
-        LoadProject, Compile, CheckErrors, Symbols, Calls, Literals, Escapes, Razor, Links, TextFiles
+        LoadProject, Compile, CheckErrors, Symbols, Calls, Escapes, Razor, Links, TextFiles
     ];
 }
 

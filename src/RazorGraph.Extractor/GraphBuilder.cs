@@ -423,9 +423,8 @@ public sealed class GraphBuilder : IAsyncDisposable
         _usage.AddCallEdges(usageSites.Calls, _declarations.TypeIdFor);
         _declarations.AddConstructsEdges(usageSites.Constructions);
         _usage.AddMemberAccessEdges(usageSites.MemberAccesses);
-        // One scan, two consumers. ExtractQuotedNames is a lazy walk over every
-        // syntax tree in the solution, so enumerating it twice would compile the
-        // question twice; materialised once and handed to both.
+        // One scan, two consumers. The quoted names come from the same walk as
+        // the calls, and the one list is handed to both.
         //
         // The two do genuinely different things with it. AddQuotesEdges keeps only
         // strings equal to a uniquely-declared name -- rename safety.
@@ -435,15 +434,14 @@ public sealed class GraphBuilder : IAsyncDisposable
         // After every declaration is a node: the name index a quoted string is
         // matched against is built from the graph, so anything emitted later
         // would be invisible to it.
-        _clock?.Begin(BuildPhases.Literals);
-        var quotedNames = _roslyn.ExtractQuotedNames().ToList();
+        var quotedNames = usageSites.QuotedNames;
         _usage.AddQuotesEdges(quotedNames);
         // Second, and never first: AddQuotesEdges reads the graph's own names to
         // build its uniqueness index, and Literal nodes are named after their
         // values. Nameable() excludes them so the order is not what makes this
         // safe, but there is no reason to make the order argue with the guard.
         if (!ExcludeLiterals) _usage.AddMentionsEdges(quotedNames);
-        _usage.AddCallbackEntryPoints(_roslyn.ExtractCallbackTargets());
+        _usage.AddCallbackEntryPoints(usageSites.CallbackTargets);
         _clock?.Begin(BuildPhases.Escapes);
         _escapes.AddExceptionEscapeEdges(_declarations.MethodThrows);
     }
