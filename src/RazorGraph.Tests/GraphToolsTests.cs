@@ -852,6 +852,135 @@ public class GraphToolsTests
         Assert.Contains("find_nodes", message, StringComparison.Ordinal);
     }
 
+    // ---- The JSON spelling: the one RazorGraph itself puts on the wire ----------
+
+    // System.Text.Json's default encoder writes < > & as < > &.
+    // A client that shows the tool result as text rather than parsing it hands
+    // the agent those six characters, and an id copied from there arrives with
+    // them still in it. Same near miss as &lt;, different costume.
+
+    [Fact]
+    public void ResponsesCarryTheJsonSpellingOfAGenericId_AndNeverTheHtmlOne()
+    {
+        // Where the escaped ids come from. The JSON form is ours; the HTML form
+        // is not -- nothing here writes &lt; -- so accepting it is tolerance of
+        // some other layer, while accepting < is accepting our own output.
+        var json = new GraphNavigationTools(StoreOver(EscapedIdGraph())).GetNode(PaginateId);
+
+        Assert.Contains(JsonEscape(PaginateId), json, StringComparison.Ordinal);
+        Assert.DoesNotContain("&lt;", json, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("plain")]
+    [InlineData("html")]
+    [InlineData("json")]
+    public void GetNode_ResolvesAGenericIdInEverySpelling(string spelling)
+    {
+        var tools = new GraphNavigationTools(StoreOver(EscapedIdGraph()));
+
+        using var doc = JsonDocument.Parse(tools.GetNode(Spell(PaginateId, spelling)));
+
+        Assert.Equal(PaginateId, doc.RootElement.GetProperty("node").GetProperty("id").GetString());
+    }
+
+    [Theory]
+    [InlineData("plain")]
+    [InlineData("html")]
+    [InlineData("json")]
+    public void CoveringTests_ResolvesAGenericIdInEverySpelling(string spelling)
+    {
+        var tools = new CoverageTools(StoreOver(EscapedIdGraph()));
+
+        using var doc = JsonDocument.Parse(tools.CoveringTests(Spell(PaginateId, spelling)));
+
+        // The covering test, not just "did not throw": a lookup that validated
+        // one spelling and queried another would answer an empty zero here.
+        Assert.Equal(PagingTestId, doc.RootElement.GetProperty("tests").EnumerateArray()
+            .Single().GetProperty("node").GetProperty("id").GetString());
+        Assert.Equal(PaginateId, doc.RootElement.GetProperty("methodId").GetString());
+    }
+
+    [Fact]
+    public void FindPath_ResolvesTheJsonSpellingOnBothEnds()
+    {
+        var tools = new GraphNavigationTools(StoreOver(EscapedIdGraph()));
+
+        using var doc = JsonDocument.Parse(tools.FindPath(JsonEscape(PaginateId), JsonEscape(WindowId)));
+
+        Assert.True(doc.RootElement.GetProperty("found").GetBoolean());
+    }
+
+    [Fact]
+    public void TheJsonSpellingIsCaseInsensitive()
+    {
+        // < and < are the same escape; encoders differ on the case.
+        var tools = new GraphNavigationTools(StoreOver(EscapedIdGraph()));
+        var lower = JsonEscape(PaginateId).Replace("\\u003C", "\\u003c", StringComparison.Ordinal)
+                                          .Replace("\\u003E", "\\u003e", StringComparison.Ordinal);
+
+        using var doc = JsonDocument.Parse(tools.GetNode(lower));
+
+        Assert.Equal(PaginateId, doc.RootElement.GetProperty("node").GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public void TheJsonAmpersandDecodesInOnePass_LikeTheHtmlOne()
+    {
+        // &lt; is an escaped ampersand followed by "lt;", and must come back
+        // as the four characters &lt; -- not be decoded on into a bracket.
+        var tools = new GraphNavigationTools(StoreOver(EscapedIdGraph()));
+
+        using var doc = JsonDocument.Parse(tools.GetNode(JsonEscape(MarkupLiteralId)));
+
+        Assert.Equal(MarkupLiteralId, doc.RootElement.GetProperty("node").GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public void AnUnknownJsonEscapedId_KeepsTheNotFoundRefusal()
+    {
+        var tools = new GraphNavigationTools(StoreOver(EscapedIdGraph()));
+        var missing = "m:Web.Nowhere.Vanish(System.Func<T, T>)";
+
+        var message = Assert.Throws<McpException>(() => tools.GetNode(JsonEscape(missing))).Message;
+
+        Assert.StartsWith("Node not found: ", message, StringComparison.Ordinal);
+        Assert.Contains(missing, message, StringComparison.Ordinal);
+        Assert.Contains("find_nodes", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ResolveWith_TriesTheIdAsGivenFirst_ThenItsDecodedSpelling()
+    {
+        // The method_body tools look ids up in a compilation, not a graph, so
+        // they reach the decode through a lookup they supply.
+        var known = new Dictionary<string, string> { [PaginateId] = "body" };
+        string? Lookup(string id) => known.GetValueOrDefault(id);
+
+        Assert.Equal("body", ToolArguments.ResolveWith(PaginateId, Lookup));
+        Assert.Equal("body", ToolArguments.ResolveWith(HtmlEscape(PaginateId), Lookup));
+        Assert.Equal("body", ToolArguments.ResolveWith(JsonEscape(PaginateId), Lookup));
+        Assert.Null(ToolArguments.ResolveWith("m:Web.Nowhere.Vanish(System.Func\\u003CT, T\\u003E)", Lookup));
+    }
+
+    private static string Spell(string id, string spelling) => spelling switch
+    {
+        "plain" => id,
+        "html" => HtmlEscape(id),
+        "json" => JsonEscape(id),
+        _ => throw new ArgumentOutOfRangeException(nameof(spelling), spelling, null),
+    };
+
+    /// <summary>
+    /// What System.Text.Json's default encoder does to an id's brackets and
+    /// ampersand, left as literal text -- the way a client that renders the raw
+    /// result shows it.
+    /// </summary>
+    private static string JsonEscape(string id) => id
+        .Replace("&", "\\u0026", StringComparison.Ordinal)
+        .Replace("<", "\\u003C", StringComparison.Ordinal)
+        .Replace(">", "\\u003E", StringComparison.Ordinal);
+
     /// <summary>What a markdown or HTML layer does to an id on the way out.</summary>
     private static string HtmlEscape(string id) => id
         .Replace("&", "&amp;", StringComparison.Ordinal)

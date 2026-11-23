@@ -44,6 +44,13 @@ internal static class ToolArguments
     /// character it stands for. Named, decimal and hex spellings, because an id
     /// is escaped by whatever layer it passed through and they do not agree.
     ///
+    /// The JSON spellings (<c><</c> as six literal characters) are the one
+    /// form RazorGraph itself produces: System.Text.Json's default encoder writes
+    /// &lt; &gt; &amp; that way, and a client that shows a tool result as text
+    /// rather than parsing it hands the escape to the agent verbatim. Only those
+    /// three: the encoder escapes quotes and plus as well, but no id has needed
+    /// them, and a decoder that grows past what was observed starts inventing.
+    ///
     /// The ampersand is LAST and the order is load-bearing: decoding it first
     /// turns <c>&amp;amp;lt;</c> into <c>&amp;lt;</c> and then into <c>&lt;</c>,
     /// inventing a bracket the caller never wrote. Decoded last, the same input
@@ -52,11 +59,11 @@ internal static class ToolArguments
     /// </summary>
     private static readonly (char Character, string[] Spellings)[] EscapeSpellings =
     {
-        ('<', ["&lt;", "&#60;", "&#x3C;"]),
-        ('>', ["&gt;", "&#62;", "&#x3E;"]),
+        ('<', ["&lt;", "&#60;", "&#x3C;", "\\u003C"]),
+        ('>', ["&gt;", "&#62;", "&#x3E;", "\\u003E"]),
         ('"', ["&quot;", "&#34;", "&#x22;"]),
         ('\'', ["&apos;", "&#39;", "&#x27;"]),
-        ('&', ["&amp;", "&#38;", "&#x26;"]),
+        ('&', ["&amp;", "&#38;", "&#x26;", "\\u0026"]),
     };
 
     /// <summary>
@@ -112,6 +119,19 @@ internal static class ToolArguments
     }
 
     /// <summary>
+    /// The same as-given-then-decoded resolution for a lookup that is not a
+    /// graph: the method_body tools find their method in a compilation, and an
+    /// escaped id has to reach them as well as it reaches get_node.
+    /// </summary>
+    internal static T? ResolveWith<T>(string id, Func<string, T?> lookup) where T : class
+    {
+        if (lookup(id) is { } found) return found;
+
+        var decoded = DecodeEscapes(id);
+        return decoded == id ? null : lookup(decoded);
+    }
+
+    /// <summary>
     /// The id that actually resolved, or a refusal that says whether escaping
     /// was in play.
     /// </summary>
@@ -129,7 +149,7 @@ internal static class ToolArguments
         var decoded = DecodeEscapes(id);
         var escaping = decoded == id
             ? string.Empty
-            : " The id you passed carries HTML escape sequences (&lt; and &gt; for the angle brackets of a generic);"
+            : " The id you passed carries escape sequences (&lt; and &gt;, or \\u003C and \\u003E, for the angle brackets of a generic);"
               + $" unescaped it reads '{decoded}', and that is not in this graph either.";
 
         throw new McpException($"Node not found: {id}.{escaping} Use find_nodes to discover ids.");

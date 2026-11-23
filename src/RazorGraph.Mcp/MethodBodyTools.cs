@@ -47,7 +47,7 @@ internal sealed class MethodBodyTools(GraphStore store)
         await using var roslyn = new RoslynExtractor();
         await LoadCompilationAsync(roslyn, full, projectName, ct);
 
-        var body = roslyn.GetMethodBodyGraph(methodId)
+        var body = ToolArguments.ResolveWith(methodId, roslyn.GetMethodBodyGraph)
             ?? throw new McpException(
                 $"No body graph for '{methodId}': id not found in the compilation, or the method has no body.");
         return ToolResponses.ToJson(body);
@@ -74,13 +74,13 @@ internal sealed class MethodBodyTools(GraphStore store)
         await using var roslyn = new RoslynExtractor();
         await LoadCompilationAsync(roslyn, full, projectName, ct);
 
-        var right = roslyn.GetMethodBodyGraph(methodId)
+        var right = ToolArguments.ResolveWith(methodId, roslyn.GetMethodBodyGraph)
             ?? throw new McpException($"No body graph for '{methodId}'.");
 
         BodyGraph left;
         if (againstMethodId != null)
         {
-            left = roslyn.GetMethodBodyGraph(againstMethodId)
+            left = ToolArguments.ResolveWith(againstMethodId, roslyn.GetMethodBodyGraph)
                 ?? throw new McpException($"No body graph for '{againstMethodId}'.");
         }
         else
