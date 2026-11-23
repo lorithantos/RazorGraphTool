@@ -418,9 +418,9 @@ public class GraphBuilderIntegrationTests : IAsyncLifetime
     /// The same for components: Components/_Imports.razor's Greetings reaches
     /// GreetingBadge, naming the imports file and its line, and GreetingPanel's
     /// own @inject of that name wins over it. GreetingBadge's type is read from
-    /// the directive text, because its compiled class is not joined to it: the
-    /// class holds no code from the badge's own file, so the #line vote that
-    /// joins a component to its class finds only _Imports.razor's lines.
+    /// its compiled class's property, the class being joined to it although it
+    /// holds no code from the badge's own file (until 3.11 the #line vote found
+    /// only _Imports.razor's lines there, and this read directiveText).
     /// </summary>
     [Fact]
     public void InheritedInject_FromImportsRazor_ReachesComponentsUnderIt()
@@ -431,11 +431,37 @@ public class GraphBuilderIntegrationTests : IAsyncLifetime
         Assert.Equal("svc:SampleApp.Services.IGreetingService", edge.FromId);
         Assert.Equal("Components/_Imports.razor", edge.GetProperty<string>("declaredIn"));
         Assert.Equal(2, edge.GetProperty<int>("line"));
-        Assert.Equal("directiveText", edge.GetProperty<string>("typeFrom"));
+        Assert.Equal("generatedProperty", edge.GetProperty<string>("typeFrom"));
 
         var panel = Assert.Single(InjectsInto("Components/GreetingPanel.razor").Values);
         Assert.Equal("Components/GreetingPanel.razor", panel.GetProperty<string>("declaredIn"));
         Assert.Equal(3, panel.GetProperty<int>("line"));
+    }
+
+    /// <summary>
+    /// Each component is joined to its own compiled class and nothing else, and
+    /// _Imports.razor only to _Imports. GreetingBadge is markup only, so its
+    /// class's only #line directives are the lines copied in from _Imports.razor
+    /// and the vote alone joined it to the imports file; GreetingPanel has an
+    /// @code block and was always joined correctly.
+    /// </summary>
+    [Fact]
+    public void Components_AreJoinedToTheirOwnCompiledClass_AndImportsToNoneButItsOwn()
+    {
+        string[] CompiledInto(string relativePath)
+        {
+            var node = _graph!.Nodes.Single(n => n.Type is NodeType.RazorPage or NodeType.PartialView or NodeType.Layout
+                && n.FilePath is { } p
+                && p.Replace('\\', '/').EndsWith("/SampleApp/" + relativePath, StringComparison.OrdinalIgnoreCase));
+            return _graph.Outgoing(node.Id)
+                .Where(e => e.Type == EdgeType.References && e.GetProperty<bool>("compiledInto"))
+                .Select(e => e.ToId)
+                .ToArray();
+        }
+
+        Assert.Equal(["type:SampleApp.Components.GreetingBadge"], CompiledInto("Components/GreetingBadge.razor"));
+        Assert.Equal(["type:SampleApp.Components.GreetingPanel"], CompiledInto("Components/GreetingPanel.razor"));
+        Assert.Equal(["type:SampleApp.Components._Imports"], CompiledInto("Components/_Imports.razor"));
     }
 
     /// <summary>

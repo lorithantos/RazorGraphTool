@@ -167,6 +167,16 @@ internal static class GraphFormat
     /// some edges moved rather than appeared, so a 3.9 graph read here still has
     /// its imports-file edges and no inherited ones, which is the population
     /// change the bump exists to name.
+    /// 3.11 joins a Blazor component with no C# of its own to the class it
+    /// compiles into. Components carry no [RazorCompiledItem], and the #line
+    /// vote that stood in for it found only the lines copied in from
+    /// _Imports.razor, so the compiledInto edge left the _Imports node rather
+    /// than the component's. The generated file's #pragma checksum now names the
+    /// source, and an imports file no longer wins the vote for any class but its
+    /// own. compiledInto edges moved, and the @inject edges an affected
+    /// component inherits now read their type from its compiled property
+    /// (<c>typeFrom</c> "generatedProperty") rather than the directive text. No
+    /// kind, shape or property is new; the bump names the population change.
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -207,7 +217,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(3, 10);
+    public static readonly GraphFormatVersion Current = new(3, 11);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";
