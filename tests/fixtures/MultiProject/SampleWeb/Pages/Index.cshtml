@@ -20,3 +20,5 @@
     const count = el.dataset.catalogCount;
     fetch('/api/catalogs').then(r => r.json());
 </script>
+
+@inject SampleLib.ICatalogStore? OptionalStore

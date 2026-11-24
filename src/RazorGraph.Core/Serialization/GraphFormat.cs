@@ -202,6 +202,19 @@ internal static class GraphFormat
     /// onto a property a test reads or writes and now reaches what an indexer's
     /// accessors call. A 3.12 graph read here answers coverage without them,
     /// which is the population change the bump exists to name.
+    /// 3.14 resolves a nullable-annotated type to its node. Under #nullable
+    /// enable a constructor parameter typed <c>IAuditService?</c>, or an
+    /// <c>@inject IAuditService? Audit</c> whose compiled property is typed so,
+    /// is written with the '?', and the lookup matched that against full names,
+    /// which never carry one: the InjectedInto edge was missing, and the @inject
+    /// was listed in <c>unresolvedInjections</c> instead. Both now look the type
+    /// up without the annotation. <c>constructorDependencies</c> and the @inject
+    /// edge's properties still record the type as written, '?' included. A
+    /// constructed generic was already reached through its open definition
+    /// whatever its annotations, so its edges are unchanged. Additive in the 3.9
+    /// sense: more edges of a kind and shape a 3.13 reader already knows, and
+    /// fewer unresolvedInjections entries where an edge took their place, which
+    /// is the population change the bump exists to name.
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -242,7 +255,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(3, 13);
+    public static readonly GraphFormatVersion Current = new(3, 14);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

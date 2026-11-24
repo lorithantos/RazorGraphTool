@@ -130,8 +130,10 @@ internal enum DependencyKind
 /// what kind of thing that type is; see SymbolClassifier.ExtractConstructorDependencies.
 /// </summary>
 /// <param name="TypeFullName">
-/// The parameter type's display string, constructed type arguments included, so
-/// it is exactly the name AddInjectionEdges has always resolved edges by.
+/// The parameter type's display string, constructed type arguments and nullable
+/// annotations included, so it is exactly what the constructor declares. It is
+/// the name AddInjectionEdges resolves by unless <paramref name="UnannotatedFullName"/>
+/// is set.
 /// </param>
 /// <param name="DefinitionFullName">
 /// The open generic definition's display string when the parameter type is a
@@ -140,7 +142,17 @@ internal enum DependencyKind
 /// declares the definition, never the construction, so this is the name its
 /// node carries.
 /// </param>
-internal sealed record InjectedDependency(string TypeFullName, DependencyKind Kind, string? DefinitionFullName = null);
+/// <param name="UnannotatedFullName">
+/// The parameter type's display string with every nullable reference
+/// annotation left out -- <c>Fixture.IAuditService</c> for a parameter typed
+/// <c>Fixture.IAuditService?</c> -- and null when that is the same string as
+/// <paramref name="TypeFullName"/>. A node's full name is rendered from its
+/// declaration and never carries a '?', so this, not the name as written, is
+/// what the lookup matches. TypeFullName keeps the '?', because that is what
+/// the constructor says.
+/// </param>
+internal sealed record InjectedDependency(
+    string TypeFullName, DependencyKind Kind, string? DefinitionFullName = null, string? UnannotatedFullName = null);
 
 internal sealed class SymbolInfo
 {

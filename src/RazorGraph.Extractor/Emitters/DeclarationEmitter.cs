@@ -740,7 +740,14 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
             // namespaced type, since the name looked up is a full name, and on
             // the one shape it could match on (a global-namespace delegate) it
             // joined the parameter to an unrelated class. InjectionLookupTests.
-            var serviceId = TypeIdFor(dependency.TypeFullName);
+            //
+            // Both lookups use the name without nullable reference annotations.
+            // Under #nullable enable an IAuditService? parameter is written with
+            // the '?', and no node's full name ever has one, so the exact lookup
+            // missed and a non-generic type had no second lookup to fall to. The
+            // definition name never had the problem: it is rendered from the
+            // declaration, which carries no annotation.
+            var serviceId = TypeIdFor(dependency.UnannotatedFullName ?? dependency.TypeFullName);
             var viaDefinition = false;
             if (serviceId == null && dependency.DefinitionFullName is { } definition)
             {

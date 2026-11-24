@@ -371,6 +371,67 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         Assert.Contains(injectors, i => i.Name == "ICatalogStore" && i.GetProperty<string>("project") == "SampleLib");
     }
 
+    /// <summary>
+    /// OptionalAuditor's three parameters each carry a nullable annotation, in a
+    /// project with nullable enabled: <c>IAuditTrail?</c>,
+    /// <c>IShelf&lt;PlainPart?&gt;</c> and <c>IShelf&lt;SeededPart&gt;?</c>.
+    /// Each is one edge from the node it names. The plain one is the case that
+    /// was missing: its written name kept the '?', no full name has one, and a
+    /// non-generic type has no definition lookup to fall to. The generic two
+    /// already reached IShelf&lt;T&gt; through the definition and are pinned so
+    /// they stay that way, closedType still the type as written. The recorded
+    /// dependency types keep the '?' too, because that is what the code says.
+    /// </summary>
+    [Fact]
+    public void Builds_InjectedIntoEdge_ForNullableAnnotatedConstructorParameters()
+    {
+        var consumer = _solutionGraph!.Nodes.Single(n => n.GetProperty<string>("fullName") == "SampleLib.OptionalAuditor");
+
+        var edges = _solutionGraph.Incoming(consumer.Id)
+            .Where(e => e.Type == EdgeType.InjectedInto)
+            .Select(e => $"{_solutionGraph.GetNode(e.FromId)!.GetProperty<string>("fullName")} | {e.GetProperty<string>("closedType")}")
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        Assert.Equal(
+            [
+                "SampleLib.IAuditTrail | ",
+                "SampleLib.IShelf<T> | SampleLib.IShelf<SampleLib.PlainPart?>",
+                "SampleLib.IShelf<T> | SampleLib.IShelf<SampleLib.SeededPart>?"
+            ],
+            edges);
+
+        var recorded = consumer.GetProperty<List<object>>("constructorDependencies")!
+            .Cast<Dictionary<string, object>>()
+            .Select(d => (string)d["type"])
+            .ToList();
+        Assert.Equal(
+            ["SampleLib.IAuditTrail?", "SampleLib.IShelf<SampleLib.PlainPart?>", "SampleLib.IShelf<SampleLib.SeededPart>?"],
+            recorded);
+    }
+
+    /// <summary>
+    /// SampleWeb's Index.cshtml ends with <c>@inject SampleLib.ICatalogStore? OptionalStore</c>.
+    /// Razor compiles it into a [RazorInject] property typed
+    /// <c>SampleLib.ICatalogStore?</c>, and the lookup by that name found no
+    /// node, so the in-solution service was listed in unresolvedInjections with
+    /// no edge. It is an edge, with the type still recorded as written.
+    /// </summary>
+    [Fact]
+    public void Builds_InjectedIntoEdge_ForANullableAnnotatedInjectDirective()
+    {
+        var page = _solutionGraph!.Nodes.Single(n => n.Type == NodeType.RazorPage && n.Name == "Index"
+            && n.GetProperty<string>("project") == "SampleWeb");
+
+        var edge = Assert.Single(_solutionGraph.Incoming(page.Id),
+            e => e.Type == EdgeType.InjectedInto && e.GetProperty<string>("name") == "OptionalStore");
+        Assert.Equal("SampleLib.ICatalogStore", _solutionGraph.GetNode(edge.FromId)!.GetProperty<string>("fullName"));
+        Assert.Equal("SampleLib.ICatalogStore?", edge.GetProperty<string>("declaredType"));
+        Assert.Equal("generatedProperty", edge.GetProperty<string>("typeFrom"));
+        Assert.False(edge.Properties.ContainsKey("closedType"));
+        Assert.Null(page.GetProperty<List<object>>("unresolvedInjections"));
+    }
+
     // ---- Coverage ------------------------------------------------------------
 
     [Fact]

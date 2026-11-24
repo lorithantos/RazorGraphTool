@@ -1177,8 +1177,29 @@ internal static class SymbolClassifier
         var ctor = symbol.InstanceConstructors.FirstOrDefault(c => c.DeclaredAccessibility == Accessibility.Public);
         if (ctor == null) return new List<InjectedDependency>();
         return ctor.Parameters
-            .Select(p => new InjectedDependency(p.Type.ToDisplayString(), ClassifyDependency(p.Type, inScope), DefinitionName(p.Type)))
+            .Select(p => new InjectedDependency(
+                p.Type.ToDisplayString(), ClassifyDependency(p.Type, inScope), DefinitionName(p.Type), UnannotatedName(p.Type)))
             .ToList();
+    }
+
+    /// <summary>
+    /// The default display format, which ToDisplayString() uses, less the '?'
+    /// of a nullable reference annotation, at every depth. Nullable value types
+    /// are untouched: <c>int?</c> is Nullable&lt;int&gt;, a different type, not
+    /// an annotation.
+    /// </summary>
+    private static readonly SymbolDisplayFormat UnannotatedFormat =
+        SymbolDisplayFormat.CSharpErrorMessageFormat.RemoveMiscellaneousOptions(
+            SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+
+    /// <summary>
+    /// The type's display string without nullable reference annotations, or
+    /// null when it has none to drop; see InjectedDependency.UnannotatedFullName.
+    /// </summary>
+    private static string? UnannotatedName(ITypeSymbol type)
+    {
+        var unannotated = type.ToDisplayString(UnannotatedFormat);
+        return unannotated == type.ToDisplayString() ? null : unannotated;
     }
 
     private static string? DefinitionName(ITypeSymbol type) =>

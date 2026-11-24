@@ -456,12 +456,21 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
     /// the solution declares (<c>IRepository&lt;T&gt;</c>, never
     /// <c>IRepository&lt;CatalogItem&gt;</c>).
     /// </summary>
+    /// <remarks>
+    /// Looked up without a trailing '?'. Razor compiles <c>@inject IFoo? Foo</c>
+    /// into a property typed <c>IFoo?</c>, its memberType keeps the annotation,
+    /// and no node's full name has one, so the exact lookup missed and a
+    /// non-generic type was listed as unresolved. An annotation on a type
+    /// argument needs nothing: the definition lookup reads only the stem and the
+    /// arity. closedType is still the name as the compiler wrote it.
+    /// </remarks>
     private static (GraphNode? Node, string? ClosedType) ResolveFullName(
         string fullName, Dictionary<string, GraphNode> types)
     {
-        if (types.TryGetValue(fullName, out var exact)) return (exact, null);
+        var name = fullName.EndsWith('?') ? fullName[..^1] : fullName;
+        if (types.TryGetValue(name, out var exact)) return (exact, null);
 
-        if (GenericShape(fullName) is not { } shape) return (null, null);
+        if (GenericShape(name) is not { } shape) return (null, null);
         var definition = types
             .Where(t => GenericShape(t.Key) == shape)
             .Select(t => t.Value)
