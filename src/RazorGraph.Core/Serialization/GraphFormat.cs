@@ -219,6 +219,15 @@ internal static class GraphFormat
     /// PageServedBy, HasModel and BindsTo edges <c>@model Foo</c> always had; the
     /// directive text was matched exactly, '?' and all. modelType still records
     /// the directive as written. Additive in the 3.9 sense.
+    /// 3.16 points a partial method or property at the part someone wrote: the
+    /// implementation, unless that is generated and the definition is not. A
+    /// generator-defined, user-implemented hook used to carry the .g.cs location
+    /// and generated=true; it now carries the user's file and line, and no
+    /// generated stamp. An implemented partial method's throws, bodyDepth and
+    /// boundaryCatches are read from its implementation, where before they were
+    /// read from a definition with no body and came out empty. No field is added
+    /// or removed and no edge changes; the values on those nodes do, which is
+    /// the change the bump exists to name.
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -259,7 +268,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(3, 15);
+    public static readonly GraphFormatVersion Current = new(3, 16);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

@@ -17,6 +17,11 @@ using Xunit;
 /// workspace has run the generators -- rather than Project.Documents, which holds
 /// only what is on disk. Until 2026-11-24 the README and the empty-coverage caveat
 /// said this was "not confirmed".
+///
+/// They also pin where a partial member's node points: at the implementation, unless
+/// a generator wrote it and a person wrote the definition. ThermostatCalibration.cs
+/// and ThermostatCalibrationBody.cs add the two-authored-parts and the
+/// generated-implementation shapes beside the toolkit's hooks.
 /// </summary>
 [Trait("Category", "Integration")]
 public class SourceGeneratedCodeTests : IAsyncLifetime
@@ -31,6 +36,11 @@ public class SourceGeneratedCodeTests : IAsyncLifetime
     private const string OnTargetChangedId = "m:" + Thermostat + ".OnTargetChanged(int)";
     private const string OnModeChangedId = "m:" + Thermostat + ".OnModeChanged(string?)";
     private const string RecordId = "m:" + Thermostat + ".Record(string)";
+    private const string OnTargetChangingId = "m:" + Thermostat + ".OnTargetChanging(int)";
+    private const string CalibrateId = "m:" + Thermostat + ".Calibrate(int)";
+    private const string CalibrateOffsetParamId = "param:" + Thermostat + ".Calibrate(int)#offset";
+    private const string OffsetId = "prop:" + Thermostat + ".Offset";
+    private const string DigitsId = "m:" + Thermostat + ".Digits()";
 
     private static string FixtureDir()
     {
@@ -120,5 +130,73 @@ public class SourceGeneratedCodeTests : IAsyncLifetime
 
         Assert.Equal(3, covering["SettingTarget_IsLogged"]);
         Assert.Equal(3, covering["SettingMode_IsLogged"]);
+    }
+
+    private static void AssertAt(GraphNode node, string fileName, int lineStart)
+    {
+        Assert.Equal(fileName, Path.GetFileName(node.FilePath));
+        Assert.Equal(lineStart, node.LineStart);
+        Assert.False(node.GetProperty<bool>("generated"), $"{node.Id} is stamped generated");
+    }
+
+    [Fact]
+    public void AHookTheGeneratorDefinesAndUserCodeImplements_PointsAtTheUserBody()
+    {
+        // The generator's definition sits in a .g.cs that is not on disk; the
+        // implementation is the line a reader came for.
+        var onTargetChanged = Node(OnTargetChangedId);
+        AssertAt(onTargetChanged, "Thermostat.cs", 30);
+        Assert.Equal(30, onTargetChanged.LineEnd);
+        // The definition's /// block came with its line before; this body has none.
+        Assert.Null(onTargetChanged.DocsStart);
+
+        AssertAt(Node(OnModeChangedId), "Thermostat.cs", 32);
+    }
+
+    [Fact]
+    public void AHookNoUserCodeImplements_StaysGenerated()
+    {
+        var onTargetChanging = Node(OnTargetChangingId);
+
+        Assert.EndsWith(".g.cs", onTargetChanging.FilePath);
+        Assert.True(onTargetChanging.GetProperty<bool>("generated"));
+    }
+
+    [Fact]
+    public void APartialMethodWithTwoAuthoredParts_PointsAtItsBody_AndReadsItsThrowsFromIt()
+    {
+        var calibrate = Node(CalibrateId);
+
+        AssertAt(calibrate, "ThermostatCalibrationBody.cs", 12);
+        Assert.Equal(16, calibrate.LineEnd);
+        Assert.Equal(11, calibrate.DocsStart);
+        Assert.Equal(11, calibrate.DocsEnd);
+        // The definition has no body, so reading it gave no throws at all.
+        Assert.Contains("System.ArgumentOutOfRangeException",
+            calibrate.GetProperty<List<string>>("throws") ?? []);
+
+        // The decorated parameter shares the method's file, so its line comes from
+        // the same part: the definition's line 17 would name a line of another file.
+        var offset = Node(CalibrateOffsetParamId);
+        Assert.Equal("ThermostatCalibrationBody.cs", Path.GetFileName(offset.FilePath));
+        Assert.Equal(12, offset.LineStart);
+    }
+
+    [Fact]
+    public void APartialPropertyWithTwoAuthoredParts_PointsAtItsAccessors()
+    {
+        var offset = Node(OffsetId);
+
+        AssertAt(offset, "ThermostatCalibrationBody.cs", 19);
+        Assert.Equal(18, offset.DocsStart);
+    }
+
+    [Fact]
+    public void APartialMemberAGeneratorImplements_KeepsItsAuthoredDeclaration()
+    {
+        // The reverse shape: the user declares, a generator writes the body. The
+        // generated part is the one nobody can open, so the node stays put.
+        AssertAt(Node(ModeId), "Thermostat.cs", 26);
+        AssertAt(Node(DigitsId), "ThermostatCalibration.cs", 24);
     }
 }

@@ -76,6 +76,15 @@ internal static class GeneratedCodeMap
     }
 
     /// <summary>
+    /// Whether a node's final, #line-mapped path is generated scaffolding: the
+    /// rule behind every node's <c>generated</c> stamp, and the one that picks
+    /// which part of a partial member its node points at, so the two can never
+    /// disagree about what counts as generated.
+    /// </summary>
+    internal static bool IsGeneratedPath(string? path) =>
+        path?.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase) == true;
+
+    /// <summary>
     /// Whether an attribute was written by the build rather than a person. The
     /// SDK generates AssemblyInfo.cs and .NETCoreApp…AssemblyAttributes.cs into
     /// obj\ as plain .cs files, so the .g.cs suffix alone misses them — the obj

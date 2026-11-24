@@ -255,6 +255,43 @@ internal static class SymbolClassifier
         return syntaxRef.SyntaxTree.GetMappedLineSpan(span);
     }
 
+    /// <summary>
+    /// The part of a partial member its node points at: the implementation,
+    /// where the body a reader came for lives -- unless the implementation is
+    /// generated and the definition is not, and then the definition.
+    /// </summary>
+    /// <remarks>
+    /// GetMembers hands back the DEFINITION part of a partial method or
+    /// property, and its syntax reference is that part alone. Read as-is, a
+    /// CommunityToolkit.Mvvm hook (<c>partial void OnTargetChanged(int)</c>,
+    /// defined by the generator, implemented by the user) pointed at a line of
+    /// a .g.cs that is not on disk, and was stamped generated (found on the
+    /// SourceGenerated fixture and RetirementCore, 2026-11-24). The opposite
+    /// shape -- the user declares, a generator implements: [GeneratedRegex],
+    /// [LoggerMessage], [LibraryImport], an [ObservableProperty] partial
+    /// property -- keeps the authored declaration, because there the
+    /// implementation is the part nobody can navigate to. A member with no
+    /// implementation part (an unimplemented hook) is its definition, and stays
+    /// where it is.
+    /// </remarks>
+    private static ISymbol LocatedPart(ISymbol member)
+    {
+        ISymbol? implementation = member switch
+        {
+            IMethodSymbol { PartialImplementationPart: { } m } => m,
+            IPropertySymbol { PartialImplementationPart: { } p } => p,
+            _ => null
+        };
+        if (implementation == null) return member;
+        return IsGeneratedDeclaration(implementation) && !IsGeneratedDeclaration(member)
+            ? member
+            : implementation;
+
+        static bool IsGeneratedDeclaration(ISymbol part) =>
+            part.DeclaringSyntaxReferences.FirstOrDefault() is { } r
+            && GeneratedCodeMap.IsGeneratedPath(DeclarationSpan(r).Path);
+    }
+
     private static List<PropertyInfo> ExtractProperties(INamedTypeSymbol symbol, AttributePolicy policy) =>
         symbol.GetMembers().OfType<IPropertySymbol>()
             .Select(p => new PropertyInfo
@@ -331,7 +368,7 @@ internal static class SymbolClassifier
             };
             if (detail == null) continue;
 
-            var syntaxRef = member.DeclaringSyntaxReferences.FirstOrDefault();
+            var syntaxRef = LocatedPart(member).DeclaringSyntaxReferences.FirstOrDefault();
             if (syntaxRef != null)
             {
                 var span = DeclarationSpan(syntaxRef);
@@ -506,20 +543,25 @@ internal static class SymbolClassifier
         return members
             .Select(m =>
             {
-                var syntaxRef = m.DeclaringSyntaxReferences.FirstOrDefault();
+                var located = (IMethodSymbol)LocatedPart(m);
+                var syntaxRef = located.DeclaringSyntaxReferences.FirstOrDefault();
                 // Mapped: a method authored in a .cshtml block reports the
                 // .cshtml; generated scaffolding keeps its .g.cs path.
                 FileLinePositionSpan? mapped = syntaxRef == null
                     ? null
                     : DeclarationSpan(syntaxRef);
                 var docs = syntaxRef == null ? null : DocumentationLines(syntaxRef);
+                // The body is the implementation part's whichever part the node
+                // points at: a partial method's definition has none, so reading
+                // it left every implemented partial with no throws and no depth.
+                var bodyRef = (m.PartialImplementationPart ?? m).DeclaringSyntaxReferences.FirstOrDefault();
                 // The scope holding this method's body: an ordinary declaration,
                 // or the compilation unit when the method is the synthesized
                 // entry point of a top-level program. Deliberately not "whatever
                 // syntax the symbol points at" — a primary constructor's
                 // reference is its *type* declaration, and walking that would
                 // attribute every throw in the type to the constructor.
-                var bodyScope = syntaxRef?.GetSyntax() switch
+                var bodyScope = bodyRef?.GetSyntax() switch
                 {
                     BaseMethodDeclarationSyntax d => (SyntaxNode)d,
                     CompilationUnitSyntax unit => unit,
@@ -568,13 +610,13 @@ internal static class SymbolClassifier
                     OverridesIds = InSolutionOverriddenMembers(m, inScope),
                     BoundaryCatches = boundaryCatches,
                     BoundaryCatchesFiltered = boundaryFiltered,
-                    FilePath = mapped?.Path ?? m.Locations.FirstOrDefault()?.SourceTree?.FilePath,
+                    FilePath = mapped?.Path ?? located.Locations.FirstOrDefault()?.SourceTree?.FilePath,
                     LineStart = mapped?.StartLinePosition.Line + 1,
                     LineEnd = mapped?.EndLinePosition.Line + 1,
                     DocsStart = docs?.Start,
                     DocsEnd = docs?.End,
                     Attributes = ExtractMethodAttributes(m, inScope),
-                    Parameters = ExtractParameterNodes(m, inScope)
+                    Parameters = ExtractParameterNodes(m, located, inScope)
                 };
             })
             .ToList();
@@ -587,13 +629,22 @@ internal static class SymbolClassifier
     /// extension method has folded its this parameter away, and reading the
     /// reduced list would shift every ordinal by one.
     /// </summary>
-    private static List<ParameterDetail> ExtractParameterNodes(IMethodSymbol method, IReadOnlySet<string> inScope)
+    private static List<ParameterDetail> ExtractParameterNodes(
+        IMethodSymbol method, IMethodSymbol located, IReadOnlySet<string> inScope)
     {
         // Canonical is the same resolution ParameterId uses, so the parameters
         // enumerated here and the ids minted for them can never disagree —
         // including for an extension-block member, whose implementation carries
         // a receiver the declaration itself does not.
         var def = SymbolIds.Canonical(method);
+
+        // A parameter node shares its method's file, so its line must come from
+        // the same part the method node points at (see LocatedPart): the other
+        // part's line would name a line in a different file.
+        var lineSource = SymbolEqualityComparer.Default.Equals(located, method)
+                         || located.Parameters.Length != def.Parameters.Length
+            ? def.Parameters
+            : located.Parameters;
 
         var result = new List<ParameterDetail>();
         foreach (var p in def.Parameters)
@@ -605,7 +656,7 @@ internal static class SymbolClassifier
                 p.Name,
                 p.Ordinal,
                 p.Type.ToDisplayString(),
-                p.Locations.FirstOrDefault()?.GetMappedLineSpan().StartLinePosition.Line + 1)
+                lineSource[p.Ordinal].Locations.FirstOrDefault()?.GetMappedLineSpan().StartLinePosition.Line + 1)
             {
                 Attributes = ExtractAttributes(p, "parameter", inScope)
             });

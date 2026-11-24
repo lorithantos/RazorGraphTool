@@ -321,7 +321,7 @@ internal sealed class DeclarationEmitter(CodeGraph graph)
     /// </summary>
     private static void StampGenerated(GraphNode node)
     {
-        if (node.FilePath?.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase) == true)
+        if (GeneratedCodeMap.IsGeneratedPath(node.FilePath))
             node.SetProperty("generated", true);
     }
 
