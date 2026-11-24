@@ -494,14 +494,28 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
         if (suffix.Count == 1) return (suffix[0].Value, null);
         if (suffix.Count > 1) return (null, null);
 
-        if (GenericShape(name) is not { } shape) return (null, null);
-        var definitions = types
+        return GenericDefinition(name, types) is { } definition ? (definition, written) : (null, null);
+    }
+
+    /// <summary>
+    /// The open definition a constructed generic written in a Razor file names:
+    /// the one candidate whose full name has the same arity and whose stem is the
+    /// written stem, or ends in it after a dot, so <c>IShelf&lt;Part&gt;</c> and
+    /// <c>SampleLib.IShelf&lt;SampleLib.Part&gt;</c> both reach
+    /// <c>SampleLib.IShelf&lt;T&gt;</c>. Null for a name that is not generic, for
+    /// none, and for more than one, because picking one would be a guess.
+    /// </summary>
+    private static T? GenericDefinition<T>(string written, IEnumerable<KeyValuePair<string, T>> candidates)
+        where T : class
+    {
+        if (GenericShape(written) is not { } shape) return null;
+        var definitions = candidates
             .Where(t => GenericShape(t.Key) is { } other
                         && other.Arity == shape.Arity
                         && (other.Stem == shape.Stem || other.Stem.EndsWith("." + shape.Stem, StringComparison.Ordinal)))
             .Take(2)
             .ToList();
-        return definitions.Count == 1 ? (definitions[0].Value, written) : (null, null);
+        return definitions.Count == 1 ? definitions[0].Value : null;
     }
 
     /// <summary>
@@ -557,6 +571,13 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
     /// lost PageServedBy, HasModel and BindsTo for it. The modelType property
     /// AddRazorNode records keeps the directive as written. Same rule as
     /// ResolveFullName applies to an @inject type.
+    ///
+    /// A generic model never equals a node's name, so <c>@model Paged&lt;Card&gt;</c>
+    /// and <c>@model List&lt;Card&gt;</c> had no model edges at all. A generic the
+    /// solution declares now reaches its open definition, as an @inject type does,
+    /// and a framework collection of one type argument reaches that argument, the
+    /// edge saying so (MarkModelReach). asp-for binds to whatever the model
+    /// reached, so <c>asp-for="@Model[0].Name"</c> on a List of Card binds to Card.
     /// </remarks>
     private void CorrelateRazorToRoslyn(RazorPageInfo info, List<SymbolInfo> symbols, string? idScope)
     {
@@ -565,18 +586,21 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
         // Link page → PageModel
         if (modelType != null)
         {
-            var modelNode = symbols.FirstOrDefault(s =>
-                s.Type == NodeType.PageModel &&
-                (s.FullName == modelType || s.Name == modelType));
+            var pageModels = symbols.Where(s => s.Type == NodeType.PageModel).ToList();
+            var modelNode = pageModels.FirstOrDefault(s => s.FullName == modelType || s.Name == modelType);
+            var throughDefinition = modelNode is null
+                && (modelNode = GenericDefinition(modelType, pageModels.Select(s => KeyValuePair.Create(s.FullName, s)))) is not null;
 
             if (modelNode != null)
             {
-                graph.AddEdge(new GraphEdge
+                var served = new GraphEdge
                 {
                     FromId = info.Id,
                     ToId = modelNode.Id,
                     Type = EdgeType.PageServedBy
-                });
+                };
+                if (throughDefinition) served.Properties["closedType"] = info.ModelType!;
+                graph.AddEdge(served);
 
                 // Link PageModel → page (bidirectional for queries)
                 graph.AddEdge(new GraphEdge
@@ -591,20 +615,26 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
         // Link page → ViewModel class
         if (modelType != null)
         {
-            var vmNode = graph.Nodes.FirstOrDefault(n =>
-                (n.Type == NodeType.ViewModel || n.Type == NodeType.Class) &&
-                (n.GetProperty<string>("fullName") == modelType || n.Name == modelType));
+            var (vmNode, reach) = ResolveModelType(modelType,
+                graph.Nodes.Where(n => n.Type == NodeType.ViewModel || n.Type == NodeType.Class));
 
             if (vmNode != null)
             {
-                graph.AddEdge(new GraphEdge
+                var hasModel = new GraphEdge
                 {
                     FromId = info.Id,
                     ToId = vmNode.Id,
                     Type = EdgeType.HasModel
-                });
+                };
+                MarkModelReach(hasModel, reach, info.ModelType!);
+                graph.AddEdge(hasModel);
             }
         }
+
+        // What asp-for binds to: the same lookup over every node, as it always was.
+        var (bindsTo, bindsReach) = modelType is null || !info.TagHelpers.Any(th => th.Attributes.Any(a => a.Name == "asp-for"))
+            ? (null, ModelReach.Exact)
+            : ResolveModelType(modelType, graph.Nodes);
 
         // Link page → layout
         if (info.Layout != null)
@@ -649,22 +679,105 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
                 });
 
                 // Try to bind to ViewModel property
-                if (modelType != null)
+                if (bindsTo != null)
                 {
-                    var vmNode = graph.Nodes.FirstOrDefault(n =>
-                        n.Name == modelType || n.GetProperty<string>("fullName") == modelType);
-
-                    if (vmNode != null)
+                    var binds = new GraphEdge
                     {
-                        graph.AddEdge(new GraphEdge
-                        {
-                            FromId = thNodeId,
-                            ToId = vmNode.Id,
-                            Type = EdgeType.BindsTo
-                        });
-                    }
+                        FromId = thNodeId,
+                        ToId = bindsTo.Id,
+                        Type = EdgeType.BindsTo
+                    };
+                    MarkModelReach(binds, bindsReach, info.ModelType!);
+                    graph.AddEdge(binds);
                 }
             }
+        }
+    }
+
+    /// <summary>How a @model type reached its node.</summary>
+    private enum ModelReach
+    {
+        /// <summary>Its full or short name, as a plain <c>@model Foo</c> always did.</summary>
+        Exact,
+
+        /// <summary>
+        /// The open definition of a generic the solution declares:
+        /// <c>Paged&lt;Card&gt;</c> reaches <c>Paged&lt;T&gt;</c>.
+        /// </summary>
+        Definition,
+
+        /// <summary>
+        /// The element of a framework collection: <c>List&lt;Card&gt;</c> and
+        /// <c>IEnumerable&lt;Card&gt;</c> reach Card, because the page shows many
+        /// of them and the collection has no node of its own.
+        /// </summary>
+        Element
+    }
+
+    /// <summary>
+    /// The framework collections whose one type argument a @model edge goes to.
+    /// Matched by name, bare or qualified, because Razor files write them bare.
+    /// </summary>
+    private static readonly HashSet<string> CollectionStems = new(StringComparer.Ordinal)
+    {
+        "IEnumerable", "ICollection", "IList", "IReadOnlyCollection", "IReadOnlyList", "List"
+    };
+
+    /// <summary>
+    /// The node a @model type names among <paramref name="candidates"/>: by full
+    /// or short name first, unchanged; then, for a generic the solution declares,
+    /// its open definition by the rule an @inject type uses; then, for a
+    /// framework collection of one type argument, that argument by the same two
+    /// rules. The name comes without its trailing '?'.
+    /// </summary>
+    private static (GraphNode? Node, ModelReach Reach) ResolveModelType(string modelType, IEnumerable<GraphNode> candidates)
+    {
+        GraphNode? Exact(string name) =>
+            candidates.FirstOrDefault(n => n.GetProperty<string>("fullName") == name || n.Name == name);
+        GraphNode? Definition(string name) => GenericDefinition(name, candidates
+            .Where(n => n.Type != NodeType.ExternalType && n.GetProperty<string>("fullName") is { Length: > 0 })
+            .Select(n => KeyValuePair.Create(n.GetProperty<string>("fullName")!, n)));
+
+        if (Exact(modelType) is { } exact) return (exact, ModelReach.Exact);
+        if (Definition(modelType) is { } definition) return (definition, ModelReach.Definition);
+        if (CollectionElement(modelType) is { } element
+            && (Exact(element) ?? Definition(element)) is { } item)
+            return (item, ModelReach.Element);
+        return (null, ModelReach.Exact);
+    }
+
+    /// <summary>
+    /// The one type argument of a framework collection named in
+    /// <see cref="CollectionStems"/>, without spaces or a trailing '?', or null
+    /// for anything else.
+    /// </summary>
+    private static string? CollectionElement(string modelType)
+    {
+        if (GenericShape(modelType) is not { Arity: 1 } shape) return null;
+        var stem = shape.Stem.StartsWith("System.Collections.Generic.", StringComparison.Ordinal)
+            ? shape.Stem["System.Collections.Generic.".Length..]
+            : shape.Stem;
+        if (!CollectionStems.Contains(stem)) return null;
+        var element = modelType[(shape.Stem.Length + 1)..^1].Replace(" ", string.Empty).TrimEnd('?');
+        return element.Length > 0 ? element : null;
+    }
+
+    /// <summary>
+    /// Says on a model edge how it was reached, when not by name: closedType,
+    /// the directive as written, as an @inject edge carries it, for an open
+    /// definition; collection and modelType for a collection's element.
+    /// </summary>
+    private static void MarkModelReach(GraphEdge edge, ModelReach reach, string written)
+    {
+        switch (reach)
+        {
+            case ModelReach.Definition:
+                edge.Properties["closedType"] = written;
+                break;
+            case ModelReach.Element:
+                edge.Properties["collection"] = true;
+                edge.Properties["modelType"] = written;
+                break;
         }
     }
 

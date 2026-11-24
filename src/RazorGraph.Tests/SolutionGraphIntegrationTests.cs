@@ -456,6 +456,87 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         Assert.Equal(["SampleWeb.Pages.NullableCard"], BindsTo(partial));
     }
 
+    /// <summary>
+    /// A generic @model never equalled a node's name, so every one had no model
+    /// edges. A generic the solution declares reaches its open definition, written
+    /// bare or qualified, and the edge carries the directive as closedType, as an
+    /// @inject edge does: Listing.cshtml (<c>ListingModel&lt;NullableCard&gt;</c>),
+    /// _PagedCards.cshtml (<c>SampleWeb.Pages.Paged&lt;SampleWeb.Pages.NullableCard&gt;</c>)
+    /// and _ShelfOfParts.cshtml (<c>SampleLib.IShelf&lt;SampleLib.PlainPart&gt;</c>).
+    /// </summary>
+    [Fact]
+    public void Builds_ModelEdges_ToTheOpenDefinition_ForADeclaredGenericModel()
+    {
+        string Target(GraphEdge e) => _solutionGraph!.GetNode(e.ToId)!.GetProperty<string>("fullName")!;
+        GraphNode Razor(string name) => _solutionGraph!.Nodes.Single(n =>
+            (n.Type == NodeType.RazorPage || n.Type == NodeType.PartialView) && n.Name == name
+            && n.GetProperty<string>("project") == "SampleWeb");
+        List<GraphEdge> BindsTo(GraphNode razor) => _solutionGraph!.Outgoing(razor.Id)
+            .Where(e => e.Type == EdgeType.RendersComponent)
+            .SelectMany(e => _solutionGraph.Outgoing(e.ToId))
+            .Where(e => e.Type == EdgeType.BindsTo)
+            .ToList();
+
+        var page = Razor("Listing");
+        var served = Assert.Single(_solutionGraph!.Outgoing(page.Id), e => e.Type == EdgeType.PageServedBy);
+        Assert.Equal("SampleWeb.Pages.ListingModel<T>", Target(served));
+        Assert.Equal("ListingModel<NullableCard>", served.GetProperty<string>("closedType"));
+        Assert.Contains(_solutionGraph.Outgoing(served.ToId), e => e.Type == EdgeType.ReturnsView && e.ToId == page.Id);
+        var pageBinds = Assert.Single(BindsTo(page));
+        Assert.Equal("SampleWeb.Pages.ListingModel<T>", Target(pageBinds));
+        Assert.Equal("ListingModel<NullableCard>", pageBinds.GetProperty<string>("closedType"));
+
+        var paged = Razor("_PagedCards");
+        var hasModel = Assert.Single(_solutionGraph.Outgoing(paged.Id), e => e.Type == EdgeType.HasModel);
+        Assert.Equal("SampleWeb.Pages.Paged<T>", Target(hasModel));
+        Assert.Equal("SampleWeb.Pages.Paged<SampleWeb.Pages.NullableCard>", hasModel.GetProperty<string>("closedType"));
+        Assert.False(hasModel.Properties.ContainsKey("collection"));
+        Assert.Equal("SampleWeb.Pages.Paged<T>", Target(Assert.Single(BindsTo(paged))));
+
+        var shelf = Razor("_ShelfOfParts");
+        var shelfModel = Assert.Single(_solutionGraph.Outgoing(shelf.Id), e => e.Type == EdgeType.HasModel);
+        Assert.Equal("SampleLib.IShelf<T>", Target(shelfModel));
+        Assert.Equal("SampleLib.IShelf<SampleLib.PlainPart>", shelfModel.GetProperty<string>("closedType"));
+    }
+
+    /// <summary>
+    /// A framework collection of a solution type has no node, and the page shows
+    /// many of its element: _CardList.cshtml (<c>List&lt;NullableCard&gt;</c>) and
+    /// _CardSequence.cshtml (<c>IEnumerable&lt;SampleWeb.Pages.NullableCard?&gt;?</c>)
+    /// reach NullableCard, the edge marked collection and carrying the directive
+    /// as modelType, and an indexed asp-for binds to the element the same way.
+    /// _CardsByName.cshtml (<c>Dictionary&lt;string, NullableCard&gt;</c>) is not a
+    /// one-argument collection and gets none.
+    /// </summary>
+    [Fact]
+    public void Builds_ModelEdges_ToTheElement_ForAFrameworkCollectionModel()
+    {
+        string Target(GraphEdge e) => _solutionGraph!.GetNode(e.ToId)!.GetProperty<string>("fullName")!;
+        GraphNode Razor(string name) => _solutionGraph!.Nodes.Single(n =>
+            n.Type == NodeType.PartialView && n.Name == name && n.GetProperty<string>("project") == "SampleWeb");
+
+        var list = Razor("_CardList");
+        var hasModel = Assert.Single(_solutionGraph!.Outgoing(list.Id), e => e.Type == EdgeType.HasModel);
+        Assert.Equal("SampleWeb.Pages.NullableCard", Target(hasModel));
+        Assert.True(hasModel.GetProperty<bool>("collection"));
+        Assert.Equal("List<NullableCard>", hasModel.GetProperty<string>("modelType"));
+        Assert.False(hasModel.Properties.ContainsKey("closedType"));
+        var binds = Assert.Single(_solutionGraph.Outgoing(list.Id)
+            .Where(e => e.Type == EdgeType.RendersComponent)
+            .SelectMany(e => _solutionGraph.Outgoing(e.ToId)), e => e.Type == EdgeType.BindsTo);
+        Assert.Equal("SampleWeb.Pages.NullableCard", Target(binds));
+        Assert.True(binds.GetProperty<bool>("collection"));
+
+        var sequence = Razor("_CardSequence");
+        var sequenceModel = Assert.Single(_solutionGraph.Outgoing(sequence.Id), e => e.Type == EdgeType.HasModel);
+        Assert.Equal("SampleWeb.Pages.NullableCard", Target(sequenceModel));
+        Assert.Equal("IEnumerable<SampleWeb.Pages.NullableCard?>?", sequenceModel.GetProperty<string>("modelType"));
+
+        var byName = Razor("_CardsByName");
+        Assert.DoesNotContain(_solutionGraph.Outgoing(byName.Id),
+            e => e.Type is EdgeType.HasModel or EdgeType.PageServedBy);
+    }
+
     // ---- Coverage ------------------------------------------------------------
 
     [Fact]

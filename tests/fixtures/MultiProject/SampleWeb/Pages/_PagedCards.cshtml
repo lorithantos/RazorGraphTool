@@ -1,0 +1,6 @@
+@model SampleWeb.Pages.Paged<SampleWeb.Pages.NullableCard>
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+
+@* A generic model the solution declares, written closed and qualified:
+   HasModel to Paged<T>, BindsTo from the asp-for below. *@
+<label asp-for="PageIndex"></label>

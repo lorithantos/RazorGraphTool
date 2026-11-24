@@ -232,6 +232,13 @@ internal static class GraphFormat
     /// and ViewModel count. Such a type is a Class now, so its id moves from
     /// vm: to type: and it leaves the XAML DataBinds candidate set. Measured on
     /// four corpora, six nodes changed type and no edge appeared or vanished.
+    /// 3.18 resolves a generic @model. A generic the solution declares reaches
+    /// its open definition, with closedType carrying the directive as written,
+    /// as an @inject edge does; a one-argument framework collection (List,
+    /// IEnumerable and kin) reaches its element type, and that HasModel edge
+    /// carries collection: true and modelType. Before, no generic @model got
+    /// PageServedBy, HasModel or BindsTo at all. Additive in the 3.9 sense: more
+    /// edges of kinds a 3.17 reader knows, and two new properties on them.
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -272,7 +279,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(3, 17);
+    public static readonly GraphFormatVersion Current = new(3, 18);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

@@ -1,0 +1,9 @@
+@using SampleWeb.Pages
+@model List<NullableCard>
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+
+@* A framework collection of a solution type: HasModel to the element,
+   marked as a collection, and the indexed asp-for binds to the element too.
+   An index needs the @Model form: asp-for="[0].Caption" compiles to
+   __model.[0].Caption, which is not C#. *@
+<label asp-for="@Model[0].Caption"></label>
