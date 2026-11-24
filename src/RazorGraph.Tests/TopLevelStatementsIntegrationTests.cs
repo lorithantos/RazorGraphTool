@@ -1,6 +1,5 @@
 namespace RazorGraph.Tests;
 
-using System.Diagnostics;
 using RazorGraph.Core.Graph;
 using RazorGraph.Extractor;
 using Xunit;
@@ -62,17 +61,7 @@ public class TopLevelStatementsIntegrationTests : IAsyncLifetime
     private static void EnsureRestored(string fixtureDir)
     {
         if (File.Exists(Path.Combine(fixtureDir, "obj", "project.assets.json"))) return;
-
-        var psi = new ProcessStartInfo("dotnet", "restore")
-        {
-            WorkingDirectory = fixtureDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-        using var process = Process.Start(psi)!;
-        var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        Assert.True(process.ExitCode == 0, $"dotnet restore of fixture failed:\n{output}");
+        BoundedWaits.Restore(fixtureDir, "", "the fixture");
     }
 
     private static string MethodId(string name) =>

@@ -1,6 +1,5 @@
 namespace RazorGraph.Tests;
 
-using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -137,16 +136,6 @@ public sealed class GraphCacheTests : IDisposable
     private static void EnsureRestored(string fixtureDir)
     {
         if (File.Exists(Path.Combine(fixtureDir, "SampleLib", "obj", "project.assets.json"))) return;
-
-        var psi = new ProcessStartInfo("dotnet", "restore MultiProject.sln")
-        {
-            WorkingDirectory = fixtureDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-        using var process = Process.Start(psi)!;
-        var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        Assert.True(process.ExitCode == 0, $"dotnet restore of fixture solution failed:\n{output}");
+        BoundedWaits.Restore(fixtureDir, "MultiProject.sln", "the fixture solution");
     }
 }

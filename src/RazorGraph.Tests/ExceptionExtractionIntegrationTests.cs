@@ -1,6 +1,5 @@
 namespace RazorGraph.Tests;
 
-using System.Diagnostics;
 using RazorGraph.Core.Graph;
 using RazorGraph.Extractor;
 using Xunit;
@@ -363,14 +362,6 @@ public class ExceptionExtractionIntegrationTests : IAsyncLifetime
     private static void EnsureRestored(string fixtureDir)
     {
         if (File.Exists(Path.Combine(fixtureDir, "SampleLib", "obj", "project.assets.json"))) return;
-
-        var psi = new ProcessStartInfo("dotnet", "restore MultiProject.sln")
-        {
-            WorkingDirectory = fixtureDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-        using var process = Process.Start(psi)!;
-        process.WaitForExit();
+        BoundedWaits.Restore(fixtureDir, "MultiProject.sln", "the fixture solution");
     }
 }
