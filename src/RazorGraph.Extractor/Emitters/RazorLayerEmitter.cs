@@ -551,14 +551,23 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
         graph.AddNode(node);
     }
 
+    /// <remarks>
+    /// The model is looked up without a trailing '?': <c>@model Foo?</c> is legal,
+    /// and no node's name or full name carries the annotation, so the exact match
+    /// lost PageServedBy, HasModel and BindsTo for it. The modelType property
+    /// AddRazorNode records keeps the directive as written. Same rule as
+    /// ResolveFullName applies to an @inject type.
+    /// </remarks>
     private void CorrelateRazorToRoslyn(RazorPageInfo info, List<SymbolInfo> symbols, string? idScope)
     {
+        var modelType = info.ModelType is { } written && written.EndsWith('?') ? written[..^1] : info.ModelType;
+
         // Link page → PageModel
-        if (info.ModelType != null)
+        if (modelType != null)
         {
             var modelNode = symbols.FirstOrDefault(s =>
                 s.Type == NodeType.PageModel &&
-                (s.FullName == info.ModelType || s.Name == info.ModelType));
+                (s.FullName == modelType || s.Name == modelType));
 
             if (modelNode != null)
             {
@@ -580,11 +589,11 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
         }
 
         // Link page → ViewModel class
-        if (info.ModelType != null)
+        if (modelType != null)
         {
             var vmNode = graph.Nodes.FirstOrDefault(n =>
                 (n.Type == NodeType.ViewModel || n.Type == NodeType.Class) &&
-                (n.GetProperty<string>("fullName") == info.ModelType || n.Name == info.ModelType));
+                (n.GetProperty<string>("fullName") == modelType || n.Name == modelType));
 
             if (vmNode != null)
             {
@@ -640,10 +649,10 @@ internal sealed class RazorLayerEmitter(CodeGraph graph, ClientAssetEmitter clie
                 });
 
                 // Try to bind to ViewModel property
-                if (info.ModelType != null)
+                if (modelType != null)
                 {
                     var vmNode = graph.Nodes.FirstOrDefault(n =>
-                        n.Name == info.ModelType || n.GetProperty<string>("fullName") == info.ModelType);
+                        n.Name == modelType || n.GetProperty<string>("fullName") == modelType);
 
                     if (vmNode != null)
                     {

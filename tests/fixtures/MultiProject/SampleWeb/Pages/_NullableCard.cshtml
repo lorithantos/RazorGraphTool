@@ -1,0 +1,6 @@
+@model SampleWeb.Pages.NullableCard?
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+
+@* A partial whose model is a plain class written with a nullable annotation:
+   HasModel to the class, BindsTo from the asp-for below. *@
+<label asp-for="Caption"></label>

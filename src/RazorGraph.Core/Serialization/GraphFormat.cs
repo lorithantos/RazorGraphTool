@@ -215,6 +215,10 @@ internal static class GraphFormat
     /// sense: more edges of a kind and shape a 3.13 reader already knows, and
     /// fewer unresolvedInjections entries where an edge took their place, which
     /// is the population change the bump exists to name.
+    /// 3.15 gives a page whose directive reads <c>@model Foo?</c> the
+    /// PageServedBy, HasModel and BindsTo edges <c>@model Foo</c> always had; the
+    /// directive text was matched exactly, '?' and all. modelType still records
+    /// the directive as written. Additive in the 3.9 sense.
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -255,7 +259,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(3, 14);
+    public static readonly GraphFormatVersion Current = new(3, 15);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

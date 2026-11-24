@@ -421,6 +421,41 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
         Assert.Null(page.GetProperty<List<object>>("unresolvedInjections"));
     }
 
+    /// <summary>
+    /// SampleWeb's Nullable.cshtml says <c>@model SampleWeb.Pages.NullableModel?</c>
+    /// and its partial _NullableCard.cshtml says <c>@model SampleWeb.Pages.NullableCard?</c>.
+    /// The model was matched against node names exactly, '?' included, so both
+    /// lost every model edge. They resolve as the unannotated name does, and
+    /// modelType still records the directive as written.
+    /// </summary>
+    [Fact]
+    public void Builds_ModelEdges_ForANullableAnnotatedModelDirective()
+    {
+        string Target(GraphEdge e) => _solutionGraph!.GetNode(e.ToId)!.GetProperty<string>("fullName")!;
+        GraphNode Razor(string name) => _solutionGraph!.Nodes.Single(n =>
+            (n.Type == NodeType.RazorPage || n.Type == NodeType.PartialView) && n.Name == name
+            && n.GetProperty<string>("project") == "SampleWeb");
+        List<string> BindsTo(GraphNode razor) => _solutionGraph!.Outgoing(razor.Id)
+            .Where(e => e.Type == EdgeType.RendersComponent)
+            .SelectMany(e => _solutionGraph.Outgoing(e.ToId))
+            .Where(e => e.Type == EdgeType.BindsTo)
+            .Select(Target)
+            .ToList();
+
+        var page = Razor("Nullable");
+        Assert.Equal("SampleWeb.Pages.NullableModel?", page.GetProperty<string>("modelType"));
+        var served = Assert.Single(_solutionGraph!.Outgoing(page.Id), e => e.Type == EdgeType.PageServedBy);
+        Assert.Equal("SampleWeb.Pages.NullableModel", Target(served));
+        Assert.Contains(_solutionGraph.Outgoing(served.ToId), e => e.Type == EdgeType.ReturnsView && e.ToId == page.Id);
+        Assert.Equal(["SampleWeb.Pages.NullableModel"], BindsTo(page));
+
+        var partial = Razor("_NullableCard");
+        Assert.Equal("SampleWeb.Pages.NullableCard?", partial.GetProperty<string>("modelType"));
+        var hasModel = Assert.Single(_solutionGraph.Outgoing(partial.Id), e => e.Type == EdgeType.HasModel);
+        Assert.Equal("SampleWeb.Pages.NullableCard", Target(hasModel));
+        Assert.Equal(["SampleWeb.Pages.NullableCard"], BindsTo(partial));
+    }
+
     // ---- Coverage ------------------------------------------------------------
 
     [Fact]
@@ -1156,7 +1191,7 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     [Fact]
     public void GeneratedRazorClasses_AreMarked_AndLinkedToTheirPage()
     {
-        var page = _solutionGraph!.Nodes.Single(n => n.Type == NodeType.RazorPage);
+        var page = _solutionGraph!.Nodes.Single(n => n.Type == NodeType.RazorPage && n.Name == "Index");
 
         // The Razor-layer page node and the Roslyn-layer generated class are
         // two views of the same artifact; the compiledInto edge is the join.
@@ -2433,7 +2468,7 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     [Fact]
     public void RazorAndAssetIds_AreScopedByProject()
     {
-        var page = _solutionGraph!.Nodes.Single(n => n.Type == NodeType.RazorPage);
+        var page = _solutionGraph!.Nodes.Single(n => n.Type == NodeType.RazorPage && n.Name == "Index");
 
         Assert.StartsWith("page:SampleWeb/", page.Id);
         Assert.Equal("SampleWeb", page.GetProperty<string>("project"));
@@ -2446,7 +2481,7 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
     public void SingleProjectBuild_KeepsUnscopedIds()
     {
         // Existing saved graphs and their ids must survive this change.
-        var page = _webOnlyGraph!.Nodes.Single(n => n.Type == NodeType.RazorPage);
+        var page = _webOnlyGraph!.Nodes.Single(n => n.Type == NodeType.RazorPage && n.Name == "Index");
 
         Assert.StartsWith("page:Pages", page.Id);
         Assert.Contains(_webOnlyGraph.Nodes, n => n.Id == "js:wwwroot/js/site.js");

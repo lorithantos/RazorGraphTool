@@ -1,0 +1,12 @@
+@page
+@model SampleWeb.Pages.NullableModel?
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+
+@* The model is written with a nullable annotation. It is legal, and it must
+   resolve exactly as the unannotated name does: PageServedBy to the page
+   model, BindsTo from the asp-for below. *@
+<form method="post">
+    <input asp-for="Name" />
+</form>
+
+<partial name="_NullableCard" model="Model?.Card" />
