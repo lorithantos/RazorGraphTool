@@ -89,6 +89,10 @@ public class SymbolClassifierAgreementTests
             public string Describe() => "view model";
         }
 
+        /// <summary>Name-suffix probes for the view-model rule; not part of the agreement set.</summary>
+        public class WidgetVM : WidgetBase { }
+        public class WidgetModel : WidgetBase { }
+
         /// <summary>Routes to the plain-class fallback: named for none of the heuristics.</summary>
         [Mark]
         public class WidgetHelper : WidgetBase, IWidget
@@ -165,6 +169,17 @@ public class SymbolClassifierAgreementTests
     [InlineData("WidgetViewModel", NodeType.ViewModel)]
     [InlineData(Reference, NodeType.Class)]
     public void EachFixture_TakesItsOwnBranch(string typeName, NodeType expected) =>
+        Assert.Equal(expected, Classify(typeName).Type);
+
+    /// <summary>
+    /// A view model is named one: VM or ViewModel. A bare "Model" suffix names
+    /// entities, DTOs, migrations and domain models far more often, and it is a
+    /// Class (dropped 2026-11-24; see ClassifySymbol).
+    /// </summary>
+    [Theory]
+    [InlineData("WidgetVM", NodeType.ViewModel)]
+    [InlineData("WidgetModel", NodeType.Class)]
+    public void OnlyAViewModelName_MakesAViewModel(string typeName, NodeType expected) =>
         Assert.Equal(expected, Classify(typeName).Type);
 
     /// <summary>

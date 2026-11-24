@@ -228,6 +228,10 @@ internal static class GraphFormat
     /// read from a definition with no body and came out empty. No field is added
     /// or removed and no edge changes; the values on those nodes do, which is
     /// the change the bump exists to name.
+    /// 3.17 stops calling a type a ViewModel for a bare "Model" suffix; only VM
+    /// and ViewModel count. Such a type is a Class now, so its id moves from
+    /// vm: to type: and it leaves the XAML DataBinds candidate set. Measured on
+    /// four corpora, six nodes changed type and no edge appeared or vanished.
     /// </summary>
     /// <remarks>
     /// 1.4 is worth reading as two different kinds of addition. Constructs is a new
@@ -268,7 +272,7 @@ internal static class GraphFormat
     /// the case against leaving it: nothing broke, and nothing said anything either.
     /// </para>
     /// </remarks>
-    public static readonly GraphFormatVersion Current = new(3, 16);
+    public static readonly GraphFormatVersion Current = new(3, 17);
 
     /// <summary>The JSON property name carrying the stamp.</summary>
     public const string PropertyName = "formatVersion";

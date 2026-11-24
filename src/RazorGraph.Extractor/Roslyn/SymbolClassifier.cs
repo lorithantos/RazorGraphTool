@@ -118,8 +118,16 @@ internal static class SymbolClassifier
                 ? NodeType.ServiceInterface
                 : NodeType.ServiceImplementation);
 
-        // ViewModel detection (heuristic: ends with VM or ViewModel, or used in @model directives)
-        if (symbol.Name.EndsWith("VM") || symbol.Name.EndsWith("ViewModel") || symbol.Name.EndsWith("Model"))
+        // ViewModel detection, by name: ends in VM or ViewModel. A bare "Model"
+        // suffix was dropped 2026-11-24: it promoted EF migrations
+        // (InitialModel), DI helpers (TimelineModel) and the plain domain models
+        // codebases routinely name *Model, and the label is not cosmetic -- it
+        // bounds the XAML DataBinds candidate set, where a wrong candidate makes
+        // a wrong edge that reads as confirmation. Measured on eShopOnWeb,
+        // RazorGraphTool, RetirementCore and ImageSelectorV2, no edge depended
+        // on it: HasModel accepts a Class as well, and the six types it promoted
+        // are Class nodes now. A page's @model type needs no promotion either.
+        if (symbol.Name.EndsWith("VM") || symbol.Name.EndsWith("ViewModel"))
             return Node("vm", NodeType.ViewModel);
 
         // Everything else that is still a declared type in this project. Without
