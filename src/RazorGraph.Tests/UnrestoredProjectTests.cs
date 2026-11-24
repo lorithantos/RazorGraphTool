@@ -1,6 +1,5 @@
 namespace RazorGraph.Tests;
 
-using System.Diagnostics;
 using System.Text.Json;
 using ModelContextProtocol;
 using RazorGraph.Core.Graph;
@@ -39,8 +38,10 @@ public sealed class UnrestoredProjectTests : IAsyncLifetime
 
         // Cached inside the temp directory, so the run neither litters nor reads the
         // real per-user cache.
-        _response = await new GraphStoreTools(_store) { CacheDirectory = Path.Combine(_dir, "cache") }
-            .BuildSolution(_solutionPath, graphId: "unrestored", excludeText: true);
+        var tools = new GraphStoreTools(_store) { CacheDirectory = Path.Combine(_dir, "cache") };
+        _response = await BoundedWaits.WithinAsync(
+            ct => tools.BuildSolution(_solutionPath, graphId: "unrestored", excludeText: true, ct: ct),
+            BoundedWaits.BuildTimeout, "build_solution of the unrestored MultiProject copy");
 
         // The false-alarm case: a restored project whose obj is not beside it. The
         // artifacts layout restores to artifacts\obj\<project>\, and a check that
@@ -65,7 +66,9 @@ public sealed class UnrestoredProjectTests : IAsyncLifetime
         Assert.False(Directory.Exists(Path.Combine(arty, "Arty", "obj")), "the artifacts layout did not move obj");
 
         await using var builder = new GraphBuilder { ExcludeText = true };
-        _artifactsGraph = await builder.BuildFromProjectAsync(Path.Combine(arty, "Arty", "Arty.csproj"));
+        _artifactsGraph = await BoundedWaits.WithinAsync(
+            ct => builder.BuildFromProjectAsync(Path.Combine(arty, "Arty", "Arty.csproj"), ct),
+            BoundedWaits.BuildTimeout, "the build of the artifacts-layout project");
         _artifactsFailures = builder.ProjectFailures;
     }
 
@@ -105,21 +108,8 @@ public sealed class UnrestoredProjectTests : IAsyncLifetime
         File.WriteAllText(path, content);
     }
 
-    private static void Restore(string workingDirectory, string target)
-    {
-        var psi = new ProcessStartInfo("dotnet", $"restore {target}")
-        {
-            WorkingDirectory = workingDirectory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = true
-        };
-        using var process = Process.Start(psi)!;
-        process.StandardInput.Close();
-        var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        Assert.True(process.ExitCode == 0, $"dotnet restore of {target} failed:\n{output}");
-    }
+    private static void Restore(string workingDirectory, string target) =>
+        BoundedWaits.Restore(workingDirectory, target, target);
 
     private List<string> Failures()
     {

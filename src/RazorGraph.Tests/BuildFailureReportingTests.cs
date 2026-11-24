@@ -1,6 +1,5 @@
 namespace RazorGraph.Tests;
 
-using System.Diagnostics;
 using System.Text.Json;
 using RazorGraph.Mcp;
 using Xunit;
@@ -73,8 +72,10 @@ public sealed class BuildFailureReportingTests : IAsyncLifetime
 
         // Cached inside the temp directory, so the run neither litters nor reads the
         // real per-user cache.
-        _response = await new GraphStoreTools(_store) { CacheDirectory = Path.Combine(_dir, "cache") }
-            .BuildSolution(Path.Combine(_dir, "Failing.slnx"), graphId: "failing", excludeText: true);
+        var tools = new GraphStoreTools(_store) { CacheDirectory = Path.Combine(_dir, "cache") };
+        _response = await BoundedWaits.WithinAsync(
+            ct => tools.BuildSolution(Path.Combine(_dir, "Failing.slnx"), graphId: "failing", excludeText: true, ct: ct),
+            BoundedWaits.BuildTimeout, "build_solution of the failing solution");
     }
 
     public Task DisposeAsync()
@@ -92,21 +93,7 @@ public sealed class BuildFailureReportingTests : IAsyncLifetime
         File.WriteAllText(path, content);
     }
 
-    private void Restore()
-    {
-        var psi = new ProcessStartInfo("dotnet", "restore Failing.slnx")
-        {
-            WorkingDirectory = _dir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = true
-        };
-        using var process = Process.Start(psi)!;
-        process.StandardInput.Close();
-        var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        Assert.True(process.ExitCode == 0, $"dotnet restore of the failing solution failed:\n{output}");
-    }
+    private void Restore() => BoundedWaits.Restore(_dir, "Failing.slnx", "the failing solution");
 
     private List<string> Failures()
     {
