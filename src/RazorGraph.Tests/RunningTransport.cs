@@ -29,13 +29,28 @@ internal sealed class RunningTransport : IAsyncDisposable
 
     public int Port => new Uri(BaseUrl).Port;
 
+    /// <summary>The bearer check. Read it once <see cref="Ready"/> has completed: before that, it blocks on the provider.</summary>
     public BearerAuthenticator Bearer => App.Services.GetRequiredService<BearerAuthenticator>();
 
-    public static async Task<RunningTransport> StartAsync(BearerMode mode, Func<string?> tokenProvider)
+    /// <summary>Completes when the server has built its bearer check, and has stopped answering 503.</summary>
+    public Task<BearerAuthenticator> Ready => App.Services.GetRequiredService<TransportReadiness>().Ready;
+
+    /// <summary>
+    /// Builds and binds the server. By default waits until it is ready, as the bearer tests need;
+    /// pass waitUntilReady false to catch it still starting, with a provider that blocks.
+    /// </summary>
+    public static async Task<RunningTransport> StartAsync(
+        BearerMode mode, Func<string?> tokenProvider, bool waitUntilReady = true)
     {
         WebApplication app = HttpTransport.Build(0, mode, tokenProvider);
         await app.StartAsync();
-        return new RunningTransport(app);
+        RunningTransport running = new(app);
+        if (waitUntilReady)
+        {
+            await running.Ready.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+
+        return running;
     }
 
     /// <summary>An MCP initialize POST, with a bearer token when one is given.</summary>

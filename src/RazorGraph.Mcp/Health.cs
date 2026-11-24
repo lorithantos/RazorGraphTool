@@ -9,12 +9,18 @@ namespace RazorGraph.Mcp;
 /// <param name="Version">The server's assembly version.</param>
 /// <param name="Auth">
 /// The bearer check's mode, whether a token is configured, its counters and any provider error.
-/// Never the token. Null from a server older than the check.
+/// Never the token. Null from a server older than the check, and from one still
+/// <see cref="Health.Starting"/>, which has not built the check yet.
+/// </param>
+/// <param name="State">
+/// <see cref="Health.Starting"/> while the server is bound but still reading its bearer token, and
+/// answering 503; <see cref="Health.Ready"/> once it serves. Null from a server older than the field.
 /// </param>
 public sealed record HealthReport(
     [property: JsonPropertyName("server")] string Server,
     [property: JsonPropertyName("version")] string Version,
-    [property: JsonPropertyName("auth")] BearerAuthSnapshot? Auth = null);
+    [property: JsonPropertyName("auth")] BearerAuthSnapshot? Auth = null,
+    [property: JsonPropertyName("state")] string? State = null);
 
 /// <summary>
 /// Decides whether starting an HTTP server on a port is necessary or redundant.
@@ -33,12 +39,24 @@ public static class Health
 {
     public const string Name = "razorgraph-mcp";
 
+    /// <summary>The /health state of a server that is bound but still reading its bearer token.</summary>
+    public const string Starting = "starting";
+
+    /// <summary>The /health state of a server that serves.</summary>
+    public const string Ready = "ready";
+
+    /// <summary>How long the start-up probe waits for an answer.</summary>
+    private static readonly TimeSpan ProbeTimeout = TimeSpan.FromMilliseconds(500);
+
     public enum PortState
     {
         /// <summary>Nothing recognisable there. Bind it, and let the bind decide.</summary>
         Free,
 
-        /// <summary>A razorgraph-mcp is already serving. Nothing to do.</summary>
+        /// <summary>
+        /// A razorgraph-mcp owns the port: serving, or bound and still starting. A second start is
+        /// redundant either way, so the two are one state. Nothing to do.
+        /// </summary>
         AlreadyServing,
     }
 
@@ -55,15 +73,26 @@ public static class Health
     /// The cost of guessing Free wrongly is bounded and self-correcting: the bind fails with
     /// AddressInUse, the caller re-probes, and it resolves to a real error or a clean no-op. The
     /// cost of guessing occupied wrongly is a tool that will not start at all.
+    ///
+    /// The body is read whatever the status. A razorgraph-mcp still reading its token answers 503
+    /// with its normal body, and that is a razorgraph-mcp all the same.
     /// </remarks>
-    public static async Task<(PortState State, string? Version)> ProbeAsync(int port)
+    public static Task<(PortState State, string? Version)> ProbeAsync(int port) => ProbeAsync(port, ProbeTimeout);
+
+    /// <summary>
+    /// <see cref="ProbeAsync(int)"/> with the wait chosen by the caller. The tests pass a long one,
+    /// because 500 ms is a start-up budget, and a loaded test host can miss it against a server
+    /// that is there.
+    /// </summary>
+    internal static async Task<(PortState State, string? Version)> ProbeAsync(int port, TimeSpan timeout)
     {
-        using HttpClient client = new() { Timeout = TimeSpan.FromMilliseconds(500) };
+        using HttpClient client = new() { Timeout = timeout };
 
         HealthReport? report;
         try
         {
-            report = await client.GetFromJsonAsync<HealthReport>($"http://127.0.0.1:{port}/health");
+            using HttpResponseMessage response = await client.GetAsync($"http://127.0.0.1:{port}/health");
+            report = await response.Content.ReadFromJsonAsync<HealthReport>();
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
             or NotSupportedException or System.Text.Json.JsonException or UriFormatException)

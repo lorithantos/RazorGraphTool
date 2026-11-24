@@ -115,8 +115,9 @@ if (http)
 
     if (state == Health.PortState.AlreadyServing)
     {
+        // "running", not "serving": the one there may still be starting, reading its token.
         Console.Error.WriteLine(
-            $"razorgraph-mcp {version} is already serving on http://127.0.0.1:{port}/ -- nothing to do.");
+            $"razorgraph-mcp {version} is already running on http://127.0.0.1:{port}/ -- nothing to do.");
 
         return 0;
     }
@@ -165,10 +166,12 @@ if (http)
     // Loopback only: this transport is a local development loop, not a network service.
     Console.Error.WriteLine($"razorgraph-mcp listening on http://127.0.0.1:{port}/");
 
-    // The token command already ran once, while the authenticator was built. Say so now if it
-    // failed, rather than leaving it for the first 401 to reveal. The error carries the command's
-    // stderr, never its stdout.
-    BearerAuthSnapshot auth = app.Services.GetRequiredService<BearerAuthenticator>().Snapshot();
+    // The token command runs once, on a background task begun when the port was bound, while
+    // the authenticator is built; until then the server answers 503. Wait for it, and say now if
+    // it failed, rather than leaving it for the first 401 to reveal. The error carries the
+    // command's stderr, never its stdout.
+    BearerAuthenticator bearer = await app.Services.GetRequiredService<TransportReadiness>().Ready;
+    BearerAuthSnapshot auth = bearer.Snapshot();
     Console.Error.WriteLine(
         $"Bearer check: {auth.Mode}" +
         (authMode == BearerMode.Off ? "." : auth.TokenConfigured ? ", token configured." : ", NO token configured.") +

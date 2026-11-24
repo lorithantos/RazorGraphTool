@@ -142,14 +142,16 @@ public sealed class BearerPipelineTests
 
     /// <remarks>
     /// The /health record gained a field; a second server's start-up probe must still recognise
-    /// the first, or it would try to bind, lose, and report the port as someone else's.
+    /// the first, or it would try to bind, lose, and report the port as someone else's. The probe
+    /// waits as long as a loaded test host needs: the server's own 500 ms is a start-up budget,
+    /// and missing it here said nothing about the record.
     /// </remarks>
     [Fact]
     public async Task TheStartupProbeStillRecognisesARunningServer()
     {
         await using RunningTransport server = await RunningTransport.StartAsync(BearerMode.Require, () => Token);
 
-        (Health.PortState state, string? version) = await Health.ProbeAsync(server.Port);
+        (Health.PortState state, string? version) = await Health.ProbeAsync(server.Port, TimeSpan.FromSeconds(30));
 
         Assert.Equal(Health.PortState.AlreadyServing, state);
         Assert.NotNull(version);
