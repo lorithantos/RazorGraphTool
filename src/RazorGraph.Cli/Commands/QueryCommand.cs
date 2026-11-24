@@ -457,6 +457,13 @@ internal static class QueryCommand
     private static int RunNodeReport(
         GraphQuery query, CodeGraph graph, string nodeId, QueryOptions options)
     {
+        // An id pasted from output that crossed an HTML or JSON layer arrives
+        // with &lt; or < where a generic's brackets were. Resolved by the
+        // same rule the MCP tools use, and every lookup below takes the id that
+        // resolved -- validating one spelling and querying another would turn
+        // the fix into an empty report.
+        if (NodeIdEscapes.TryResolve(graph, nodeId, out var resolved)) nodeId = resolved;
+
         var node = query.GetNode(nodeId);
         if (node == null)
         {
@@ -477,6 +484,12 @@ internal static class QueryCommand
             return 1;
         }
 
+        // A Blazor component without @page is a PartialView node, and it has a
+        // render tree to ask about as much as a routable one does -- and the
+        // caveat that tree carries. A .cshtml partial stays out, as it was.
+        var showRenderTree = options.RenderTree
+            && (node.Type == NodeType.RazorPage || GraphQuery.IsBlazorComponent(node));
+
         if (options.Json)
         {
             var context = options.Context ? query.GetPageContext(nodeId) : null;
@@ -490,14 +503,19 @@ internal static class QueryCommand
                 neighbors = options.Neighbors
                     ? query.GetNeighbors(nodeId).Select(x => new { edgeType = x.Edge.DisplayType, target = NodeRef(x.Target) })
                     : null,
-                renderTree = options.RenderTree && node.Type == NodeType.RazorPage
+                renderTree = showRenderTree
                     ? query.GetRenderTree(nodeId).Select(x => new { edgeType = x.Edge.DisplayType, node = NodeRef(x.Node) })
                     : null,
+                // The render_tree tool's caveat, from the same query. Null for a
+                // .cshtml page, and nulls are not written, so a Razor Pages
+                // envelope is what it was. Additive, so the contract holds.
+                renderTreeCaveat = showRenderTree ? query.GetRenderTreeCaveat(nodeId) : null,
                 pageContext = context is null ? null : new
                 {
                     pageModel = context.PageModel is null ? null : NodeRef(context.PageModel),
                     viewModel = context.ViewModel is null ? null : NodeRef(context.ViewModel),
-                    injectedServices = context.InjectedServices.Select(NodeRef)
+                    injectedServices = context.InjectedServices.Select(NodeRef),
+                    caveat = context.Caveat
                 },
                 dataFlow = options.Trace
                     ? query.TraceDataFlow(nodeId, options.Depth, direction)
@@ -522,11 +540,13 @@ internal static class QueryCommand
                 Console.WriteLine($"  {edge.DisplayType} -> [{target.DisplayType}] {target.Name}");
         }
 
-        if (options.RenderTree && node.Type == NodeType.RazorPage)
+        if (showRenderTree)
         {
             Console.WriteLine("\n--- Render Tree ---");
             foreach (var (n, e) in query.GetRenderTree(nodeId))
                 Console.WriteLine($"  {e.DisplayType} -> [{n.DisplayType}] {n.Name}");
+            if (query.GetRenderTreeCaveat(nodeId) is { } caveat)
+                Console.WriteLine($"  caveat: {caveat}");
         }
 
         if (options.Context)
@@ -575,6 +595,11 @@ internal static class QueryCommand
         Console.WriteLine($"  Injected services ({context.InjectedServices.Count}):");
         foreach (var svc in context.InjectedServices)
             Console.WriteLine($"    [{svc.DisplayType}] {svc.Name}");
+
+        // Without it a component's "PageModel: (none)" and empty lists read as
+        // findings; they are what the graph does not model.
+        if (context.Caveat is { } caveat)
+            Console.WriteLine($"  caveat: {caveat}");
     }
 
     private static int RunTypeListing(GraphQuery query, CodeGraph graph, QueryOptions options)

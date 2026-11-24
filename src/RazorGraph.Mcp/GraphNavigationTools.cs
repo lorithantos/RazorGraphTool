@@ -293,7 +293,7 @@ internal sealed class GraphNavigationTools(GraphStore store)
         // the first miss: ComputeRelevance names EVERY unknown focus id at once,
         // and a caller who typo'd two of them should learn about both.
         focusIds = focusIds
-            .Select(f => ToolArguments.TryResolveNode(graph, f, out var hit) ? hit : f)
+            .Select(f => NodeIdEscapes.TryResolve(graph, f, out var hit) ? hit : f)
             .ToArray();
 
         var (relevance, missing) = new GraphQuery(graph)
