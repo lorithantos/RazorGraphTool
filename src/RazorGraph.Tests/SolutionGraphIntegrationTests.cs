@@ -473,7 +473,7 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
                 "Cache_SeedsItself", "Cached_IsBuiltOnce", "Channel_ThroughTheInterface",
                 "DrawnWorld_CanBeBuilt", "Greet_ThroughTheInterface", "List_ReturnsSortedCatalogs",
                 "Preload_CountsCatalogs", "Registry_HasAFallback", "Slot_ReadsThroughTheIntIndexer",
-                "Warm_IsPositive"
+                "Warm_IsPositive", "WorldStamp_HasAVersion"
             },
             tests.OrderBy(t => t, StringComparer.Ordinal));
         // NotATest calls production code but carries no attribute, and
@@ -2282,6 +2282,25 @@ public class SolutionGraphIntegrationTests : IAsyncLifetime
 
         // Touching one type does not run another's static initializer.
         Assert.DoesNotContain("DrawnWorld_CanBeBuilt", CoveringDepths("SampleLib.PartRegistry", "ComputeSeed").Keys);
+    }
+
+    [Fact]
+    public void ReachingAnInterface_DoesNotCoverAnImplementersStaticInitialization()
+    {
+        // WorldStamp_HasAVersion calls IWorldStamp.Version, a static member, so
+        // the walk stands on the member and, for free, on the interface type.
+        Assert.Equal(1, CoveringDepths("SampleLib.IWorldStamp", "Version")["WorldStamp_HasAVersion"]);
+
+        // StampedWorld implements that interface, so the type-level edge the
+        // walk must refuse is there to be taken ...
+        Assert.NotNull(Implements("type:SampleLib.StampedWorld", "type:SampleLib.IWorldStamp"));
+
+        // ... and refusing it is the only thing between the test and Engrave:
+        // nothing builds or names StampedWorld, and it implements no member the
+        // test could dispatch to. Following type -> interface backwards would
+        // mark the implementer's static initialization run because a test
+        // touched the interface (CoverageEmitter.Dispatches).
+        Assert.Empty(CoveringDepths("SampleLib.StampedWorld", "Engrave"));
     }
 
     [Fact]

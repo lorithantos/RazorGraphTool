@@ -162,6 +162,35 @@ public sealed class DrawnWorld
     private static int DrawBoard() => 3;
 }
 
+/// <summary>
+/// An interface a test can touch with no implementation running: a static member
+/// needs no instance, so nothing is built and nothing dispatches. Its one
+/// implementer is <see cref="StampedWorld"/>.
+/// </summary>
+public interface IWorldStamp
+{
+    static int Version() => 1;
+}
+
+/// <summary>
+/// Implements <see cref="IWorldStamp"/>, and its static field initializer calls
+/// a method nothing else calls. Nothing builds it and nothing names it, so the
+/// only route from a test to that initializer is the type-level Implements edge
+/// off the interface -- which says what this type declares, not that anything
+/// ran it. Touching an interface does not run an implementer's static
+/// constructor, so a test reaching <see cref="IWorldStamp"/> must not cover
+/// <see cref="Engrave"/>.
+/// </summary>
+public sealed class StampedWorld : IWorldStamp
+{
+    private static readonly int Stamp = Engrave();
+
+    public int Size => Stamp;
+
+    /// <summary>Called only from the static field initializer.</summary>
+    private static int Engrave() => 4;
+}
+
 /// <summary>Built only inside a block-bodied property getter.</summary>
 public sealed class GetterPart
 {

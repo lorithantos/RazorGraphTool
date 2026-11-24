@@ -23,4 +23,15 @@ public class StaticInitializerTests
     {
         Assert.NotNull(new DrawnWorld());
     }
+
+    /// <summary>
+    /// Touches IWorldStamp through its static member and nothing else. Its
+    /// implementer StampedWorld is never built or named here, so that type's
+    /// static initialization does not run.
+    /// </summary>
+    [Fact]
+    public void WorldStamp_HasAVersion()
+    {
+        Assert.Equal(1, IWorldStamp.Version());
+    }
 }
