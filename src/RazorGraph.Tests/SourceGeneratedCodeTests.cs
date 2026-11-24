@@ -1,6 +1,5 @@
 namespace RazorGraph.Tests;
 
-using System.Diagnostics;
 using RazorGraph.Core.Graph;
 using RazorGraph.Core.Query;
 using RazorGraph.Extractor;
@@ -75,17 +74,7 @@ public class SourceGeneratedCodeTests : IAsyncLifetime
     {
         if (File.Exists(Path.Combine(fixtureDir, "ObservableLib", "obj", "project.assets.json"))
             && File.Exists(Path.Combine(fixtureDir, "ObservableLib.Tests", "obj", "project.assets.json"))) return;
-
-        var psi = new ProcessStartInfo("dotnet", "restore SourceGenerated.sln")
-        {
-            WorkingDirectory = fixtureDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-        using var process = Process.Start(psi)!;
-        var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        Assert.True(process.ExitCode == 0, $"dotnet restore of the SourceGenerated fixture failed:\n{output}");
+        BoundedWaits.Restore(fixtureDir, "SourceGenerated.sln", "the SourceGenerated fixture");
     }
 
     private static GraphNode Node(string id) =>
