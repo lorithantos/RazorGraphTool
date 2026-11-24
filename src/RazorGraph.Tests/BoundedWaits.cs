@@ -28,6 +28,12 @@ internal static class BoundedWaits
     /// </summary>
     internal static readonly TimeSpan DrainTimeout = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// Variables a parent dotnet CLI exports that pin a child to the PARENT's SDK; see
+    /// <see cref="RunProcess"/>. The same set janet's dotnet_check scrubs.
+    /// </summary>
+    internal static readonly string[] SdkPinningVariables = ["MSBuildSDKsPath", "MSBuildExtensionsPath", "MSBUILD_EXE_PATH"];
+
     /// <summary>One restore at a time across the whole test run; see <see cref="Restore"/>.</summary>
     private static readonly object RestoreGate = new();
 
@@ -81,6 +87,14 @@ internal static class BoundedWaits
             RedirectStandardError = true,
             RedirectStandardInput = true
         };
+
+        // The test host runs under a dotnet CLI, and the CLI exports its own SDK's MSBuild
+        // locations to every child. A child dotnet in a folder whose global.json (or none)
+        // selects a DIFFERENT SDK then runs that SDK's CLI against the parent's MSBuild:
+        // seen 2026-11-24, once SDK 11 sat beside 10, as restores exiting 1 with no output
+        // while their SDK 10 worker nodes never connected, hundreds of them left orphaned.
+        // The child resolves its own SDK from its own working directory once these are gone.
+        foreach (var inherited in SdkPinningVariables) psi.Environment.Remove(inherited);
 
         var output = new StringBuilder();
         var stdoutClosed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
