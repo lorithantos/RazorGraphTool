@@ -28,14 +28,38 @@ internal static class BoundedWaits
     /// </summary>
     internal static readonly TimeSpan DrainTimeout = TimeSpan.FromSeconds(10);
 
+    /// <summary>One restore at a time across the whole test run; see <see cref="Restore"/>.</summary>
+    private static readonly object RestoreGate = new();
+
     /// <summary>
     /// Runs <c>dotnet restore</c> on <paramref name="target"/> in
     /// <paramref name="workingDirectory"/> and fails with its output unless it exits 0.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>-nodeReuse:false</c> is the fix for the hang this class was written for,
+    /// confirmed 2026-11-24 from a dump of the hung testhost and its handle table:
+    /// three threads sat in ReadToEnd on a restore's stdout, the restores had exited,
+    /// and three orphaned MSBuild nodes started with /nodeReuse:true each held that
+    /// restore's stdout and stderr -- pipes the testhost had created. A reusable node
+    /// is meant to outlive the build that started it, and it inherits that build's
+    /// standard handles, so the pipe never closed. Without reuse the nodes exit with
+    /// the restore.
+    /// </para>
+    /// <para>
+    /// The gate serializes restores across test classes. Several classes restore the
+    /// same MultiProject fixture, and in a fresh checkout they all found it unrestored
+    /// at once and raced on the same obj files.
+    /// </para>
+    /// </remarks>
     internal static void Restore(string workingDirectory, string target, string description)
     {
-        var (exitCode, output) = RunProcess("dotnet", $"restore {target}", workingDirectory, RestoreTimeout, DrainTimeout);
-        Assert.True(exitCode == 0, $"dotnet restore of {description} failed:\n{output}");
+        lock (RestoreGate)
+        {
+            var (exitCode, output) = RunProcess(
+                "dotnet", $"restore {target} -nodeReuse:false", workingDirectory, RestoreTimeout, DrainTimeout);
+            Assert.True(exitCode == 0, $"dotnet restore of {description} failed:\n{output}");
+        }
     }
 
     /// <summary>
