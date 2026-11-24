@@ -71,11 +71,13 @@ internal sealed class CoverageTools(GraphStore store)
     /// the walk had stopped one dispatch step short. BOTH dispatch mechanisms are
     /// followed now — interface since 2026-09-04, class overrides since
     /// 2026-09-05 — and so are accessor bodies and static initialization, since
-    /// 2026-11-23. The steps still not followed are named, so the reader can ask
+    /// 2026-11-23. Source-generated accessor bodies ([ObservableProperty] setters)
+    /// are walked like any other: SourceGeneratedCodeTests pins it, so the caveat
+    /// stopped hedging on them on 2026-11-24. The steps still not followed are named, so the reader can ask
     /// the right question instead of trusting the empty one.
     /// </summary>
     internal const string UnreachedCaveat =
-        "No test's call chain reaches this method through Calls edges, interface dispatch, a base-class override, the accessor bodies of a property the chain reads or writes, or the static initialization of a type it touches. That is not proof it is untested: stored-and-forwarded delegates and reflection are not followed, and source-generated accessor bodies (e.g. [ObservableProperty] setters) are not confirmed to be walked. Read the method body for those before treating this as a target for new tests.";
+        "No test's call chain reaches this method through Calls edges, interface dispatch, a base-class override, the accessor bodies of a property the chain reads or writes, or the static initialization of a type it touches. That is not proof it is untested: stored-and-forwarded delegates and reflection are not followed. Read the method body for those before treating this as a target for new tests.";
 
     [McpServerTool(Name = "covered_methods")]
     [Description("Production methods a given test method exercises, nearest first. depth=1 means the test calls it directly. Paged: one test can reach hundreds of methods through the full call closure, so read totalMatches and depthCounts first, and pass offset=nextOffset to continue. nextOffset is absent when there is no more.")]

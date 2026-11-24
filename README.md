@@ -466,9 +466,11 @@ covered. Each `Reads`, `Writes` or `Constructs` step costs one depth, as a call 
 a member up to its declaring type costs none, the way containment is followed
 elsewhere, so a static initializer's calls sit one step below the access that
 triggered it. `Covers` edges still end at methods only: a property or a type is a
-place the walk passes through, not something a test covers. Not followed:
-stored-and-forwarded delegates and reflection, and source-generated accessor bodies are
-not confirmed to be walked — an empty `covering_tests` answer names
+place the walk passes through, not something a test covers. Source-generated accessor
+bodies are walked like hand-written ones: every scan reads the compilation's syntax
+trees, generator output included, so a test that sets an `[ObservableProperty]` covers
+the `On...Changed` hook its generated setter calls. Not followed:
+stored-and-forwarded delegates and reflection — an empty `covering_tests` answer names
 these in its `caveat` rather than reading as proof. Exception-escape propagation is
 narrower than coverage here: an escape reaches the property node and goes no further.
 
